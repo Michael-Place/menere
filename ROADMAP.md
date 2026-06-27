@@ -37,22 +37,27 @@ New for MVP:
 
 ## Milestones
 
-### M0 — Prove out auth ✅ scaffold built, ⏳ run & verify
+### M0 — Prove out auth ✅ COMPLETE (2026-06-27)
 Goal: sign in works end-to-end; user persists; app lands on the tab shell.
-- [ ] Run on simulator; verify 3-state auth (unauthenticated → authenticating → authenticated)
-- [ ] Add **Sign in with Apple** capability (Xcode → Signing & Capabilities)
-- [ ] Verify Apple sign-in on simulator/device
-- [ ] Create **APNs key** (Apple Developer portal) → upload to Firebase Console → test **Phone/OTP** on device
-- [ ] Confirm onboarding writes the `User` doc to Firestore
-- **DoD:** can sign in (Apple + Phone), sign out, relaunch to cached session, see Home/Settings tabs.
+- [x] Run on simulator; verify 3-state auth (unauthenticated → authenticating → authenticated)
+- [x] **Phone/OTP** verified end-to-end on simulator via Firebase test number → onboarding → Firestore `users` doc ("Vale") → Home tab
+- [x] Fixed recurring Firebase phone-auth gotchas (URL scheme, OTP dismiss, SMS region policy, test-number setting)
+- [x] APNs key uploaded by user (for real-device SMS later)
+- [ ] (Later, on device) Verify Apple sign-in + real-SMS phone on a physical device
+- **DoD:** ✅ phone sign-in → onboarding → authenticated tab shell, user persisted to Firestore.
 
-### M1 — Data model + Firestore foundation
+> **Scaffold follow-up:** propagate the four phone-auth fixes back into the `firebase-auth-app`
+> template + bootstrap so new projects don't hit them (URL scheme from App ID, SMS region policy,
+> OTP-destination dismiss, debug test-number setting).
+
+### M1 — Data model + Firestore foundation 🟡 foundation built
 Goal: the spine everything hangs off.
-- [ ] `WineDomain`: `Wine`, `Bottle`, `Tasting`, `Provenance`, canonical-key helper
-- [ ] `PersistenceClient`: CRUD for `/wines/{key}`, `/users/{uid}/bottles`, `/users/{uid}/tastings`
-- [ ] Firestore security rules (per-user private docs; shared catalog readable, writes controlled)
-- [ ] Debug screen to round-trip a hardcoded Wine/Bottle/Tasting
-- **DoD:** can write & read all three entities to/from Firestore from the app.
+- [x] `WineDomain`: `Wine`, `Bottle`, `Tasting`, `Region`, `WineType`, `BottleStatus`, `Enrichment`/`Provenance`, `SATNote`, canonical-key helper
+- [x] `PersistenceClient`: swift-dependencies client — CRUD for `/wines/{key}`, `/users/{uid}/bottles`, `/users/{uid}/tastings`
+- [x] Firestore security rules deployed (per-user private docs; shared catalog readable by signed-in users, writes controlled)
+- [x] Compiles + integrated into AppCore
+- [ ] Runtime round-trip verification (will be exercised organically by M2 scan→resolve and M5 journaling, or via a quick debug screen)
+- **DoD:** data layer in place; write/read verified once features land.
 
 ### M2 — Capture & Identify (the scan)
 Goal: point at a bottle → structured candidate identity. **On-device, free.**

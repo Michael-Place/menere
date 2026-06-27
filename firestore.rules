@@ -1,0 +1,22 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Shared wine catalog (cache + moat): any signed-in user may read; signed-in users may
+    // create/update entries since the catalog grows from everyone's scans. Tighten later
+    // (e.g. route writes through Cloud Functions + App Check) before any public launch.
+    match /wines/{wineId} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null;
+    }
+
+    // Private per-user data (profile, bottles, tastings): only the owner.
+    match /users/{userId} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+
+      match /{document=**} {
+        allow read, write: if request.auth != null && request.auth.uid == userId;
+      }
+    }
+  }
+}

@@ -14,6 +14,8 @@ let package = Package(
         .library(name: "HomeFeature", targets: ["HomeFeature"]),
         .library(name: "SettingsFeature", targets: ["SettingsFeature"]),
         .library(name: "UserDomain", targets: ["UserDomain"]),
+        .library(name: "WineDomain", targets: ["WineDomain"]),
+        .library(name: "PersistenceClient", targets: ["PersistenceClient"]),
     ],
     dependencies: [
         .package(url: "https://github.com/firebase/firebase-ios-sdk", .upToNextMajor(from: "11.13.0")),
@@ -35,6 +37,8 @@ let package = Package(
                 "HomeFeature",
                 "SettingsFeature",
                 "UserDomain",
+                "WineDomain",
+                "PersistenceClient",
             ]
         ),
         .target(
@@ -86,6 +90,18 @@ let package = Package(
                 .product(name: "DependenciesMacros", package: "swift-dependencies"),
                 .product(name: "Sharing", package: "swift-sharing"),
                 .product(name: "FirebaseFirestore", package: "firebase-ios-sdk"),
+            ]
+        ),
+        .target(
+            name: "WineDomain"
+        ),
+        .target(
+            name: "PersistenceClient",
+            dependencies: [
+                .product(name: "Dependencies", package: "swift-dependencies"),
+                .product(name: "DependenciesMacros", package: "swift-dependencies"),
+                .product(name: "FirebaseFirestore", package: "firebase-ios-sdk"),
+                "WineDomain",
             ]
         ),
     ],
