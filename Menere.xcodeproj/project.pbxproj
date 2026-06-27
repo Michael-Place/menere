@@ -1,0 +1,375 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		03015C9939EAAEA454A17C63 /* AppCore in Frameworks */ = {isa = PBXBuildFile; productRef = 49A38D276C70CB617ECD07C5 /* AppCore */; };
+		2E47B645BDB7330792826410 /* UserDomain in Frameworks */ = {isa = PBXBuildFile; productRef = 184E235FFA9B598B12C27AEE /* UserDomain */; };
+		648FDE618FE8F611C029E33C /* AuthenticationDomain in Frameworks */ = {isa = PBXBuildFile; productRef = 813A2C97EC3F910E3722B866 /* AuthenticationDomain */; };
+		F108F2B5785E59930CA0865B /* MenereApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 77D20140378BCD548822314C /* MenereApp.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		1214F0961F23D14C880CE37E /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		1C2F6A8682CB53C5580F79D7 /* Menere.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = Menere.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		37BB5430C9A38D4A8E9644A6 /* MenerePackage */ = {isa = PBXFileReference; lastKnownFileType = folder; name = MenerePackage; path = MenerePackage; sourceTree = SOURCE_ROOT; };
+		77D20140378BCD548822314C /* MenereApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenereApp.swift; sourceTree = "<group>"; };
+		FD7FC8E64B883A3E3CE3654C /* Menere.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Menere.entitlements; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		BD21A8F7F82D0F96B6F60B5B /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				03015C9939EAAEA454A17C63 /* AppCore in Frameworks */,
+				2E47B645BDB7330792826410 /* UserDomain in Frameworks */,
+				648FDE618FE8F611C029E33C /* AuthenticationDomain in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		377224900771935C1E5BE357 = {
+			isa = PBXGroup;
+			children = (
+				895681AB60E463DC00CFB817 /* App */,
+				F31556813E8EAA5131B0E49B /* Packages */,
+				DA5411190BF2750293984BE8 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		895681AB60E463DC00CFB817 /* App */ = {
+			isa = PBXGroup;
+			children = (
+				1214F0961F23D14C880CE37E /* Info.plist */,
+				FD7FC8E64B883A3E3CE3654C /* Menere.entitlements */,
+				77D20140378BCD548822314C /* MenereApp.swift */,
+			);
+			path = App;
+			sourceTree = "<group>";
+		};
+		DA5411190BF2750293984BE8 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				1C2F6A8682CB53C5580F79D7 /* Menere.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		F31556813E8EAA5131B0E49B /* Packages */ = {
+			isa = PBXGroup;
+			children = (
+				37BB5430C9A38D4A8E9644A6 /* MenerePackage */,
+			);
+			name = Packages;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		4596A44AF2BE1BFECD555F11 /* Menere */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 647C3441C976B9DDABE7731F /* Build configuration list for PBXNativeTarget "Menere" */;
+			buildPhases = (
+				A6F0218A6BB9BE0EAECD83EB /* Sources */,
+				BD21A8F7F82D0F96B6F60B5B /* Frameworks */,
+				08E1039BB54F4B7ED38B83D1 /* Copy GoogleService-Info.plist */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = Menere;
+			packageProductDependencies = (
+				49A38D276C70CB617ECD07C5 /* AppCore */,
+				184E235FFA9B598B12C27AEE /* UserDomain */,
+				813A2C97EC3F910E3722B866 /* AuthenticationDomain */,
+			);
+			productName = Menere;
+			productReference = 1C2F6A8682CB53C5580F79D7 /* Menere.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		5A5BF4AA6D0FFB2C7299350A /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1600;
+				TargetAttributes = {
+					4596A44AF2BE1BFECD555F11 = {
+						DevelopmentTeam = Z2FNFL3X73;
+					};
+				};
+			};
+			buildConfigurationList = EFC057BF3795E01BB33EDF88 /* Build configuration list for PBXProject "Menere" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = 377224900771935C1E5BE357;
+			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				552208E4C6B8C3AE19E90D74 /* XCLocalSwiftPackageReference "MenerePackage" */,
+			);
+			preferredProjectObjectVersion = 77;
+			productRefGroup = DA5411190BF2750293984BE8 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				4596A44AF2BE1BFECD555F11 /* Menere */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		08E1039BB54F4B7ED38B83D1 /* Copy GoogleService-Info.plist */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Copy GoogleService-Info.plist";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "if [ -f \"${PROJECT_DIR}/App/GoogleService-Info.plist\" ]; then\n  cp \"${PROJECT_DIR}/App/GoogleService-Info.plist\" \"${BUILT_PRODUCTS_DIR}/${PRODUCT_NAME}.app/GoogleService-Info.plist\"\nfi\n";
+		};
+/* End PBXShellScriptBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		A6F0218A6BB9BE0EAECD83EB /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				F108F2B5785E59930CA0865B /* MenereApp.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		3C58C2E799693ED8745724C3 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+		8723A516B62664D86FF5C74C /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		C45ECAEF21832722BC66D0A3 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = App/Menere.entitlements;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = Z2FNFL3X73;
+				INFOPLIST_FILE = App/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.mplace.menere;
+				SDKROOT = iphoneos;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		EB53B3FC816E605876049F8C /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = App/Menere.entitlements;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = Z2FNFL3X73;
+				INFOPLIST_FILE = App/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.mplace.menere;
+				SDKROOT = iphoneos;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		647C3441C976B9DDABE7731F /* Build configuration list for PBXNativeTarget "Menere" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				C45ECAEF21832722BC66D0A3 /* Debug */,
+				EB53B3FC816E605876049F8C /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		EFC057BF3795E01BB33EDF88 /* Build configuration list for PBXProject "Menere" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				8723A516B62664D86FF5C74C /* Debug */,
+				3C58C2E799693ED8745724C3 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		552208E4C6B8C3AE19E90D74 /* XCLocalSwiftPackageReference "MenerePackage" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = MenerePackage;
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		184E235FFA9B598B12C27AEE /* UserDomain */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = UserDomain;
+		};
+		49A38D276C70CB617ECD07C5 /* AppCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = AppCore;
+		};
+		813A2C97EC3F910E3722B866 /* AuthenticationDomain */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = AuthenticationDomain;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = 5A5BF4AA6D0FFB2C7299350A /* Project object */;
+}
