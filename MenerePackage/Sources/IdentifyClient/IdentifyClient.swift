@@ -1,8 +1,19 @@
 import Dependencies
 import DependenciesMacros
+// Weak-linked: the iOS 27 multimodal path references FoundationModels symbols newer than our iOS 26
+// deployment target (e.g. the Generable conformance witness for `promptRepresentation`). The macro
+// emits those references eagerly, so without weak linking the app fails to launch on iOS 26 with a
+// dyld "Symbol not found". Weak linking lets the missing symbols resolve to null at launch; the
+// `#available(iOS 27)` guards ensure we never actually call them on iOS 26.
+@_weakLinked import FoundationModels
+import OSLog
 import UIKit
 import Vision
 import WineDomain
+
+/// Diagnostics for which identify engine ran and how the multimodal model behaved. Capture with:
+/// `xcrun simctl spawn <udid> log stream --predicate 'subsystem == "com.mplace.menere"'`.
+private let identifyLog = Logger(subsystem: "com.mplace.menere", category: "identify")
 
 /// Errors thrown by the identify pipeline.
 public enum IdentifyError: Error, Equatable, Sendable {
@@ -55,7 +66,13 @@ extension IdentifyClient: DependencyKey {
                 heuristicStructure(lines)
             },
             identify: { imageData in
-                try await VisionDocumentIdentifier().identify(imageData)
+                // Version-forked engine: iOS 27 feeds the label image straight to a multimodal
+                // Foundation Model (better field assignment); iOS 26 uses the deterministic
+                // document-layout engine. Deployment target stays iOS 26. See docs/identify-engine.md.
+                if #available(iOS 27.0, *) {
+                    return try await MultimodalFMIdentifier().identify(imageData)
+                }
+                return try await VisionDocumentIdentifier().identify(imageData)
             },
             identifyBarcode: { payload, _ in
                 WineCandidate(barcode: payload, confidence: 0.5, source: .barcode)
@@ -162,6 +179,7 @@ struct VisionDocumentIdentifier: LabelIdentifier {
     }
 
     func identify(_ imageData: Data) async throws -> WineCandidate {
+        identifyLog.notice("engine=deterministic(RecognizeDocumentsRequest)")
         let (cgImage, orientation) = try decodedImage(from: imageData)
 
         // Primary path: structured document recognition with per-line layout.
@@ -243,6 +261,114 @@ struct VisionDocumentIdentifier: LabelIdentifier {
             rawText: lines.map(\.text),
             // Deterministic engine: not the old 0.8 "Foundation Models" tier.
             confidence: producer != nil ? 0.7 : 0.5,
+            source: .label
+        )
+    }
+}
+
+// MARK: - iOS 27 multimodal engine
+
+/// Structured wine identity the multimodal model fills in directly from the label image.
+/// Gated to iOS 27: the `@Generable` macro (built against the iOS 27 SDK) references iOS 27-only
+/// `Generable` symbols, so leaving this ungated hard-links them and crashes at launch on iOS 26.
+@available(iOS 27.0, *)
+@Generable
+struct WineLabelDraft {
+    @Guide(description: "The producer — the winery, estate, or company that made the wine, as printed on the label. This is NOT the large stylized brand/range name.")
+    var producer: String?
+    @Guide(description: "The cuvée / bottling / brand name (often the largest, most stylized text), if distinct from the producer.")
+    var cuvee: String?
+    @Guide(description: "The vintage year printed on the label, e.g. 2023. Nil if non-vintage.")
+    var vintage: Int?
+    @Guide(description: "Country of origin, only if printed on the label.")
+    var country: String?
+    @Guide(description: "Wine region or appellation, only if printed on the label.")
+    var region: String?
+    @Guide(description: "Grape varieties, only if printed on the label. Empty if none are printed.")
+    var grapes: [String]
+}
+
+/// iOS 27+ identifier: feeds the label **image** straight to a multimodal Foundation Model and gets a
+/// `@Generable` candidate in one pass. Because the model sees typography and layout, it distinguishes
+/// the producer (winery) from the large brand/cuvée wordmark natively — the field-assignment problem
+/// the deterministic iOS 26 engine can only approximate. We still ground every field against the
+/// label's own OCR text so the model can't fabricate, and fall back to `VisionDocumentIdentifier`
+/// whenever the on-device model is unavailable (no Apple Intelligence / older silicon) or the call
+/// fails. Requires the iOS 27 SDK (image `Attachment` API).
+@available(iOS 27.0, *)
+struct MultimodalFMIdentifier: LabelIdentifier {
+    private static let instructions = """
+    You identify a wine from a photo of its bottle label. Read ONLY what is printed on the label — do \
+    not use outside or world knowledge. Use the label's layout and typography to tell the producer \
+    (the winery/estate, often smaller text near words like "winery" or "vineyards") apart from the \
+    cuvée/brand name (often the largest, most stylized text). Leave any field nil if it is not printed \
+    on the label. Never guess or invent values.
+    """
+
+    func identify(_ imageData: Data) async throws -> WineCandidate {
+        let (cgImage, orientation) = try decodedImage(from: imageData)
+
+        let model = SystemLanguageModel.default
+        identifyLog.notice("engine=multimodal(iOS27) FM.availability=\(String(describing: model.availability), privacy: .public)")
+        guard case .available = model.availability else {
+            // No on-device model here (e.g. Apple Intelligence off) — use the deterministic engine.
+            identifyLog.notice("multimodal: FM unavailable → deterministic fallback")
+            return try await VisionDocumentIdentifier().identify(imageData)
+        }
+
+        do {
+            let session = LanguageModelSession(instructions: Self.instructions)
+            let response = try await session.respond(generating: WineLabelDraft.self) {
+                "Identify the wine from this bottle label."
+                Attachment(cgImage, orientation: orientation)
+            }
+            let candidate = await Self.candidate(from: response.content, cgImage: cgImage, orientation: orientation)
+            identifyLog.notice("multimodal: succeeded producer=\(candidate.producer ?? "nil", privacy: .public) cuvee=\(candidate.name ?? "nil", privacy: .public) vintage=\(candidate.vintage.map(String.init) ?? "nil", privacy: .public)")
+            return candidate
+        } catch {
+            // Any model error (unsupported image input, resource limits, refusal) → deterministic engine.
+            identifyLog.error("multimodal: failed (\(String(describing: error), privacy: .public)) → deterministic fallback")
+            return try await VisionDocumentIdentifier().identify(imageData)
+        }
+    }
+
+    /// Map the model's draft into a grounded `WineCandidate`. We OCR the label once for a grounding
+    /// haystack: a field is kept only if it actually appears in the label text (so the multimodal
+    /// model can structure but not fabricate). If OCR yields nothing we trust the model's read.
+    private static func candidate(
+        from draft: WineLabelDraft,
+        cgImage: CGImage,
+        orientation: CGImagePropertyOrientation
+    ) async -> WineCandidate {
+        let lines: [String] = (try? await recognizeDocument(cgImage, orientation))?
+            .text.lines
+            .map { $0.transcript.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty } ?? []
+        let haystack = normalizeForGrounding(lines.joined(separator: " "))
+
+        func grounded(_ value: String?) -> String? {
+            guard let value, !value.isEmpty else { return nil }
+            if haystack.isEmpty { return value }   // no OCR to check against → trust the multimodal read
+            let needle = normalizeForGrounding(value)
+            return (needle.count >= 2 && haystack.contains(needle)) ? value : nil
+        }
+        func groundedPlace(_ value: String?) -> String? { sansYear(grounded(value)) }
+
+        let country = groundedPlace(draft.country)
+        let region = groundedPlace(draft.region)
+        let hasRegion = country != nil || region != nil
+        let grapes = draft.grapes.filter { isKnownGrapeVariety($0) && grounded($0) != nil }
+        let vintage = draft.vintage ?? (haystack.isEmpty ? nil : firstYear(in: haystack))
+
+        return WineCandidate(
+            producer: grounded(draft.producer),
+            name: grounded(draft.cuvee),
+            vintage: vintage,
+            region: hasRegion ? Region(country: country, region: region) : nil,
+            grapes: grapes,
+            rawText: lines,
+            // Multimodal read of the actual image — higher than the deterministic engine's 0.7.
+            confidence: 0.85,
             source: .label
         )
     }

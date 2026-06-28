@@ -73,11 +73,13 @@ Goal: point at a bottle → structured candidate identity. **On-device, free.**
       producer/cuvée/vintage/region/grape all correct and **reproducible**.
 - **DoD:** ✅ scan a real bottle → structured candidate identity (no enrichment yet).
 
-> **Follow-up — M2.5 (iOS 27 multimodal engine):** behind the same `IdentifyClient` seam, add
-> `MultimodalFMIdentifier` (`#available(iOS 27)`) that feeds the label **image** to Foundation Models →
-> `@Generable` in one pass (handles brand-vs-winery, multi-column, obscure varietals the iOS 26
-> deterministic rules can't). Deployment target stays iOS 26. Blocked on the iOS 27 toolchain/runtime.
-> Full design + sourced toolchain comparison in `docs/identify-engine.md`.
+> **M2.5 (iOS 27 multimodal engine) 🟡 implemented, output unvalidated:** `MultimodalFMIdentifier`
+> behind `@available(iOS 27)` on the same `IdentifyClient` seam feeds the label **image** to Foundation
+> Models → `@Generable` in one pass, grounded, with fallback to the deterministic engine. Deployment
+> target stays iOS 26 (`@_weakLinked` FoundationModels to back-deploy cleanly). Runtime-validated on the
+> iOS 27 sim: path fires, FM available, graceful fallback — but the multimodal **model isn't provisioned
+> on the sim** (`ModelManagerError 1001`), so output quality awaits a real iPhone on the iOS 27 beta.
+> Builds require **Xcode 27**. Full design + sourced toolchain comparison in `docs/identify-engine.md`.
 
 ### M3 — Resolve & Enrich (free sources)
 Goal: turn a candidate into a rich, cached `Wine`.

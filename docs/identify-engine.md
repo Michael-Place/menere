@@ -128,7 +128,29 @@ keyword adjacency (EMILIANA next to "…VINEYARDS") cleanly separates cuvée (NA
       **fuzzy (edit-distance ≤1) winery-keyword matching** so OCR slips like "VINEYARDS"→"VINEYAROS" still
       anchor the producer. Verified correct + reproducible on Château Margaux (sample) and a real Emiliana
       "Natura" Carmenère (producer=Emiliana, cuvée=Natura, vintage=2023, region=Chile, grape=Carmenère).
-- [ ] **iOS 27 `MultimodalFMIdentifier` behind `#available` (next pass)** — blocked on the iOS 27
-      toolchain/runtime (macOS update in progress). Known iOS 26 limits it should fix: producer/cuvée with
-      no winery keyword; multi-column / rotated layouts; varietal-named cuvées; vocab gaps (obscure
-      regions/grapes silently dropped).
+- [x] **iOS 27 `MultimodalFMIdentifier` implemented + runtime-validated** — behind `@available(iOS 27)` /
+      `if #available(iOS 27)`, deployment target stays iOS 26. Feeds the label image to Foundation Models
+      (`Attachment(cgImage, orientation:)` in a `respond(generating:)` `@PromptBuilder`) → `WineLabelDraft`
+      in one pass, grounded against the label's OCR text, falling back to `VisionDocumentIdentifier` when
+      the model is unavailable or errors. Lightweight `OSLog` records which engine ran + FM availability.
+- [ ] **Multimodal output *quality* still unvalidated** — on the iOS 27 *simulator* (hosted by macOS 26.5)
+      the path fires and FM reports `available`, but the multimodal **inference fails with
+      `ModelManagerError 1001`** (AFM-3 model not provisioned on this host) → graceful fallback. Validate
+      on a real iPhone on the iOS 27 beta (runs the actual AFM-3 model). Known iOS 26 limits it should fix:
+      producer/cuvée with no winery keyword; multi-column / rotated layouts; varietal-named cuvées; vocab gaps.
+
+## iOS 27 implementation notes (gotchas)
+- **Exact image API** (from `iPhoneOS27.0.sdk` FoundationModels swiftinterface): `Attachment<ImageAttachmentContent>`
+  with `init(_ cgImage: CGImage, orientation: CGImagePropertyOrientation? = nil)` (also CIImage / CVPixelBuffer /
+  imageURL — **no `UIImage` initializer**, contrary to early blogs). `Attachment` is `PromptRepresentable`, so it
+  drops into a `@PromptBuilder`. Use `session.respond(generating: T.self) { "text"; Attachment(cgImage, orientation:) }`.
+  `OCRTool`/`BarcodeReaderTool` were **not** in this module's interface — skipped.
+- **Back-deployment crash + fix:** the `@Generable` macro (built against the iOS 27 SDK) emits an *eager*
+  reference to the iOS 27-only `Generable.promptRepresentation` symbol. With an iOS 26 deployment target this
+  is strong-linked and the app **fails to launch on iOS 26** with a dyld "Symbol not found" — even with
+  `@available` on the type. Fix: **`@_weakLinked import FoundationModels`** (missing iOS 27 symbols resolve to
+  null at launch; `#available` keeps us from calling them on iOS 26). Verified: launches on iOS 26 (fallback)
+  and iOS 27 (multimodal path).
+- **Toolchain:** the project now builds **only with Xcode 27** (iOS 27 SDK symbols). SimulatorKit moved in the
+  beta (`Contents/SharedFrameworks/`), so XcodeBuildMCP UI-automation (tap/snapshot) doesn't work while the beta
+  is the active Xcode — drive the iOS 27 sim manually, or use a real device.
