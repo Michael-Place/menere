@@ -59,12 +59,25 @@ Goal: the spine everything hangs off.
 - [ ] Runtime round-trip verification (will be exercised organically by M2 scan→resolve and M5 journaling, or via a quick debug screen)
 - **DoD:** data layer in place; write/read verified once features land.
 
-### M2 — Capture & Identify (the scan)
+### M2 — Capture & Identify (the scan) ✅ COMPLETE (2026-06-28)
 Goal: point at a bottle → structured candidate identity. **On-device, free.**
-- [ ] `ScanFeature`: camera + `DataScannerViewController` (barcode) + label photo capture
-- [ ] `IdentifyClient`: barcode fast-path; Apple **Vision** OCR (`VNRecognizeTextRequest`) on the label;
-      optional on-device **Foundation Models** to structure text → `{producer, cuvée, vintage, region}`
-- **DoD:** scan a real bottle → see a structured candidate identity (no enrichment yet).
+- [x] `ScanFeature`: Scan tab; `DataScannerViewController` (barcode) + camera label capture +
+      photo-picker + a bundled "sample bottle" path; identify flow → result card (verified on simulator)
+- [x] `IdentifyClient`: barcode fast-path + a **deterministic, layout-aware engine** —
+      `VisionDocumentIdentifier` on Vision **`RecognizeDocumentsRequest`** (per-line transcript + bounding
+      box). Field assignment by **font prominence + winery-keyword adjacency** (fuzzy, OCR-tolerant) plus
+      curated grape/place vocabularies → `{producer, cuvée, vintage, region, grapes}`. **No LLM in the
+      identify path** (the OCR→Foundation-Models approach was nondeterministic at field assignment; see
+      `docs/identify-engine.md`). Per-field grounding guards retained.
+- [x] Verified on a **real bottle** (Emiliana "Natura" Carmenère, Chile, 2023) end-to-end on device:
+      producer/cuvée/vintage/region/grape all correct and **reproducible**.
+- **DoD:** ✅ scan a real bottle → structured candidate identity (no enrichment yet).
+
+> **Follow-up — M2.5 (iOS 27 multimodal engine):** behind the same `IdentifyClient` seam, add
+> `MultimodalFMIdentifier` (`#available(iOS 27)`) that feeds the label **image** to Foundation Models →
+> `@Generable` in one pass (handles brand-vs-winery, multi-column, obscure varietals the iOS 26
+> deterministic rules can't). Deployment target stays iOS 26. Blocked on the iOS 27 toolchain/runtime.
+> Full design + sourced toolchain comparison in `docs/identify-engine.md`.
 
 ### M3 — Resolve & Enrich (free sources)
 Goal: turn a candidate into a rich, cached `Wine`.

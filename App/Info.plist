@@ -20,6 +20,8 @@
 	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>NSCameraUsageDescription</key>
+	<string>Menere uses the camera to scan wine bottle labels and barcodes.</string>
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>

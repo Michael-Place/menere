@@ -16,6 +16,8 @@ let package = Package(
         .library(name: "UserDomain", targets: ["UserDomain"]),
         .library(name: "WineDomain", targets: ["WineDomain"]),
         .library(name: "PersistenceClient", targets: ["PersistenceClient"]),
+        .library(name: "IdentifyClient", targets: ["IdentifyClient"]),
+        .library(name: "ScanFeature", targets: ["ScanFeature"]),
     ],
     dependencies: [
         .package(url: "https://github.com/firebase/firebase-ios-sdk", .upToNextMajor(from: "11.13.0")),
@@ -39,6 +41,8 @@ let package = Package(
                 "UserDomain",
                 "WineDomain",
                 "PersistenceClient",
+                "IdentifyClient",
+                "ScanFeature",
             ]
         ),
         .target(
@@ -101,6 +105,23 @@ let package = Package(
                 .product(name: "Dependencies", package: "swift-dependencies"),
                 .product(name: "DependenciesMacros", package: "swift-dependencies"),
                 .product(name: "FirebaseFirestore", package: "firebase-ios-sdk"),
+                "WineDomain",
+            ]
+        ),
+        .target(
+            name: "IdentifyClient",
+            dependencies: [
+                .product(name: "Dependencies", package: "swift-dependencies"),
+                .product(name: "DependenciesMacros", package: "swift-dependencies"),
+                "WineDomain",
+            ],
+            resources: [.process("Resources")]
+        ),
+        .target(
+            name: "ScanFeature",
+            dependencies: [
+                .product(name: "ComposableArchitecture", package: "swift-composable-architecture"),
+                "IdentifyClient",
                 "WineDomain",
             ]
         ),

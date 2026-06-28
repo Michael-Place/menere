@@ -1,5 +1,6 @@
 import ComposableArchitecture
 import HomeFeature
+import ScanFeature
 import SettingsFeature
 import SwiftUI
 
@@ -9,6 +10,7 @@ public struct MainTabReducer {
     public struct State: Equatable {
         var selectedTab: TabItem = .home
         var home = HomeReducer.State()
+        var scan = ScanReducer.State()
         var settings = SettingsReducer.State()
 
         public init() {}
@@ -16,6 +18,7 @@ public struct MainTabReducer {
 
     public enum Action: Equatable, BindableAction {
         case home(HomeReducer.Action)
+        case scan(ScanReducer.Action)
         case settings(SettingsReducer.Action)
         case tabSelected(TabItem)
         case binding(BindingAction<State>)
@@ -27,6 +30,7 @@ public struct MainTabReducer {
         BindingReducer()
 
         Scope(state: \.home, action: \.home, child: HomeReducer.init)
+        Scope(state: \.scan, action: \.scan, child: ScanReducer.init)
         Scope(state: \.settings, action: \.settings, child: SettingsReducer.init)
 
         Reduce { state, action in
@@ -34,7 +38,7 @@ public struct MainTabReducer {
             case .tabSelected(let tab):
                 state.selectedTab = tab
                 return .none
-            case .home, .settings, .binding:
+            case .home, .scan, .settings, .binding:
                 return .none
             }
         }
@@ -43,11 +47,13 @@ public struct MainTabReducer {
 
 public enum TabItem: Int, CaseIterable, Equatable {
     case home
+    case scan
     case settings
 
     var title: String {
         switch self {
         case .home: "Home"
+        case .scan: "Scan"
         case .settings: "Settings"
         }
     }
@@ -55,6 +61,7 @@ public enum TabItem: Int, CaseIterable, Equatable {
     var systemImage: String {
         switch self {
         case .home: "house"
+        case .scan: "camera.viewfinder"
         case .settings: "gearshape"
         }
     }
@@ -72,6 +79,12 @@ public struct MainTabView: View {
             Tab(TabItem.home.title, systemImage: TabItem.home.systemImage, value: TabItem.home) {
                 NavigationStack {
                     HomeView(store: store.scope(state: \.home, action: \.home))
+                }
+            }
+
+            Tab(TabItem.scan.title, systemImage: TabItem.scan.systemImage, value: TabItem.scan) {
+                NavigationStack {
+                    ScanView(store: store.scope(state: \.scan, action: \.scan))
                 }
             }
 
