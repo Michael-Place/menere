@@ -1,3 +1,4 @@
+import CellarFeature
 import ComposableArchitecture
 import HomeFeature
 import ScanFeature
@@ -11,6 +12,7 @@ public struct MainTabReducer {
         var selectedTab: TabItem = .home
         var home = HomeReducer.State()
         var scan = ScanReducer.State()
+        var cellar = CellarReducer.State()
         var settings = SettingsReducer.State()
 
         public init() {}
@@ -19,6 +21,7 @@ public struct MainTabReducer {
     public enum Action: Equatable, BindableAction {
         case home(HomeReducer.Action)
         case scan(ScanReducer.Action)
+        case cellar(CellarReducer.Action)
         case settings(SettingsReducer.Action)
         case tabSelected(TabItem)
         case binding(BindingAction<State>)
@@ -31,6 +34,7 @@ public struct MainTabReducer {
 
         Scope(state: \.home, action: \.home, child: HomeReducer.init)
         Scope(state: \.scan, action: \.scan, child: ScanReducer.init)
+        Scope(state: \.cellar, action: \.cellar, child: CellarReducer.init)
         Scope(state: \.settings, action: \.settings, child: SettingsReducer.init)
 
         Reduce { state, action in
@@ -38,7 +42,7 @@ public struct MainTabReducer {
             case .tabSelected(let tab):
                 state.selectedTab = tab
                 return .none
-            case .home, .scan, .settings, .binding:
+            case .home, .scan, .cellar, .settings, .binding:
                 return .none
             }
         }
@@ -48,12 +52,14 @@ public struct MainTabReducer {
 public enum TabItem: Int, CaseIterable, Equatable {
     case home
     case scan
+    case cellar
     case settings
 
     var title: String {
         switch self {
         case .home: "Home"
         case .scan: "Scan"
+        case .cellar: "Cellar"
         case .settings: "Settings"
         }
     }
@@ -62,6 +68,7 @@ public enum TabItem: Int, CaseIterable, Equatable {
         switch self {
         case .home: "house"
         case .scan: "camera.viewfinder"
+        case .cellar: "square.stack.3d.up"
         case .settings: "gearshape"
         }
     }
@@ -85,6 +92,12 @@ public struct MainTabView: View {
             Tab(TabItem.scan.title, systemImage: TabItem.scan.systemImage, value: TabItem.scan) {
                 NavigationStack {
                     ScanView(store: store.scope(state: \.scan, action: \.scan))
+                }
+            }
+
+            Tab(TabItem.cellar.title, systemImage: TabItem.cellar.systemImage, value: TabItem.cellar) {
+                NavigationStack {
+                    CellarView(store: store.scope(state: \.cellar, action: \.cellar))
                 }
             }
 

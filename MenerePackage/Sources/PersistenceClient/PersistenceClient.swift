@@ -15,6 +15,9 @@ public struct PersistenceClient: Sendable {
     // MARK: Shared wine catalog
     /// Look up a wine in the shared catalog by canonical key. Nil if not yet known.
     public var wine: @Sendable (_ canonicalKey: String) async throws -> Wine?
+    /// Batch-fetch wines from the shared catalog by canonical key (chunked to respect Firestore's
+    /// ~10-element `in`-query cap). Order is not guaranteed; callers should key by `Wine.id`.
+    public var wines: @Sendable (_ keys: [String]) async throws -> [Wine]
     /// Create or update a wine in the shared catalog (merge).
     public var upsertWine: @Sendable (_ wine: Wine) async throws -> Void
 
@@ -39,6 +42,16 @@ extension PersistenceClient: DependencyKey {
                 let snapshot = try await wines().document(key).getDocument()
                 guard let data = snapshot.data() else { return nil }
                 return try Firestore.Decoder().decode(Wine.self, from: data)
+            },
+            wines: { keys in
+                let unique = Array(Set(keys))
+                guard !unique.isEmpty else { return [] }
+                var result: [Wine] = []
+                for chunk in stride(from: 0, to: unique.count, by: 10).map({ Array(unique[$0..<min($0 + 10, unique.count)]) }) {
+                    let snapshot = try await wines().whereField(FieldPath.documentID(), in: chunk).getDocuments()
+                    result += try snapshot.documents.map { try Firestore.Decoder().decode(Wine.self, from: $0.data()) }
+                }
+                return result
             },
             upsertWine: { wine in
                 try await wines().document(wine.id).setData(

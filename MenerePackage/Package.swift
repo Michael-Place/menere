@@ -23,6 +23,7 @@ let package = Package(
         .library(name: "ScanFeature", targets: ["ScanFeature"]),
         .library(name: "BottleCardFeature", targets: ["BottleCardFeature"]),
         .library(name: "JournalFeature", targets: ["JournalFeature"]),
+        .library(name: "CellarFeature", targets: ["CellarFeature"]),
     ],
     dependencies: [
         .package(url: "https://github.com/firebase/firebase-ios-sdk", .upToNextMajor(from: "11.13.0")),
@@ -49,6 +50,7 @@ let package = Package(
                 "StorageClient",
                 "IdentifyClient",
                 "ScanFeature",
+                "CellarFeature",
             ]
         ),
         .target(
@@ -177,6 +179,15 @@ let package = Package(
                 "StorageClient",
             ]
         ),
+        .target(
+            name: "CellarFeature",
+            dependencies: [
+                .product(name: "ComposableArchitecture", package: "swift-composable-architecture"),
+                "WineDomain",
+                "PersistenceClient",
+                "UserDomain",
+            ]
+        ),
         .testTarget(
             name: "CatalogClientTests",
             dependencies: [
@@ -220,6 +231,16 @@ let package = Package(
                 "WineDomain",
                 "PersistenceClient",
                 "StorageClient",
+            ]
+        ),
+        .testTarget(
+            name: "CellarFeatureTests",
+            dependencies: [
+                .product(name: "ComposableArchitecture", package: "swift-composable-architecture"),
+                "CellarFeature",
+                "WineDomain",
+                "PersistenceClient",
+                "UserDomain",
             ]
         ),
     ],
