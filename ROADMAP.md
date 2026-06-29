@@ -132,8 +132,12 @@ Goal: both of you on one shared cellar/history.
 - [x] Verified: admin data round-trips (household path + the join mutation) PASS; reducer tests — Settings 3, plus the uid→household migration kept BottleCard 12 / Journal 9 / Cellar 10 / Home 4 green; full-app build green on sim. (Two-device live invite/join is part of the final manual smoke test.)
 - **DoD:** both accounts read/contribute to the same cellar.
 
-### M8 — Polish + TestFlight
-- [ ] Empty/error/offline states, app icon, scan onboarding, perf pass
+### M8 — Polish + TestFlight 🟡 polish done; TestFlight upload pending (needs Apple credentials)
+- [x] Empty/error/offline states: error + "Try again" retry across Cellar/Home; explicit Firestore offline cache (`PersistentCacheSettings`); empty states across Home/Cellar/History
+- [x] Scan **first-run onboarding** explainer (persisted via `@Shared(.appStorage)`)
+- [x] **App icon** — 1024 asset catalog wired via XcodeGen (`ASSETCATALOG_COMPILER_APPICON_NAME`). NOTE: `xcodegen generate` deletes the manual `container:MenerePackage` test xcschemes — restore them with `git checkout -- Menere.xcodeproj/xcshareddata/xcschemes/` after any regen
+- [ ] **TestFlight upload** — archive + App Store Connect upload needs the Apple Developer account / App Store Connect access (can't run headlessly); human step, alongside the final manual smoke test. Build settings are TestFlight-ready (bundle `com.mplace.menere`, team `Z2FNFL3X73`, v1.0.0/build 1, icon present)
+- _Perf: not a dedicated pass — current loads are simple list joins; revisit if a real cellar gets large._
 - **DoD:** installable via TestFlight for the two of us.
 
 ---
