@@ -12,8 +12,8 @@ import Vision
 import WineDomain
 
 /// Diagnostics for which identify engine ran and how the multimodal model behaved. Capture with:
-/// `xcrun simctl spawn <udid> log stream --predicate 'subsystem == "com.mplace.menere"'`.
-private let identifyLog = Logger(subsystem: "com.mplace.menere", category: "identify")
+/// `xcrun simctl spawn <udid> log stream --predicate 'subsystem == "com.copoche.menere"'`.
+private let identifyLog = Logger(subsystem: "com.copoche.menere", category: "identify")
 
 /// Errors thrown by the identify pipeline.
 public enum IdentifyError: Error, Equatable, Sendable {

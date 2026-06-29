@@ -10,8 +10,8 @@ import OSLog
 import WineDomain
 
 /// Diagnostics for the on-device AI gap-fill: which model path ran and how it degraded. Capture with:
-/// `xcrun simctl spawn <udid> log stream --predicate 'subsystem == "com.mplace.menere"'`.
-private let enrichmentFMLog = Logger(subsystem: "com.mplace.menere", category: "enrichment.fm")
+/// `xcrun simctl spawn <udid> log stream --predicate 'subsystem == "com.copoche.menere"'`.
+private let enrichmentFMLog = Logger(subsystem: "com.copoche.menere", category: "enrichment.fm")
 
 /// The four *descriptive* enrichment fields the on-device model is allowed to write. Identity and hard
 /// facts (producer/name/vintage/region/grapes/type/abv) are NEVER produced here — those come from the

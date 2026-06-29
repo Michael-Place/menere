@@ -10,7 +10,7 @@
 	</array>
 	<key>keychain-access-groups</key>
 	<array>
-		<string>$(AppIdentifierPrefix)com.mplace.menere.firebase</string>
+		<string>$(AppIdentifierPrefix)com.copoche.menere.firebase</string>
 	</array>
 </dict>
 </plist>

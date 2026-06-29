@@ -28,12 +28,12 @@
 			<key>CFBundleTypeRole</key>
 			<string>Editor</string>
 			<key>CFBundleURLName</key>
-			<string>com.mplace.menere.firebaseauth</string>
+			<string>com.copoche.menere.firebaseauth</string>
 			<key>CFBundleURLSchemes</key>
 			<array>
 				<!-- Firebase Phone Auth callback scheme: app-<GOOGLE_APP_ID with ':' -> '-'>.
 				     Required by FirebaseAuth PhoneAuthProvider; without it the SDK fatalErrors. -->
-				<string>app-1-769612719019-ios-89bb025bd93c900aa9a8ee</string>
+				<string>app-1-769612719019-ios-ad91eddc8fa508f7a9a8ee</string>
 			</array>
 		</dict>
 	</array>

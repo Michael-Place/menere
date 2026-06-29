@@ -1,6 +1,6 @@
 name: Menere
 options:
-  bundleIdPrefix: com.mplace
+  bundleIdPrefix: com.copoche
   deploymentTarget:
     iOS: "26.0"
   xcodeVersion: "16.0"
@@ -20,7 +20,7 @@ targets:
       base:
         INFOPLIST_FILE: App/Info.plist
         CODE_SIGN_ENTITLEMENTS: App/Menere.entitlements
-        PRODUCT_BUNDLE_IDENTIFIER: com.mplace.menere
+        PRODUCT_BUNDLE_IDENTIFIER: com.copoche.menere
         MARKETING_VERSION: "1.0.0"
         CURRENT_PROJECT_VERSION: "1"
         SWIFT_VERSION: "5.0"
