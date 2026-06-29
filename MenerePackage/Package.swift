@@ -85,6 +85,9 @@ let package = Package(
             name: "HomeFeature",
             dependencies: [
                 .product(name: "ComposableArchitecture", package: "swift-composable-architecture"),
+                "WineDomain",
+                "PersistenceClient",
+                "UserDomain",
             ]
         ),
         .target(
@@ -231,6 +234,16 @@ let package = Package(
                 "WineDomain",
                 "PersistenceClient",
                 "StorageClient",
+            ]
+        ),
+        .testTarget(
+            name: "HomeFeatureTests",
+            dependencies: [
+                .product(name: "ComposableArchitecture", package: "swift-composable-architecture"),
+                "HomeFeature",
+                "WineDomain",
+                "PersistenceClient",
+                "UserDomain",
             ]
         ),
         .testTarget(

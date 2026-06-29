@@ -118,10 +118,11 @@ Goal: best-in-class logging.
 - [ ] **Pending:** one manual signed-in scan on sim → Add bottle + Log tasting → admin read-back of `/users/{uid}/bottles` + `/tastings` + linked `/wines/{key}` + Storage object (UI automation broken under the Xcode 27 beta, so this can't be driven headlessly)
 - **DoD:** can add a bottle and log a tasting; both persist per-user and link to the `Wine`.
 
-### M6 — Recall & Cellar
+### M6 — Recall & Cellar 🟢 implemented; covered by the end-of-roadmap manual smoke test
 Goal: "what do we have?" and "what did we love?"
-- [ ] `CellarFeature`: inventory list, filter/sort, drink-window surfacing
-- [ ] History/recall: search by rating ("4★+"), region, grape, date; Home becomes a dashboard
+- [x] `CellarFeature` (new Cellar tab): inventory list joining `bottles(uid)` → `wines` (new batch `PersistenceClient.wines(keys:)`); `.searchable` (producer/region/grape) + sort (recently-added/producer/vintage/drink-window) + status/type filters; **drink-window surfacing** (hold/drink-now/past classified at load from `bottle.drinkFrom/drinkBy` vs current year)
+- [x] History/recall: Cellar tab **Cellar/History segment**; tasting history joined to wines; shared search + min-rating (3/4/4.5★+), grape, and date/rating sort. **Home dashboard** (`HomeFeature`): cellared/wines/tastings/wishlist stat tiles, "drink soon" list, recent tastings
+- [x] Verified: `CellarFeature` reducer tests (10 — load+join, drink-window classify, search/status/type/sort, tasting join+orphan-drop, min-rating, grape, history sort) + `HomeFeature` reducer tests (4 — stats, drink-soon sort/cap, recent-tastings sort/cap, no-uid) + full-app build, all green on sim
 - **DoD:** browse & search the full cellar + tasting history fluidly.
 
 ### M7 — Household sharing
