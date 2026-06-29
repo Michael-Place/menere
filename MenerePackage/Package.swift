@@ -20,6 +20,7 @@ let package = Package(
         .library(name: "IdentifyClient", targets: ["IdentifyClient"]),
         .library(name: "EnrichmentClient", targets: ["EnrichmentClient"]),
         .library(name: "CatalogClient", targets: ["CatalogClient"]),
+        .library(name: "HouseholdClient", targets: ["HouseholdClient"]),
         .library(name: "ScanFeature", targets: ["ScanFeature"]),
         .library(name: "BottleCardFeature", targets: ["BottleCardFeature"]),
         .library(name: "JournalFeature", targets: ["JournalFeature"]),
@@ -96,6 +97,17 @@ let package = Package(
                 .product(name: "ComposableArchitecture", package: "swift-composable-architecture"),
                 "AuthenticationDomain",
                 "UserDomain",
+                "WineDomain",
+                "PersistenceClient",
+                "HouseholdClient",
+            ]
+        ),
+        .target(
+            name: "HouseholdClient",
+            dependencies: [
+                .product(name: "Dependencies", package: "swift-dependencies"),
+                .product(name: "DependenciesMacros", package: "swift-dependencies"),
+                .product(name: "FirebaseFunctions", package: "firebase-ios-sdk"),
             ]
         ),
         .target(
@@ -243,6 +255,17 @@ let package = Package(
                 "HomeFeature",
                 "WineDomain",
                 "PersistenceClient",
+                "UserDomain",
+            ]
+        ),
+        .testTarget(
+            name: "SettingsFeatureTests",
+            dependencies: [
+                .product(name: "ComposableArchitecture", package: "swift-composable-architecture"),
+                "SettingsFeature",
+                "WineDomain",
+                "PersistenceClient",
+                "HouseholdClient",
                 "UserDomain",
             ]
         ),

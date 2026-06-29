@@ -125,9 +125,11 @@ Goal: "what do we have?" and "what did we love?"
 - [x] Verified: `CellarFeature` reducer tests (10 — load+join, drink-window classify, search/status/type/sort, tasting join+orphan-drop, min-rating, grape, history sort) + `HomeFeature` reducer tests (4 — stats, drink-soon sort/cap, recent-tastings sort/cap, no-uid) + full-app build, all green on sim
 - **DoD:** browse & search the full cellar + tasting history fluidly.
 
-### M7 — Household sharing
+### M7 — Household sharing 🟢 implemented; live invite/join exercised in the end-of-roadmap smoke test
 Goal: both of you on one shared cellar/history.
-- [ ] Shared "household" space in Firestore; invite/join; shared bottles + tastings
+- [x] Shared `/households/{hid}/{bottles,tastings}` space + member-gated Firestore rules (deployed). `Household{members[],ownerUid,inviteCode}` + `User.householdId`; a personal household is auto-created on auth (`ensureHousehold`) and the hid stored in `@Shared(.user)`. All journal/cellar/home reads+writes key on the household. (Tasting photos stay under the uploader's `/users/{uid}` Storage path — shared via download-URL tokens.)
+- [x] Invite/join: `joinHousehold(code)` **Cloud Function** (deployed us-central1; finds household by invite code, `arrayUnion`s the caller into members, sets their `householdId`) + Settings "Household" section (shows your invite code, Join-by-code via `HouseholdClient`).
+- [x] Verified: admin data round-trips (household path + the join mutation) PASS; reducer tests — Settings 3, plus the uid→household migration kept BottleCard 12 / Journal 9 / Cellar 10 / Home 4 green; full-app build green on sim. (Two-device live invite/join is part of the final manual smoke test.)
 - **DoD:** both accounts read/contribute to the same cellar.
 
 ### M8 — Polish + TestFlight
