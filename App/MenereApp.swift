@@ -2,6 +2,7 @@ import AppCore
 import ComposableArchitecture
 import FirebaseAuth
 import Firebase
+import FirebaseFirestore
 import SwiftUI
 import UIKit
 
@@ -39,6 +40,14 @@ class AppDelegate: NSObject, UIApplicationDelegate {
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
     ) -> Bool {
         FirebaseApp.configure()
+
+        // Make Firestore offline persistence explicit (it's on by default, but pin it so cellar /
+        // home / scan reads serve from the local cache when the device is offline). Must be set
+        // before any Firestore access.
+        let settings = FirestoreSettings()
+        settings.cacheSettings = PersistentCacheSettings()
+        Firestore.firestore().settings = settings
+
         #if DEBUG
         // Let Firebase phone-auth *test numbers* work on the Simulator, where there is no APNs
         // and no reCAPTCHA client configured. Never enabled in release builds.

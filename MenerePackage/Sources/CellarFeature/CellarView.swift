@@ -375,11 +375,16 @@ public struct CellarView: View {
             ProgressView()
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if let error = store.loadError {
-            ContentUnavailableView(
-                "Couldn't load your cellar",
-                systemImage: "exclamationmark.triangle",
-                description: Text(error)
-            )
+            ContentUnavailableView {
+                Label("Couldn't load your cellar", systemImage: "exclamationmark.triangle")
+            } description: {
+                Text(error)
+            } actions: {
+                Button("Try again") { store.send(.task) }
+                    .buttonStyle(.borderedProminent)
+                    .accessibilityIdentifier("cellar-error-retry")
+            }
+            .accessibilityIdentifier("cellar-error")
         } else if store.rows.isEmpty {
             ContentUnavailableView(
                 "No bottles yet",
@@ -427,11 +432,16 @@ public struct CellarView: View {
             ProgressView()
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if let error = store.loadError {
-            ContentUnavailableView(
-                "Couldn't load your history",
-                systemImage: "exclamationmark.triangle",
-                description: Text(error)
-            )
+            ContentUnavailableView {
+                Label("Couldn't load your history", systemImage: "exclamationmark.triangle")
+            } description: {
+                Text(error)
+            } actions: {
+                Button("Try again") { store.send(.task) }
+                    .buttonStyle(.borderedProminent)
+                    .accessibilityIdentifier("cellar-history-error-retry")
+            }
+            .accessibilityIdentifier("cellar-history-error")
         } else if store.tastingRows.isEmpty {
             ContentUnavailableView(
                 "No tastings yet",

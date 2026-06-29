@@ -341,4 +341,55 @@ final class CellarReducerTests: XCTestCase {
         await store.send(.binding(.set(\.searchText, "dad"))) { $0.searchText = "dad" }
         XCTAssertEqual(store.state.visibleTastingRows.map(\.id), ["r"])
     }
+
+    // MARK: 11. Load failure surfaces error; retry clears it and reloads
+
+    func testLoadFailureSurfacesErrorThenRetryReloads() async {
+        await withDependencies {
+            $0.defaultFileStorage = .inMemory
+        } operation: {
+            @Shared(.user) var user
+            $user.withLock { $0 = User(id: "uid-1", displayName: "T", householdId: "hid-1") }
+
+            let failing = LockIsolated(true)
+            let w = Wine(producer: "Estate", vintage: 2018)
+            let b = Bottle(id: "b1", wineId: w.id, status: .cellared,
+                           createdAt: Date(timeIntervalSince1970: 100))
+
+            let store = TestStore(initialState: CellarReducer.State()) {
+                CellarReducer()
+            } withDependencies: {
+                $0.persistence.bottles = { _ in
+                    if failing.value { throw StubError() }
+                    return [b]
+                }
+                $0.persistence.tastings = { _ in [] }
+                $0.persistence.wines = { _ in [w] }
+                $0.date = .constant(self.year2026)
+            }
+
+            // First load fails → loadError surfaced.
+            await store.send(.task) {
+                $0.isLoading = true
+                $0.loadError = nil
+            }
+            await store.receive(\.loadFailed) {
+                $0.isLoading = false
+                $0.loadError = "load failed"
+            }
+
+            // Retry: flip the stub to succeed; .task clears the error and reloads.
+            failing.setValue(false)
+            await store.send(.task) {
+                $0.isLoading = true
+                $0.loadError = nil
+            }
+            let row = CellarRow(bottle: b, wine: w, drinkStatus: .unknown)
+            await store.receive(.loaded([row])) {
+                $0.isLoading = false
+                $0.rows = [row]
+            }
+            await store.receive(.tastingsLoaded([]))
+        }
+    }
 }

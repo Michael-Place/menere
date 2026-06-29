@@ -23,6 +23,10 @@ public struct ScanReducer {
 
         public var status: Status = .idle
 
+        /// First-run onboarding: drives the one-screen Scan explainer sheet. Set on `.task` when the
+        /// persisted `hasSeenScanIntro` flag is still false; cleared on `.onboardingDismissed`.
+        public var showOnboarding = false
+
         /// The label image bytes captured for the in-flight scan (camera capture, chosen photo, or the
         /// sample bottle). Threaded into the bottle card so it can render the *local* image immediately
         /// (M4 only DISPLAYS it — no Storage upload / `labelImageURL` write; that's a later milestone).
@@ -46,6 +50,7 @@ public struct ScanReducer {
 
     public enum Action: Equatable {
         case task
+        case onboardingDismissed
         case useSampleTapped
         case imageCaptured(Data)
         case barcodeScanned(String, String?)
@@ -63,6 +68,17 @@ public struct ScanReducer {
         Reduce { state, action in
             switch action {
             case .task:
+                // First run only: show the Scan explainer until the user dismisses it once.
+                @Shared(.appStorage("hasSeenScanIntro")) var hasSeenScanIntro = false
+                if !hasSeenScanIntro {
+                    state.showOnboarding = true
+                }
+                return .none
+
+            case .onboardingDismissed:
+                @Shared(.appStorage("hasSeenScanIntro")) var hasSeenScanIntro = false
+                $hasSeenScanIntro.withLock { $0 = true }
+                state.showOnboarding = false
                 return .none
 
             case .useSampleTapped:
@@ -178,6 +194,16 @@ public struct ScanView: View {
             .animation(.default, value: store.status)
             .navigationTitle("Scan")
             .task { store.send(.task) }
+            .sheet(
+                isPresented: Binding(
+                    get: { store.showOnboarding },
+                    set: { isPresented in
+                        if !isPresented { store.send(.onboardingDismissed) }
+                    }
+                )
+            ) {
+                ScanOnboardingView { store.send(.onboardingDismissed) }
+            }
     }
 
     @ViewBuilder
@@ -367,6 +393,94 @@ public struct ScanView: View {
             .accessibilityIdentifier("try-again-button")
         }
         .padding()
+    }
+}
+
+// MARK: - First-run onboarding
+
+/// A friendly one-screen explainer shown the first time the Scan tab is opened. Explains what
+/// scanning does and the three ways to capture a bottle, then persists `hasSeenScanIntro` on dismiss.
+private struct ScanOnboardingView: View {
+    let onDismiss: () -> Void
+
+    var body: some View {
+        VStack(spacing: 0) {
+            ScrollView {
+                VStack(spacing: 24) {
+                    VStack(spacing: 12) {
+                        Image(systemName: "camera.viewfinder")
+                            .font(.system(size: 56))
+                            .foregroundStyle(.tint)
+                        Text("Scan any bottle")
+                            .font(.largeTitle.bold())
+                            .multilineTextAlignment(.center)
+                        Text("Point at a wine and Menere identifies it from the label, then builds a bottle card you can save or rate.")
+                            .font(.body)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+                    }
+                    .padding(.top, 32)
+
+                    VStack(alignment: .leading, spacing: 20) {
+                        OnboardingRow(
+                            systemImage: "barcode.viewfinder",
+                            title: "Scan a barcode",
+                            detail: "Fastest when the back label has one."
+                        )
+                        OnboardingRow(
+                            systemImage: "camera",
+                            title: "Photograph the label",
+                            detail: "Hold steady so the text is sharp."
+                        )
+                        OnboardingRow(
+                            systemImage: "wineglass",
+                            title: "Try a sample",
+                            detail: "Not near a bottle? Use the sample to see how it works."
+                        )
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 8)
+                }
+                .padding(.horizontal, 24)
+            }
+
+            Button {
+                onDismiss()
+            } label: {
+                Text("Got it")
+                    .font(.headline)
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.large)
+            .padding(.horizontal, 24)
+            .padding(.vertical, 16)
+            .accessibilityIdentifier("scan-onboarding-dismiss")
+        }
+        .accessibilityIdentifier("scan-onboarding")
+        .interactiveDismissDisabled()
+    }
+}
+
+private struct OnboardingRow: View {
+    let systemImage: String
+    let title: String
+    let detail: String
+
+    var body: some View {
+        HStack(spacing: 16) {
+            Image(systemName: systemImage)
+                .font(.title2)
+                .foregroundStyle(.tint)
+                .frame(width: 40)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.headline)
+                Text(detail)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+        }
     }
 }
 

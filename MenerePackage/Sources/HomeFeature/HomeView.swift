@@ -241,11 +241,16 @@ public struct HomeView: View {
                 ProgressView()
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if let error = store.loadError {
-                ContentUnavailableView(
-                    "Couldn't load your dashboard",
-                    systemImage: "exclamationmark.triangle",
-                    description: Text(error)
-                )
+                ContentUnavailableView {
+                    Label("Couldn't load your dashboard", systemImage: "exclamationmark.triangle")
+                } description: {
+                    Text(error)
+                } actions: {
+                    Button("Try again") { store.send(.task) }
+                        .buttonStyle(.borderedProminent)
+                        .accessibilityIdentifier("home-error-retry")
+                }
+                .accessibilityIdentifier("home-error")
             } else if store.data.isEmpty {
                 ContentUnavailableView(
                     "Your cellar is empty",

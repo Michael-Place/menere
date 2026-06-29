@@ -95,6 +95,27 @@ final class ScanReducerTests: XCTestCase {
         XCTAssertNil(store.state.capturedImageData, "barcode path must never set an image")
     }
 
+    /// First run: with `hasSeenScanIntro` unset, `.task` shows the onboarding explainer;
+    /// `.onboardingDismissed` hides it and persists the flag so it never reappears.
+    func testFirstRunShowsOnboardingThenDismissPersists() async {
+        await withDependencies {
+            $0.defaultAppStorage = .inMemory
+        } operation: {
+            let store = TestStore(initialState: ScanReducer.State()) {
+                ScanReducer()
+            }
+
+            await store.send(.task) {
+                $0.showOnboarding = true
+            }
+            await store.send(.onboardingDismissed) {
+                $0.showOnboarding = false
+            }
+            // Flag is now persisted → a subsequent `.task` does NOT reshow the explainer.
+            await store.send(.task)
+        }
+    }
+
     /// `.scanAgain` returns to a clean `.idle` state and clears any captured image.
     func testScanAgainResetsToIdleAndClearsImage() async {
         let resolvedWine = Wine(producer: "Anything", vintage: 2020)
