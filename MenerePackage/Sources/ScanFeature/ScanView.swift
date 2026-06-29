@@ -1,3 +1,5 @@
+import BottleCardFeature
+import CatalogClient
 import ComposableArchitecture
 import IdentifyClient
 import PhotosUI
@@ -14,12 +16,32 @@ public struct ScanReducer {
             case idle
             case identifying
             case result(WineCandidate)
+            case resolving(WineCandidate)
+            case resolved(Wine)
             case failed(String)
         }
 
         public var status: Status = .idle
 
+        /// The label image bytes captured for the in-flight scan (camera capture, chosen photo, or the
+        /// sample bottle). Threaded into the bottle card so it can render the *local* image immediately
+        /// (M4 only DISPLAYS it — no Storage upload / `labelImageURL` write; that's a later milestone).
+        /// Nil for the barcode path (no image) and cleared on `.scanAgain`.
+        public var capturedImageData: Data?
+
+        /// M5: the composed bottle-card child store, built once resolution succeeds. Rendered inline
+        /// (not as a sheet) so the journaling buttons + form sheets are properly wired.
+        public var bottleCard: BottleCardFeature.State?
+
         public init() {}
+
+        /// The catalog-resolved `Wine` (with `enrichment` + per-field `provenance`) once resolution has
+        /// succeeded, else nil. Lets the view layer / M4 bottle card read the enriched wine and render
+        /// provenance badges without re-matching the `Status` enum.
+        public var resolvedWine: Wine? {
+            guard case let .resolved(wine) = status else { return nil }
+            return wine
+        }
     }
 
     public enum Action: Equatable {
@@ -29,7 +51,10 @@ public struct ScanReducer {
         case barcodeScanned(String, String?)
         case identifyResponse(WineCandidate)
         case identifyFailed(String)
+        case resolveResponse(Wine)
+        case resolveFailed(String)
         case scanAgain
+        case bottleCard(BottleCardFeature.Action)
     }
 
     public init() {}
@@ -41,11 +66,13 @@ public struct ScanReducer {
                 return .none
 
             case .useSampleTapped:
+                let sampleData = IdentifyFixtures.sampleLabelImageData
+                state.capturedImageData = sampleData
                 state.status = .identifying
                 return .run { send in
                     @Dependency(\.identify) var identify
                     do {
-                        let candidate = try await identify.identify(IdentifyFixtures.sampleLabelImageData)
+                        let candidate = try await identify.identify(sampleData)
                         await send(.identifyResponse(candidate))
                     } catch {
                         await send(.identifyFailed(error.localizedDescription))
@@ -53,6 +80,7 @@ public struct ScanReducer {
                 }
 
             case .imageCaptured(let data):
+                state.capturedImageData = data
                 state.status = .identifying
                 return .run { send in
                     @Dependency(\.identify) var identify
@@ -65,6 +93,8 @@ public struct ScanReducer {
                 }
 
             case let .barcodeScanned(payload, symbology):
+                // Barcode scans carry no label image.
+                state.capturedImageData = nil
                 state.status = .identifying
                 return .run { send in
                     @Dependency(\.identify) var identify
@@ -73,17 +103,53 @@ public struct ScanReducer {
                 }
 
             case .identifyResponse(let candidate):
-                state.status = .result(candidate)
-                return .none
+                // Resolve the confirmed candidate against the shared catalog (cache hit or create).
+                state.status = .resolving(candidate)
+                return .run { send in
+                    @Dependency(\.catalog) var catalog
+                    do {
+                        let wine = try await catalog.resolve(candidate)
+                        await send(.resolveResponse(wine))
+                    } catch {
+                        await send(.resolveFailed(error.localizedDescription))
+                    }
+                }
 
             case .identifyFailed(let message):
                 state.status = .failed(message)
                 return .none
 
+            case .resolveResponse(let wine):
+                state.status = .resolved(wine)
+                state.bottleCard = BottleCardFeature.State(
+                    wine: wine,
+                    imageData: state.capturedImageData,
+                    isResolving: false
+                )
+                return .none
+
+            case .resolveFailed:
+                // Graceful fallback: barcode-only / insufficient-identity candidates can't resolve,
+                // so keep the candidate visible rather than breaking the scan UX.
+                if case let .resolving(candidate) = state.status {
+                    state.status = .result(candidate)
+                }
+                state.bottleCard = nil
+                return .none
+
             case .scanAgain:
+                // Return to a clean idle state, dropping the captured image.
+                state.capturedImageData = nil
                 state.status = .idle
+                state.bottleCard = nil
+                return .none
+
+            case .bottleCard:
                 return .none
             }
+        }
+        .ifLet(\.bottleCard, action: \.bottleCard) {
+            BottleCardFeature()
         }
     }
 }
@@ -109,6 +175,7 @@ public struct ScanView: View {
     public var body: some View {
         content
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .animation(.default, value: store.status)
             .navigationTitle("Scan")
             .task { store.send(.task) }
     }
@@ -124,9 +191,68 @@ public struct ScanView: View {
             CandidateResultView(candidate: candidate) {
                 store.send(.scanAgain)
             }
+        case .resolving(let candidate):
+            // M4 Phase 2 progressive reveal: render the card the instant we have identity, with
+            // enrichment-derived rows shown as shimmer placeholders while catalog resolution runs.
+            // Same view type + stable `.id` as the `.resolved` branch ⇒ the shimmer fills in rather
+            // than the view swapping.
+            bottleCard(resolvingCardState(candidate))
+        case .resolved:
+            // M4/M5: the enriched, provenance-badged bottle card backed by a REAL composed child
+            // store so the journaling buttons + form sheets are wired. Same `.id` as the resolving
+            // path so identity is preserved across the resolving→resolved transition.
+            if let cardStore = store.scope(state: \.bottleCard, action: \.bottleCard) {
+                BottleCardView(store: cardStore)
+                    .id("bottle-card")
+                    .safeAreaInset(edge: .bottom) {
+                        scanAgainButton
+                    }
+            }
         case .failed(let message):
             failedView(message)
         }
+    }
+
+    /// The shared bottle-card presentation used for both `.resolving` and `.resolved`. A stable `.id`
+    /// keeps SwiftUI identity across the two states so the progressive reveal animates in place.
+    private func bottleCard(_ state: BottleCardFeature.State) -> some View {
+        BottleCardView(state: state)
+            .id("bottle-card")
+            .safeAreaInset(edge: .bottom) {
+                scanAgainButton
+            }
+    }
+
+    /// Shared "Scan again" affordance pinned to the bottom of the card (both resolving + resolved).
+    private var scanAgainButton: some View {
+        Button("Scan again") {
+            store.send(.scanAgain)
+        }
+        .buttonStyle(.borderedProminent)
+        .padding()
+        .frame(maxWidth: .infinity)
+        .background(.thinMaterial)
+        .accessibilityIdentifier("scan-again-button")
+    }
+
+    /// Build the resolving-state card from the candidate's *identity* (known the instant the scan
+    /// completes). Uses `provisionalWine` when the candidate has enough identity to form one, else a
+    /// minimal identity `Wine` from the candidate fields. Enrichment is still in flight, so the card
+    /// renders those rows as shimmer.
+    private func resolvingCardState(_ candidate: WineCandidate) -> BottleCardFeature.State {
+        let wine = candidate.provisionalWine ?? Wine(
+            producer: candidate.producer ?? "Identifying…",
+            name: candidate.name,
+            vintage: candidate.vintage,
+            region: candidate.region,
+            grapes: candidate.grapes
+        )
+        return BottleCardFeature.State(
+            wine: wine,
+            candidate: candidate,
+            imageData: store.capturedImageData,
+            isResolving: true
+        )
     }
 
     private var idleView: some View {

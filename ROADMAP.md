@@ -81,27 +81,41 @@ Goal: point at a bottle → structured candidate identity. **On-device, free.**
 > on the sim** (`ModelManagerError 1001`), so output quality awaits a real iPhone on the iOS 27 beta.
 > Builds require **Xcode 27**. Full design + sourced toolchain comparison in `docs/identify-engine.md`.
 
-### M3 — Resolve & Enrich (free sources)
+### M3 — Resolve & Enrich (free sources) 🟢 implemented; one manual e2e scan pending
 Goal: turn a candidate into a rich, cached `Wine`.
-- [ ] `CatalogClient`: look up canonical key in shared `/wines`; cache hit → instant return
-- [ ] `EnrichmentClient` (on miss): fan out to **Open Food Facts** (barcode), **TTB COLA** (US label
-      image + class/type), **Wikidata** (grape/region taxonomy); optional Foundation Models for gaps
-- [ ] Merge with per-field **provenance + confidence**; authoritative sources override AI; never fabricate
-      verifiable facts (scores/ABV)
-- [ ] Write resolved `Wine` back to shared catalog
+- [x] `CatalogClient`: canonical-key lookup in shared `/wines`; cache hit → instant return; miss → enrich → upsert → return (stable `resolve(WineCandidate)→Wine` seam)
+- [x] `EnrichmentClient` (on miss): concurrent, resilient fan-out — **Open Food Facts** (barcode→product, client-side keyless), **Wikidata** (grape→wine-color→`WineType`, client-side SPARQL), **TTB COLA** (US class/type via a deployed Cloud Function `ttbColaLookup`), **Foundation Models** second-pass gap-fill for descriptive fields (on-device, iOS 26 `SystemLanguageModel` / iOS 27 PCC, `@_weakLinked` back-deploy)
+- [x] `MergeEngine`: per-field **provenance + confidence**; authority `user > authoritative {OFF/TTB/Wikidata/Kroger} > ocr > llm`; `user` never overwritten; **hard facts (`abv`) rejected from `llm`**; `.llm` fills only still-empty descriptive fields (world-knowledge fill returns here, identity-grounded)
+- [x] Write resolved `Wine` back to shared catalog (`upsertWine`); wired into `ScanFeature` (`.identifyResponse → .resolving → catalog.resolve → .resolved(Wine)`, graceful fallback to `.result(candidate)`)
+- [x] **Decision:** on-device for all free/keyless sources (CORS is moot for native `URLSession`; `/wines` is the shared cache); Cloud Functions reserved for messy/keyed sources — TTB COLA proxied via a deployed `onCall` fn (project on Blaze), tested live end-to-end
+- [x] Verified: full unit coverage (merge authority/guards, cache hit/miss) + **live** OFF/Wikidata/TTB round-trips + a **live e2e enrichment test** (real fan-out → multi-source provenance map) all green on the iOS 27 sim
+- [ ] **Pending:** one manual signed-in scan on sim/device → confirm the real `/wines/{key}` doc via the admin read-back (UI automation broken under the Xcode 27 beta, so this can't be driven headlessly)
 - **DoD:** scan → enriched `Wine` with provenance, persisted to the shared catalog.
 
-### M4 — Present (the bottle card)
+> **M3 toolchain/infra notes:** TTB Cloud Function deployed at
+> `https://us-central1-menere.cloudfunctions.net/ttbColaLookup` (Node 22, firebase-functions v2 `onCall`,
+> region us-central1; scrapes the TTB COLA public registry — handles its missing TLS intermediate cert +
+> 15-year date-window cap; `// TODO` enforce App Check/auth before public launch). On-device AI-fill is
+> validated for code-path + graceful fallback only; generated-text **quality** awaits a real device with
+> Apple Intelligence (AFM model isn't provisioned on the sim → `ModelManagerError 1001` → degrade-to-nil).
+
+### M4 — Present (the bottle card) 🟢 implemented; visual confirmation pending
 Goal: the moment that makes someone point their phone at a shelf.
-- [ ] `BottleCardFeature`: progressive/streaming card (fast fields first, authoritative fill-in)
-- [ ] Provenance badges (verified vs AI estimate); label image; region/grape/style/drink-window
+- [x] `BottleCardFeature`: progressive card — identity + captured label image render instantly, enrichment-derived rows (style/ABV/drink-window/summary/pairings/producer-note) **shimmer** (`.redacted` + sweep) while `catalog.resolve` runs, then fill in. Same view + stable `.id` across `.resolving(candidate)`→`.resolved(wine)` so it animates rather than swaps
+- [x] **Provenance badges** per derived fact: Verified (OFF/Wikidata/TTB) · AI estimate (`.llm`) · Scanned (`.ocr`) · You (`.user`); + a legend. Label image (in-memory captured `Data`; Storage upload/`labelImageURL` deferred). Region/grape(chips)/style/ABV/drink-window all rendered, nil rows skipped
+- [x] Wired into `ScanFeature` (renders for `.resolving`+`.resolved`; `capturedImageData` threaded through state, cleared on `.scanAgain`); polished `.failed` + barcode-only `.result` fallback
+- [x] Verified: `BottleCardFeature` badge-mapping unit tests + `ScanFeature` `TestStore` tests (image thread-through, progressive states, barcode fallback, scan-again reset) all green; 5 `#Preview`s incl. resolving-shimmer + enriched-with-image
+- [ ] **Pending:** human visual eyeball on sim/device (UI automation broken under the Xcode 27 beta) — same manual scan also closes M3's `/wines` write check
 - **DoD:** a beautiful bottle card rendered from a live scan.
 
-### M5 — Journal (buy/drink) — the retention core
+### M5 — Journal (buy/drink) — the retention core 🟢 implemented; one manual e2e pending
 Goal: best-in-class logging.
-- [ ] From the card: **Add to cellar** (`Bottle`: price, qty, store, location, drink-from/by)
-- [ ] **Log a tasting** (`Tasting`: ★ + optional 100-pt, free text, optional WSET-structured note,
-      photos, who/occasion)
+- [x] From the card: **Add to cellar** — `JournalFeature.BottleFormReducer` (price, qty, currency, store, location, drink-from/by, status picker); `persistence.saveBottle(uid, Bottle)` with `wineId = wine.id`
+- [x] **Log a tasting** — `JournalFeature.TastingFormReducer` (★ `ratingStars` + optional 100-pt, free-text note, free-text SAT sections, who/occasion, optional link to a cellared `Bottle` of this wine); `persistence.saveTasting(uid, Tasting)`
+- [x] **Photos:** stood up Firebase **Storage** (previously absent) — owner-only `storage.rules` deployed; `StorageClient.uploadTastingPhoto(uid, tastingId, Data)→URL` (bucket `menere.firebasestorage.app`); tasting form `PhotosPicker` → upload → `Tasting.photoURLs`
+- [x] **Wiring:** `BottleCardFeature` gains `@Presents destination` (Add-to-cellar / Log-tasting) + buttons; reads the signed-in uid via `@Shared(.user)` and injects it so the forms stay pure; `ScanReducer` now hosts the card as a real composed child (set on `.resolveResponse`). SAT kept **free text** (WSET trademark — no verbatim enums)
+- [x] Verified: `JournalFeature` reducer tests (bottle 3 / tasting 6 — incl. photo-upload, no-photo-no-Storage-call, upload-failure, SAT→nil, bottle-link filter), `BottleCardFeature` destination tests, updated `ScanFeature` `TestStore` tests, full-app build — all green on the sim; Storage admin upload/download round-trip PASS
+- [ ] **Pending:** one manual signed-in scan on sim → Add bottle + Log tasting → admin read-back of `/users/{uid}/bottles` + `/tastings` + linked `/wines/{key}` + Storage object (UI automation broken under the Xcode 27 beta, so this can't be driven headlessly)
 - **DoD:** can add a bottle and log a tasting; both persist per-user and link to the `Wine`.
 
 ### M6 — Recall & Cellar

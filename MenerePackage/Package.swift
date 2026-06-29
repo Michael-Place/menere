@@ -16,8 +16,13 @@ let package = Package(
         .library(name: "UserDomain", targets: ["UserDomain"]),
         .library(name: "WineDomain", targets: ["WineDomain"]),
         .library(name: "PersistenceClient", targets: ["PersistenceClient"]),
+        .library(name: "StorageClient", targets: ["StorageClient"]),
         .library(name: "IdentifyClient", targets: ["IdentifyClient"]),
+        .library(name: "EnrichmentClient", targets: ["EnrichmentClient"]),
+        .library(name: "CatalogClient", targets: ["CatalogClient"]),
         .library(name: "ScanFeature", targets: ["ScanFeature"]),
+        .library(name: "BottleCardFeature", targets: ["BottleCardFeature"]),
+        .library(name: "JournalFeature", targets: ["JournalFeature"]),
     ],
     dependencies: [
         .package(url: "https://github.com/firebase/firebase-ios-sdk", .upToNextMajor(from: "11.13.0")),
@@ -41,6 +46,7 @@ let package = Package(
                 "UserDomain",
                 "WineDomain",
                 "PersistenceClient",
+                "StorageClient",
                 "IdentifyClient",
                 "ScanFeature",
             ]
@@ -109,6 +115,14 @@ let package = Package(
             ]
         ),
         .target(
+            name: "StorageClient",
+            dependencies: [
+                .product(name: "Dependencies", package: "swift-dependencies"),
+                .product(name: "DependenciesMacros", package: "swift-dependencies"),
+                .product(name: "FirebaseStorage", package: "firebase-ios-sdk"),
+            ]
+        ),
+        .target(
             name: "IdentifyClient",
             dependencies: [
                 .product(name: "Dependencies", package: "swift-dependencies"),
@@ -118,11 +132,94 @@ let package = Package(
             resources: [.process("Resources")]
         ),
         .target(
+            name: "EnrichmentClient",
+            dependencies: [
+                .product(name: "Dependencies", package: "swift-dependencies"),
+                .product(name: "DependenciesMacros", package: "swift-dependencies"),
+                "WineDomain",
+            ]
+        ),
+        .target(
+            name: "CatalogClient",
+            dependencies: [
+                .product(name: "Dependencies", package: "swift-dependencies"),
+                .product(name: "DependenciesMacros", package: "swift-dependencies"),
+                "WineDomain",
+                "PersistenceClient",
+                "EnrichmentClient",
+            ]
+        ),
+        .target(
             name: "ScanFeature",
             dependencies: [
                 .product(name: "ComposableArchitecture", package: "swift-composable-architecture"),
                 "IdentifyClient",
+                "CatalogClient",
                 "WineDomain",
+                "BottleCardFeature",
+            ]
+        ),
+        .target(
+            name: "BottleCardFeature",
+            dependencies: [
+                .product(name: "ComposableArchitecture", package: "swift-composable-architecture"),
+                "WineDomain",
+                "JournalFeature",
+                "UserDomain",
+            ]
+        ),
+        .target(
+            name: "JournalFeature",
+            dependencies: [
+                .product(name: "ComposableArchitecture", package: "swift-composable-architecture"),
+                "WineDomain",
+                "PersistenceClient",
+                "StorageClient",
+            ]
+        ),
+        .testTarget(
+            name: "CatalogClientTests",
+            dependencies: [
+                "CatalogClient",
+                "PersistenceClient",
+                "EnrichmentClient",
+                "WineDomain",
+            ]
+        ),
+        .testTarget(
+            name: "EnrichmentClientTests",
+            dependencies: [
+                "EnrichmentClient",
+                "WineDomain",
+            ]
+        ),
+        .testTarget(
+            name: "BottleCardFeatureTests",
+            dependencies: [
+                "BottleCardFeature",
+                "WineDomain",
+                "JournalFeature",
+                "UserDomain",
+            ]
+        ),
+        .testTarget(
+            name: "ScanFeatureTests",
+            dependencies: [
+                .product(name: "ComposableArchitecture", package: "swift-composable-architecture"),
+                "ScanFeature",
+                "IdentifyClient",
+                "CatalogClient",
+                "WineDomain",
+            ]
+        ),
+        .testTarget(
+            name: "JournalFeatureTests",
+            dependencies: [
+                .product(name: "ComposableArchitecture", package: "swift-composable-architecture"),
+                "JournalFeature",
+                "WineDomain",
+                "PersistenceClient",
+                "StorageClient",
             ]
         ),
     ],
