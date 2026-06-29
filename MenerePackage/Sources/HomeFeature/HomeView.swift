@@ -168,13 +168,13 @@ public struct HomeReducer {
                 @Dependency(\.date) var date
                 return .run { send in
                     @Shared(.user) var user
-                    guard let uid = user?.id else {
+                    guard let hid = user?.householdId else {
                         await send(.loaded(.empty))
                         return
                     }
                     do {
-                        let bottles = try await persistence.bottles(uid)
-                        let tastings = try await persistence.tastings(uid)
+                        let bottles = try await persistence.bottles(hid)
+                        let tastings = try await persistence.tastings(hid)
                         let keys = Set(bottles.map(\.wineId) + tastings.map(\.wineId))
                         let wines = try await persistence.wines(Array(keys))
                         let byKey = Dictionary(uniqueKeysWithValues: wines.map { ($0.id, $0) })

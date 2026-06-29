@@ -5,15 +5,18 @@ public struct User: Codable, Equatable, Sendable {
     public let id: String
     public var displayName: String
     public var createdAt: Date
+    public var householdId: String?
 
     public init(
         id: String,
         displayName: String = "",
-        createdAt: Date = Date()
+        createdAt: Date = Date(),
+        householdId: String? = nil
     ) {
         self.id = id
         self.displayName = displayName
         self.createdAt = createdAt
+        self.householdId = householdId
     }
 }
 

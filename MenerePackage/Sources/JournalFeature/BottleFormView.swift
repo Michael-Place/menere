@@ -12,7 +12,7 @@ public struct BottleFormReducer {
     @ObservableState
     public struct State: Equatable {
         public let wine: Wine
-        public let uid: String
+        public let hid: String
 
         var priceText: String = ""
         var currency: String = "USD"
@@ -27,9 +27,9 @@ public struct BottleFormReducer {
         var isSaving: Bool = false
         var errorMessage: String?
 
-        public init(wine: Wine, uid: String) {
+        public init(wine: Wine, hid: String) {
             self.wine = wine
-            self.uid = uid
+            self.hid = hid
         }
     }
 
@@ -79,9 +79,9 @@ public struct BottleFormReducer {
                 )
                 state.isSaving = true
                 state.errorMessage = nil
-                return .run { [uid = state.uid] send in
+                return .run { [hid = state.hid] send in
                     do {
-                        try await persistence.saveBottle(uid, bottle)
+                        try await persistence.saveBottle(hid, bottle)
                         await send(.saveResponse(.success(bottle)))
                     } catch {
                         await send(.saveResponse(.failure(error.localizedDescription)))

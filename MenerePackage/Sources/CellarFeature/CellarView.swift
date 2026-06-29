@@ -275,14 +275,14 @@ public struct CellarReducer {
                 @Dependency(\.date) var date
                 return .run { send in
                     @Shared(.user) var user
-                    guard let uid = user?.id else {
+                    guard let hid = user?.householdId else {
                         await send(.loaded([]))
                         await send(.tastingsLoaded([]))
                         return
                     }
                     do {
-                        let bottles = try await persistence.bottles(uid)
-                        let tastings = try await persistence.tastings(uid)
+                        let bottles = try await persistence.bottles(hid)
+                        let tastings = try await persistence.tastings(hid)
                         // Union the wine ids needed by both lists into one batch fetch.
                         let wineIds = Array(Set(bottles.map(\.wineId) + tastings.map(\.wineId)))
                         let wines = try await persistence.wines(wineIds)

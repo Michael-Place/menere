@@ -16,6 +16,7 @@ public struct TastingFormReducer {
     @ObservableState
     public struct State: Equatable {
         public let wine: Wine
+        public let hid: String
         public let uid: String
 
         var ratingStars: Double? = nil          // 0.5...5
@@ -34,8 +35,9 @@ public struct TastingFormReducer {
         var isSaving = false
         var errorMessage: String?
 
-        public init(wine: Wine, uid: String) {
+        public init(wine: Wine, hid: String, uid: String) {
             self.wine = wine
+            self.hid = hid
             self.uid = uid
         }
     }
@@ -74,9 +76,9 @@ public struct TastingFormReducer {
         Reduce { state, action in
             switch action {
             case .task:
-                return .run { [uid = state.uid, wineId = state.wine.id] send in
+                return .run { [hid = state.hid, wineId = state.wine.id] send in
                     do {
-                        let all = try await persistence.bottles(uid)
+                        let all = try await persistence.bottles(hid)
                         await send(.bottlesLoaded(all.filter { $0.wineId == wineId }))
                     } catch {
                         // Loading cellared bottles for the optional link picker is non-fatal.
@@ -110,6 +112,7 @@ public struct TastingFormReducer {
                 )
                 return .run { [
                     uid = state.uid,
+                    hid = state.hid,
                     pending = state.pendingPhotos,
                     wineId = state.wine.id,
                     bottleId = state.bottleId,
@@ -141,7 +144,7 @@ public struct TastingFormReducer {
                             occasion: occasion.isEmpty ? nil : occasion,
                             createdAt: now
                         )
-                        try await persistence.saveTasting(uid, tasting)
+                        try await persistence.saveTasting(hid, tasting)
                         await send(.saveResponse(.success(tasting)))
                     } catch {
                         await send(.saveResponse(.failure(error.localizedDescription)))

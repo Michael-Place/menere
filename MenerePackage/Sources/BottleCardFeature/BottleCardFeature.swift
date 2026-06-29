@@ -68,14 +68,14 @@ public struct BottleCardFeature {
 
             case .addToCellarTapped:
                 @Shared(.user) var user
-                guard let uid = user?.id else { return .none }
-                state.destination = .addToCellar(BottleFormReducer.State(wine: state.wine, uid: uid))
+                guard let hid = user?.householdId else { return .none }
+                state.destination = .addToCellar(BottleFormReducer.State(wine: state.wine, hid: hid))
                 return .none
 
             case .logTastingTapped:
                 @Shared(.user) var user
-                guard let uid = user?.id else { return .none }
-                state.destination = .logTasting(TastingFormReducer.State(wine: state.wine, uid: uid))
+                guard let uid = user?.id, let hid = user?.householdId else { return .none }
+                state.destination = .logTasting(TastingFormReducer.State(wine: state.wine, hid: hid, uid: uid))
                 return .none
 
             case .destination(.presented(.addToCellar(.delegate))),

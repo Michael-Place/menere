@@ -29,7 +29,7 @@ final class CellarReducerTests: XCTestCase {
             $0.defaultFileStorage = .inMemory
         } operation: {
             @Shared(.user) var user
-            $user.withLock { $0 = User(id: "uid-1", displayName: "T") }
+            $user.withLock { $0 = User(id: "uid-1", displayName: "T", householdId: "hid-1") }
 
             let w1 = Wine(producer: "Hold Estate", vintage: 2018)
             let w2 = Wine(producer: "Ready Estate", vintage: 2015)
@@ -213,7 +213,7 @@ final class CellarReducerTests: XCTestCase {
             $0.defaultFileStorage = .inMemory
         } operation: {
             @Shared(.user) var user
-            $user.withLock { $0 = User(id: "uid-1", displayName: "T") }
+            $user.withLock { $0 = User(id: "uid-1", displayName: "T", householdId: "hid-1") }
 
             let w1 = Wine(producer: "Estate A", vintage: 2018)
             let w2 = Wine(producer: "Estate B", vintage: 2015)

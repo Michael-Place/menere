@@ -25,7 +25,7 @@ final class HomeReducerTests: XCTestCase {
             $0.defaultFileStorage = .inMemory
         } operation: {
             @Shared(.user) var user
-            $user.withLock { $0 = User(id: "uid-1", displayName: "T") }
+            $user.withLock { $0 = User(id: "uid-1", displayName: "T", householdId: "hid-1") }
 
             let w1 = Wine(producer: "Ready Estate", vintage: 2018)   // drink now
             let w2 = Wine(producer: "Hold Estate", vintage: 2020)    // hold
@@ -86,7 +86,7 @@ final class HomeReducerTests: XCTestCase {
             $0.defaultFileStorage = .inMemory
         } operation: {
             @Shared(.user) var user
-            $user.withLock { $0 = User(id: "uid-1", displayName: "T") }
+            $user.withLock { $0 = User(id: "uid-1", displayName: "T", householdId: "hid-1") }
 
             // Distinct wines via distinct producers.
             let wines = (0..<8).map { Wine(producer: "Estate \($0)", vintage: 2018) }
@@ -146,7 +146,7 @@ final class HomeReducerTests: XCTestCase {
             $0.defaultFileStorage = .inMemory
         } operation: {
             @Shared(.user) var user
-            $user.withLock { $0 = User(id: "uid-1", displayName: "T") }
+            $user.withLock { $0 = User(id: "uid-1", displayName: "T", householdId: "hid-1") }
 
             let w = Wine(producer: "Estate", vintage: 2018)
             let tastings = (1...6).map {

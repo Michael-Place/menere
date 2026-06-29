@@ -1,4 +1,5 @@
 import ComposableArchitecture
+import PersistenceClient
 import Sharing
 import SwiftUI
 import UserDomain
@@ -30,7 +31,15 @@ public struct AuthenticatedReducer {
         Reduce { state, action in
             switch action {
             case .task:
-                return .none
+                return .run { _ in
+                    @Shared(.user) var user
+                    guard let uid = user?.id else { return }
+                    @Dependency(\.persistence) var persistence
+                    do {
+                        let hid = try await persistence.ensureHousehold(uid)
+                        $user.withLock { $0?.householdId = hid }
+                    } catch {}   // non-fatal; features guard nil householdId
+                }
             case .mainTab:
                 return .none
             }

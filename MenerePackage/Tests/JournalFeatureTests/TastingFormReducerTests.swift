@@ -25,16 +25,20 @@ final class TastingFormReducerTests: XCTestCase {
         let wine = Wine(producer: "Château Margaux", name: "Grand Vin", vintage: 2015)
         let url = URL(string: "https://example.com/\(firstId)/p.jpg")!
 
-        let captured = LockIsolated<(uid: String, tasting: Tasting)?>(nil)
+        let captured = LockIsolated<(hid: String, tasting: Tasting)?>(nil)
+        let capturedPhotoUid = LockIsolated<String?>(nil)
 
-        let store = TestStore(initialState: TastingFormReducer.State(wine: wine, uid: "test-uid")) {
+        let store = TestStore(initialState: TastingFormReducer.State(wine: wine, hid: "test-hid", uid: "test-uid")) {
             TastingFormReducer()
         } withDependencies: {
             $0.uuid = .incrementing
             $0.date = .constant(epoch)
-            $0.storage.uploadTastingPhoto = { _, _, _ in url }
-            $0.persistence.saveTasting = { uid, tasting in
-                captured.setValue((uid, tasting))
+            $0.storage.uploadTastingPhoto = { uid, _, _ in
+                capturedPhotoUid.setValue(uid)
+                return url
+            }
+            $0.persistence.saveTasting = { hid, tasting in
+                captured.setValue((hid, tasting))
             }
         }
 
@@ -75,7 +79,8 @@ final class TastingFormReducerTests: XCTestCase {
         }
         await store.receive(.delegate(.saved(expected)))
 
-        XCTAssertEqual(captured.value?.uid, "test-uid")
+        XCTAssertEqual(captured.value?.hid, "test-hid")
+        XCTAssertEqual(capturedPhotoUid.value, "test-uid")
         XCTAssertEqual(captured.value?.tasting.wineId, wine.id)
         XCTAssertEqual(captured.value?.tasting.id, firstId)
         XCTAssertEqual(captured.value?.tasting.photoURLs.count, 2)
@@ -89,7 +94,7 @@ final class TastingFormReducerTests: XCTestCase {
     func testSaveNoPhotosDoesNotCallStorage() async {
         let wine = Wine(producer: "Ridge Vineyards", name: "Monte Bello", vintage: 2018)
 
-        let store = TestStore(initialState: TastingFormReducer.State(wine: wine, uid: "test-uid")) {
+        let store = TestStore(initialState: TastingFormReducer.State(wine: wine, hid: "test-hid", uid: "test-uid")) {
             TastingFormReducer()
         } withDependencies: {
             $0.uuid = .incrementing
@@ -124,7 +129,7 @@ final class TastingFormReducerTests: XCTestCase {
     func testUploadFailureSurfacesErrorAndDoesNotPersist() async {
         let wine = Wine(producer: "Anything", vintage: 2020)
 
-        let store = TestStore(initialState: TastingFormReducer.State(wine: wine, uid: "test-uid")) {
+        let store = TestStore(initialState: TastingFormReducer.State(wine: wine, hid: "test-hid", uid: "test-uid")) {
             TastingFormReducer()
         } withDependencies: {
             $0.uuid = .incrementing
@@ -154,7 +159,7 @@ final class TastingFormReducerTests: XCTestCase {
 
         let captured = LockIsolated<Tasting?>(nil)
 
-        let store = TestStore(initialState: TastingFormReducer.State(wine: wine, uid: "test-uid")) {
+        let store = TestStore(initialState: TastingFormReducer.State(wine: wine, hid: "test-hid", uid: "test-uid")) {
             TastingFormReducer()
         } withDependencies: {
             $0.uuid = .incrementing
@@ -189,7 +194,7 @@ final class TastingFormReducerTests: XCTestCase {
         let mine = Bottle(id: "b1", wineId: wine.id, quantity: 2)
         let other = Bottle(id: "b2", wineId: "some-other-wine", quantity: 1)
 
-        let store = TestStore(initialState: TastingFormReducer.State(wine: wine, uid: "test-uid")) {
+        let store = TestStore(initialState: TastingFormReducer.State(wine: wine, hid: "test-hid", uid: "test-uid")) {
             TastingFormReducer()
         } withDependencies: {
             $0.persistence.bottles = { _ in [mine, other] }
@@ -205,7 +210,7 @@ final class TastingFormReducerTests: XCTestCase {
     func testCancelEmitsCancelledDelegate() async {
         let wine = Wine(producer: "Anything", vintage: 2020)
 
-        let store = TestStore(initialState: TastingFormReducer.State(wine: wine, uid: "test-uid")) {
+        let store = TestStore(initialState: TastingFormReducer.State(wine: wine, hid: "test-hid", uid: "test-uid")) {
             TastingFormReducer()
         }
 

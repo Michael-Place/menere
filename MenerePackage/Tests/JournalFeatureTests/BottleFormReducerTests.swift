@@ -18,13 +18,13 @@ final class BottleFormReducerTests: XCTestCase {
     func testSaveHappyPath() async {
         let wine = Wine(producer: "Château Margaux", name: "Grand Vin", vintage: 2015)
 
-        let captured = LockIsolated<(uid: String, bottle: Bottle)?>(nil)
+        let captured = LockIsolated<(hid: String, bottle: Bottle)?>(nil)
 
-        let store = TestStore(initialState: BottleFormReducer.State(wine: wine, uid: "test-uid")) {
+        let store = TestStore(initialState: BottleFormReducer.State(wine: wine, hid: "test-hid")) {
             BottleFormReducer()
         } withDependencies: {
-            $0.persistence.saveBottle = { uid, bottle in
-                captured.setValue((uid, bottle))
+            $0.persistence.saveBottle = { hid, bottle in
+                captured.setValue((hid, bottle))
             }
             $0.uuid = .incrementing
             $0.date = .constant(Date(timeIntervalSince1970: 0))
@@ -70,7 +70,7 @@ final class BottleFormReducerTests: XCTestCase {
         }
         await store.receive(.delegate(.saved(expectedBottle)))
 
-        XCTAssertEqual(captured.value?.uid, "test-uid")
+        XCTAssertEqual(captured.value?.hid, "test-hid")
         XCTAssertEqual(captured.value?.bottle.wineId, wine.id)
         XCTAssertEqual(captured.value?.bottle.price, 42.5)
         XCTAssertEqual(captured.value?.bottle.quantity, 3)
@@ -83,7 +83,7 @@ final class BottleFormReducerTests: XCTestCase {
     func testSaveFailureSurfacesErrorAndEmitsNoSavedDelegate() async {
         let wine = Wine(producer: "Ridge Vineyards", name: "Monte Bello", vintage: 2018)
 
-        let store = TestStore(initialState: BottleFormReducer.State(wine: wine, uid: "test-uid")) {
+        let store = TestStore(initialState: BottleFormReducer.State(wine: wine, hid: "test-hid")) {
             BottleFormReducer()
         } withDependencies: {
             $0.persistence.saveBottle = { _, _ in throw StubError() }
@@ -106,7 +106,7 @@ final class BottleFormReducerTests: XCTestCase {
     func testCancelEmitsCancelledDelegate() async {
         let wine = Wine(producer: "Anything", vintage: 2020)
 
-        let store = TestStore(initialState: BottleFormReducer.State(wine: wine, uid: "test-uid")) {
+        let store = TestStore(initialState: BottleFormReducer.State(wine: wine, hid: "test-hid")) {
             BottleFormReducer()
         }
 
