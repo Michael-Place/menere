@@ -44,6 +44,46 @@ public struct CellarRow: Equatable, Identifiable, Sendable {
     public var sortByVintage: Int { wine.vintage ?? Int.max }
 }
 
+// MARK: - Tasting row model
+
+/// A single tasting-history entry: the private `Tasting` joined to its catalog `Wine`. Built once at
+/// load time so the view (and `visibleTastingRows`) stay pure.
+public struct TastingRow: Equatable, Identifiable, Sendable {
+    public var id: String { tasting.id }
+    public let tasting: Tasting
+    public let wine: Wine
+
+    public init(tasting: Tasting, wine: Wine) {
+        self.tasting = tasting
+        self.wine = wine
+    }
+
+    public var producer: String { wine.producer }
+
+    /// Human-facing rating: prefer stars, then 100-point score, else em dash.
+    public var ratingText: String {
+        if let stars = tasting.ratingStars {
+            let trimmed = stars.truncatingRemainder(dividingBy: 1) == 0
+                ? String(Int(stars))
+                : String(stars)
+            return "★ \(trimmed)"
+        }
+        if let pts = tasting.rating100 { return "\(pts) pts" }
+        return "—"
+    }
+
+    public var dateText: String {
+        TastingRow.dateFormatter.string(from: tasting.date)
+    }
+
+    private static let dateFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateStyle = .medium
+        f.timeStyle = .none
+        return f
+    }()
+}
+
 // MARK: - Drink-window classification
 
 /// Classify a bottle's drink window against the given current `year`.
@@ -80,11 +120,29 @@ public struct CellarReducer {
         public var typeFilter: WineType? = nil          // nil = all
         public var sort: SortOption = .recentlyAdded
 
+        // History segment
+        public var segment: Segment = .cellar
+        public var tastingRows: [TastingRow] = []
+        public var minRating: Double? = nil             // e.g. 4.0 = "4★+"; nil = any
+        public var grapeFilter: String? = nil           // nil = all grapes
+        public var historySort: HistorySort = .dateNewest
+
+        public enum Segment: String, CaseIterable, Equatable, Sendable {
+            case cellar
+            case history
+        }
+
         public enum SortOption: String, CaseIterable, Equatable, Sendable {
             case recentlyAdded
             case producer
             case vintage
             case drinkWindow
+        }
+
+        public enum HistorySort: String, CaseIterable, Equatable, Sendable {
+            case dateNewest
+            case dateOldest
+            case ratingHigh
         }
 
         public init() {}
@@ -138,11 +196,68 @@ public struct CellarReducer {
 
             return result
         }
+
+        /// Sorted unique grapes across all tasting rows (for the grape Picker).
+        public var availableGrapes: [String] {
+            Array(Set(tastingRows.flatMap { $0.wine.grapes }))
+                .sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
+        }
+
+        /// Search + history filters + sort applied in order, derived from `tastingRows`.
+        public var visibleTastingRows: [TastingRow] {
+            var result = tastingRows
+
+            let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !query.isEmpty {
+                result = result.filter { row in
+                    var haystack: [String] = [row.wine.producer]
+                    if let name = row.wine.name { haystack.append(name) }
+                    if let region = row.wine.region {
+                        haystack.append(contentsOf: [
+                            region.country, region.region, region.subregion, region.appellation,
+                        ].compactMap { $0 })
+                    }
+                    haystack.append(contentsOf: row.wine.grapes)
+                    if let note = row.tasting.note { haystack.append(note) }
+                    if let withWhom = row.tasting.withWhom { haystack.append(withWhom) }
+                    if let occasion = row.tasting.occasion { haystack.append(occasion) }
+                    return haystack.contains { $0.localizedCaseInsensitiveContains(query) }
+                }
+            }
+
+            if let minRating {
+                result = result.filter {
+                    guard let stars = $0.tasting.ratingStars else { return false }
+                    return stars >= minRating
+                }
+            }
+
+            if let grapeFilter {
+                result = result.filter { $0.wine.grapes.contains(grapeFilter) }
+            }
+
+            switch historySort {
+            case .dateNewest:
+                result.sort { $0.tasting.date > $1.tasting.date }
+            case .dateOldest:
+                result.sort { $0.tasting.date < $1.tasting.date }
+            case .ratingHigh:
+                result.sort { lhs, rhs in
+                    let l = lhs.tasting.ratingStars ?? -1
+                    let r = rhs.tasting.ratingStars ?? -1
+                    if l != r { return l > r }
+                    return lhs.tasting.date > rhs.tasting.date
+                }
+            }
+
+            return result
+        }
     }
 
     public enum Action: Equatable, BindableAction {
         case task
         case loaded([CellarRow])
+        case tastingsLoaded([TastingRow])
         case loadFailed(String)
         case binding(BindingAction<State>)
     }
@@ -162,18 +277,27 @@ public struct CellarReducer {
                     @Shared(.user) var user
                     guard let uid = user?.id else {
                         await send(.loaded([]))
+                        await send(.tastingsLoaded([]))
                         return
                     }
                     do {
                         let bottles = try await persistence.bottles(uid)
-                        let wines = try await persistence.wines(bottles.map(\.wineId))
+                        let tastings = try await persistence.tastings(uid)
+                        // Union the wine ids needed by both lists into one batch fetch.
+                        let wineIds = Array(Set(bottles.map(\.wineId) + tastings.map(\.wineId)))
+                        let wines = try await persistence.wines(wineIds)
                         let byKey = Dictionary(uniqueKeysWithValues: wines.map { ($0.id, $0) })
                         let year = Calendar.current.component(.year, from: date.now)
-                        let rows = bottles.compactMap { b -> CellarRow? in
+                        let cellarRows = bottles.compactMap { b -> CellarRow? in
                             guard let w = byKey[b.wineId] else { return nil }
                             return CellarRow(bottle: b, wine: w, drinkStatus: classify(b, year: year))
                         }
-                        await send(.loaded(rows))
+                        let tastingRows = tastings.compactMap { t -> TastingRow? in
+                            guard let w = byKey[t.wineId] else { return nil }
+                            return TastingRow(tasting: t, wine: w)
+                        }
+                        await send(.loaded(cellarRows))
+                        await send(.tastingsLoaded(tastingRows))
                     } catch {
                         await send(.loadFailed(error.localizedDescription))
                     }
@@ -182,6 +306,10 @@ public struct CellarReducer {
             case let .loaded(rows):
                 state.isLoading = false
                 state.rows = rows
+                return .none
+
+            case let .tastingsLoaded(rows):
+                state.tastingRows = rows
                 return .none
 
             case let .loadFailed(message):
@@ -206,58 +334,141 @@ public struct CellarView: View {
     }
 
     public var body: some View {
-        Group {
-            if store.isLoading && store.rows.isEmpty {
-                ProgressView()
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if let error = store.loadError {
-                ContentUnavailableView(
-                    "Couldn't load your cellar",
-                    systemImage: "exclamationmark.triangle",
-                    description: Text(error)
-                )
-            } else if store.rows.isEmpty {
-                ContentUnavailableView(
-                    "No bottles yet",
-                    systemImage: "square.stack.3d.up",
-                    description: Text("Scan a wine and Add to cellar")
-                )
-            } else {
-                List(store.visibleRows) { row in
-                    CellarRowView(row: row)
-                        .accessibilityIdentifier("cellar-row-\(row.id)")
+        VStack(spacing: 0) {
+            Picker("", selection: $store.segment) {
+                ForEach(CellarReducer.State.Segment.allCases, id: \.self) { segment in
+                    Text(segment.label).tag(segment)
                 }
             }
+            .pickerStyle(.segmented)
+            .padding(.horizontal)
+            .padding(.bottom, 8)
+            .accessibilityIdentifier("cellar-segment")
+
+            switch store.segment {
+            case .cellar:
+                cellarContent
+            case .history:
+                historyContent
+            }
         }
-        .navigationTitle("Cellar")
+        .navigationTitle(store.segment == .history ? "History" : "Cellar")
         .searchable(text: $store.searchText)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
-                Menu {
-                    Picker("Sort", selection: $store.sort) {
-                        ForEach(CellarReducer.State.SortOption.allCases, id: \.self) { option in
-                            Text(option.label).tag(option)
-                        }
-                    }
-                    Picker("Status", selection: $store.statusFilter) {
-                        Text("All").tag(BottleStatus?.none)
-                        ForEach(BottleStatus.allCases, id: \.self) { status in
-                            Text(status.rawValue.capitalized).tag(BottleStatus?.some(status))
-                        }
-                    }
-                    Picker("Type", selection: $store.typeFilter) {
-                        Text("All").tag(WineType?.none)
-                        ForEach(WineType.allCases, id: \.self) { type in
-                            Text(type.rawValue.capitalized).tag(WineType?.some(type))
-                        }
-                    }
-                } label: {
-                    Image(systemName: "line.3.horizontal.decrease.circle")
+                switch store.segment {
+                case .cellar:
+                    cellarFilterMenu
+                case .history:
+                    historyFilterMenu
                 }
-                .accessibilityIdentifier("cellar-filter-menu")
             }
         }
         .task { store.send(.task) }
+    }
+
+    // MARK: Cellar segment
+
+    @ViewBuilder
+    private var cellarContent: some View {
+        if store.isLoading && store.rows.isEmpty {
+            ProgressView()
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else if let error = store.loadError {
+            ContentUnavailableView(
+                "Couldn't load your cellar",
+                systemImage: "exclamationmark.triangle",
+                description: Text(error)
+            )
+        } else if store.rows.isEmpty {
+            ContentUnavailableView(
+                "No bottles yet",
+                systemImage: "square.stack.3d.up",
+                description: Text("Scan a wine and Add to cellar")
+            )
+        } else {
+            List(store.visibleRows) { row in
+                CellarRowView(row: row)
+                    .accessibilityIdentifier("cellar-row-\(row.id)")
+            }
+        }
+    }
+
+    private var cellarFilterMenu: some View {
+        Menu {
+            Picker("Sort", selection: $store.sort) {
+                ForEach(CellarReducer.State.SortOption.allCases, id: \.self) { option in
+                    Text(option.label).tag(option)
+                }
+            }
+            Picker("Status", selection: $store.statusFilter) {
+                Text("All").tag(BottleStatus?.none)
+                ForEach(BottleStatus.allCases, id: \.self) { status in
+                    Text(status.rawValue.capitalized).tag(BottleStatus?.some(status))
+                }
+            }
+            Picker("Type", selection: $store.typeFilter) {
+                Text("All").tag(WineType?.none)
+                ForEach(WineType.allCases, id: \.self) { type in
+                    Text(type.rawValue.capitalized).tag(WineType?.some(type))
+                }
+            }
+        } label: {
+            Image(systemName: "line.3.horizontal.decrease.circle")
+        }
+        .accessibilityIdentifier("cellar-filter-menu")
+    }
+
+    // MARK: History segment
+
+    @ViewBuilder
+    private var historyContent: some View {
+        if store.isLoading && store.tastingRows.isEmpty {
+            ProgressView()
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else if let error = store.loadError {
+            ContentUnavailableView(
+                "Couldn't load your history",
+                systemImage: "exclamationmark.triangle",
+                description: Text(error)
+            )
+        } else if store.tastingRows.isEmpty {
+            ContentUnavailableView(
+                "No tastings yet",
+                systemImage: "wineglass",
+                description: Text("Log one from a bottle card")
+            )
+        } else {
+            List(store.visibleTastingRows) { row in
+                TastingRowView(row: row)
+                    .accessibilityIdentifier("history-row-\(row.id)")
+            }
+        }
+    }
+
+    private var historyFilterMenu: some View {
+        Menu {
+            Picker("Min rating", selection: $store.minRating) {
+                Text("Any").tag(Double?.none)
+                Text("3★+").tag(Double?.some(3))
+                Text("4★+").tag(Double?.some(4))
+                Text("4.5★+").tag(Double?.some(4.5))
+            }
+            Picker("Grape", selection: $store.grapeFilter) {
+                Text("All").tag(String?.none)
+                ForEach(store.availableGrapes, id: \.self) { grape in
+                    Text(grape).tag(String?.some(grape))
+                }
+            }
+            Picker("Sort", selection: $store.historySort) {
+                ForEach(CellarReducer.State.HistorySort.allCases, id: \.self) { option in
+                    Text(option.label).tag(option)
+                }
+            }
+        } label: {
+            Image(systemName: "line.3.horizontal.decrease.circle")
+        }
+        .accessibilityIdentifier("history-filter-menu")
     }
 }
 
@@ -316,6 +527,81 @@ private struct CellarRowView: View {
         case .hold: .orange
         case .past: .red
         case .unknown: .gray
+        }
+    }
+}
+
+private struct TastingRowView: View {
+    let row: TastingRow
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text(row.producer)
+                    .font(.headline)
+                Spacer()
+                Text(row.ratingText)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.secondary)
+            }
+
+            if let subtitle {
+                Text(subtitle)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+
+            if let note = row.tasting.note, !note.isEmpty {
+                Text(note)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+            }
+
+            HStack(spacing: 8) {
+                Text(row.dateText)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                if let context {
+                    Text(context)
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
+            }
+        }
+        .padding(.vertical, 2)
+    }
+
+    private var subtitle: String? {
+        var parts: [String] = []
+        if let name = row.wine.name, !name.isEmpty { parts.append(name) }
+        if let vintage = row.wine.vintage { parts.append(String(vintage)) }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    }
+
+    private var context: String? {
+        var parts: [String] = []
+        if let withWhom = row.tasting.withWhom, !withWhom.isEmpty { parts.append(withWhom) }
+        if let occasion = row.tasting.occasion, !occasion.isEmpty { parts.append(occasion) }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    }
+}
+
+private extension CellarReducer.State.Segment {
+    var label: String {
+        switch self {
+        case .cellar: "Cellar"
+        case .history: "History"
+        }
+    }
+}
+
+private extension CellarReducer.State.HistorySort {
+    var label: String {
+        switch self {
+        case .dateNewest: "Newest"
+        case .dateOldest: "Oldest"
+        case .ratingHigh: "Highest Rated"
         }
     }
 }

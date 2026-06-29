@@ -48,10 +48,13 @@ final class CellarReducerTests: XCTestCase {
                 status: .cellared, createdAt: Date(timeIntervalSince1970: 300)
             )
 
+            let t1 = Tasting(id: "t1", wineId: w1.id, date: Date(timeIntervalSince1970: 500), ratingStars: 4.5)
+
             let store = TestStore(initialState: CellarReducer.State()) {
                 CellarReducer()
             } withDependencies: {
                 $0.persistence.bottles = { _ in [b1, b2, b3] }
+                $0.persistence.tastings = { _ in [t1] }
                 $0.persistence.wines = { _ in [w1, w2] }
                 $0.date = .constant(self.year2026)
             }
@@ -60,6 +63,7 @@ final class CellarReducerTests: XCTestCase {
                 CellarRow(bottle: b1, wine: w1, drinkStatus: .hold),
                 CellarRow(bottle: b2, wine: w2, drinkStatus: .drinkNow),
             ]
+            let expectedTastings = [TastingRow(tasting: t1, wine: w1)]
 
             await store.send(.task) {
                 $0.isLoading = true
@@ -68,6 +72,9 @@ final class CellarReducerTests: XCTestCase {
             await store.receive(.loaded(expected)) {
                 $0.isLoading = false
                 $0.rows = expected
+            }
+            await store.receive(.tastingsLoaded(expectedTastings)) {
+                $0.tastingRows = expectedTastings
             }
 
             XCTAssertEqual(store.state.rows.count, 2)
@@ -195,6 +202,143 @@ final class CellarReducerTests: XCTestCase {
             await store.receive(.loaded([])) {
                 $0.isLoading = false
             }
+            await store.receive(.tastingsLoaded([]))
         }
+    }
+
+    // MARK: 6. Tasting load joins + drops orphans
+
+    func testTastingLoadJoinsAndDropsOrphans() async {
+        await withDependencies {
+            $0.defaultFileStorage = .inMemory
+        } operation: {
+            @Shared(.user) var user
+            $user.withLock { $0 = User(id: "uid-1", displayName: "T") }
+
+            let w1 = Wine(producer: "Estate A", vintage: 2018)
+            let w2 = Wine(producer: "Estate B", vintage: 2015)
+
+            let t1 = Tasting(id: "t1", wineId: w1.id, date: Date(timeIntervalSince1970: 100), ratingStars: 4.0)
+            let t2 = Tasting(id: "t2", wineId: w2.id, date: Date(timeIntervalSince1970: 200), ratingStars: 3.0)
+            // References a wine that won't be returned → dropped.
+            let t3 = Tasting(id: "t3", wineId: "missing", date: Date(timeIntervalSince1970: 300))
+
+            let store = TestStore(initialState: CellarReducer.State()) {
+                CellarReducer()
+            } withDependencies: {
+                $0.persistence.bottles = { _ in [] }
+                $0.persistence.tastings = { _ in [t1, t2, t3] }
+                $0.persistence.wines = { _ in [w1, w2] }
+                $0.date = .constant(self.year2026)
+            }
+
+            let expectedTastings = [
+                TastingRow(tasting: t1, wine: w1),
+                TastingRow(tasting: t2, wine: w2),
+            ]
+
+            await store.send(.task) {
+                $0.isLoading = true
+                $0.loadError = nil
+            }
+            await store.receive(.loaded([])) {
+                $0.isLoading = false
+            }
+            await store.receive(.tastingsLoaded(expectedTastings)) {
+                $0.tastingRows = expectedTastings
+            }
+
+            XCTAssertEqual(store.state.tastingRows.map(\.id), ["t1", "t2"])
+        }
+    }
+
+    // MARK: 7. Min-rating filter
+
+    func testMinRatingFilter() async {
+        let w = Wine(producer: "Estate", vintage: 2018)
+        let rows = [
+            TastingRow(tasting: Tasting(id: "r3", wineId: w.id, ratingStars: 3.0), wine: w),
+            TastingRow(tasting: Tasting(id: "r4", wineId: w.id, ratingStars: 4.0), wine: w),
+            TastingRow(tasting: Tasting(id: "r45", wineId: w.id, ratingStars: 4.5), wine: w),
+            TastingRow(tasting: Tasting(id: "rnil", wineId: w.id, ratingStars: nil), wine: w),
+        ]
+
+        let store = TestStore(initialState: CellarReducer.State()) {
+            CellarReducer()
+        }
+        await store.send(.tastingsLoaded(rows)) { $0.tastingRows = rows }
+
+        await store.send(.binding(.set(\.minRating, 4.0))) { $0.minRating = 4.0 }
+        XCTAssertEqual(Set(store.state.visibleTastingRows.map(\.id)), ["r4", "r45"])
+    }
+
+    // MARK: 8. Grape filter
+
+    func testGrapeFilter() async {
+        let pinot = Wine(producer: "Burgundy Co", grapes: ["Pinot Noir"])
+        let cab = Wine(producer: "Bordeaux Co", grapes: ["Cabernet Sauvignon", "Merlot"])
+        let rows = [
+            TastingRow(tasting: Tasting(id: "p", wineId: pinot.id), wine: pinot),
+            TastingRow(tasting: Tasting(id: "c", wineId: cab.id), wine: cab),
+        ]
+
+        let store = TestStore(initialState: CellarReducer.State()) {
+            CellarReducer()
+        }
+        await store.send(.tastingsLoaded(rows)) { $0.tastingRows = rows }
+
+        await store.send(.binding(.set(\.grapeFilter, "Pinot Noir"))) { $0.grapeFilter = "Pinot Noir" }
+        XCTAssertEqual(store.state.visibleTastingRows.map(\.id), ["p"])
+        XCTAssertEqual(store.state.availableGrapes, ["Cabernet Sauvignon", "Merlot", "Pinot Noir"])
+    }
+
+    // MARK: 9. History sort
+
+    func testHistorySort() async {
+        let w = Wine(producer: "Estate", vintage: 2018)
+        // a: old date, high rating; b: new date, low rating; c: mid date, nil rating
+        let a = TastingRow(tasting: Tasting(id: "a", wineId: w.id, date: Date(timeIntervalSince1970: 100), ratingStars: 5.0), wine: w)
+        let b = TastingRow(tasting: Tasting(id: "b", wineId: w.id, date: Date(timeIntervalSince1970: 300), ratingStars: 3.0), wine: w)
+        let c = TastingRow(tasting: Tasting(id: "c", wineId: w.id, date: Date(timeIntervalSince1970: 200), ratingStars: nil), wine: w)
+        let rows = [a, b, c]
+
+        let store = TestStore(initialState: CellarReducer.State()) {
+            CellarReducer()
+        }
+        await store.send(.tastingsLoaded(rows)) { $0.tastingRows = rows }
+
+        // dateNewest is the default.
+        XCTAssertEqual(store.state.visibleTastingRows.map(\.id), ["b", "c", "a"])
+
+        await store.send(.binding(.set(\.historySort, .dateOldest))) { $0.historySort = .dateOldest }
+        XCTAssertEqual(store.state.visibleTastingRows.map(\.id), ["a", "c", "b"])
+
+        await store.send(.binding(.set(\.historySort, .ratingHigh))) { $0.historySort = .ratingHigh }
+        XCTAssertEqual(store.state.visibleTastingRows.map(\.id), ["a", "b", "c"])
+    }
+
+    // MARK: 10. Shared search over tasting fields
+
+    func testSharedSearchOverTastingFields() async {
+        let w1 = Wine(producer: "Château Margaux", name: "Grand Vin")
+        let w2 = Wine(producer: "Ridge", name: "Monte Bello")
+        let rows = [
+            TastingRow(tasting: Tasting(id: "m", wineId: w1.id, note: "Stunning balance"), wine: w1),
+            TastingRow(tasting: Tasting(id: "r", wineId: w2.id, note: "Tannic and young", withWhom: "Dad"), wine: w2),
+        ]
+
+        let store = TestStore(initialState: CellarReducer.State()) {
+            CellarReducer()
+        }
+        await store.send(.tastingsLoaded(rows)) { $0.tastingRows = rows }
+
+        await store.send(.binding(.set(\.searchText, "margaux"))) { $0.searchText = "margaux" }
+        XCTAssertEqual(store.state.visibleTastingRows.map(\.id), ["m"])
+
+        await store.send(.binding(.set(\.searchText, "tannic"))) { $0.searchText = "tannic" }
+        XCTAssertEqual(store.state.visibleTastingRows.map(\.id), ["r"])
+
+        await store.send(.binding(.set(\.searchText, "dad"))) { $0.searchText = "dad" }
+        XCTAssertEqual(store.state.visibleTastingRows.map(\.id), ["r"])
     }
 }
