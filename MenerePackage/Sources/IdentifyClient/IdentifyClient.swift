@@ -1,5 +1,6 @@
 import Dependencies
 import DependenciesMacros
+import FirebaseFunctions
 // Weak-linked: the iOS 27 multimodal path references FoundationModels symbols newer than our iOS 26
 // deployment target (e.g. the Generable conformance witness for `promptRepresentation`). The macro
 // emits those references eagerly, so without weak linking the app fails to launch on iOS 26 with a
@@ -34,7 +35,10 @@ public struct IdentifyClient: Sendable {
     /// Structure raw OCR lines (strings only, no layout) into a `WineCandidate` (source `.label`).
     /// This text-only entry point is deterministic — see `structure` in `liveValue`.
     public var structure: @Sendable (_ lines: [String]) async throws -> WineCandidate
-    /// Layout-aware identify: decodes the image and runs the deterministic `VisionDocumentIdentifier`.
+    /// Cloud-first identify: calls the deployed `identifyLabel` Claude-vision Cloud Function with the
+    /// label image and maps the structured response into a `WineCandidate`. On ANY error (offline,
+    /// function error, decode failure) it falls back to the version-gated on-device engine (iOS 27
+    /// multimodal FM, else the deterministic iOS 26 `VisionDocumentIdentifier`).
     public var identify: @Sendable (_ imageData: Data) async throws -> WineCandidate
     /// Fast path for a scanned barcode. M2 does no catalog lookup, so this just records the payload.
     /// `symbology` is currently unused but documents the scan's intent.
@@ -66,13 +70,20 @@ extension IdentifyClient: DependencyKey {
                 heuristicStructure(lines)
             },
             identify: { imageData in
-                // Version-forked engine: iOS 27 feeds the label image straight to a multimodal
-                // Foundation Model (better field assignment); iOS 26 uses the deterministic
-                // document-layout engine. Deployment target stays iOS 26. See docs/identify-engine.md.
-                if #available(iOS 27.0, *) {
-                    return try await MultimodalFMIdentifier().identify(imageData)
+                // Cloud-first: the deployed Claude-vision `identifyLabel` Cloud Function is the primary
+                // path (best field assignment). On ANY failure (offline, function error, decode
+                // failure) fall back to the version-gated on-device engine so scanning still works:
+                // iOS 27 feeds the image to a multimodal Foundation Model; iOS 26 uses the
+                // deterministic document-layout engine. Deployment target stays iOS 26.
+                do {
+                    return try await CloudVisionIdentifier().identify(imageData)
+                } catch {
+                    identifyLog.notice("cloud identify failed (\(String(describing: error), privacy: .public)) → on-device fallback")
+                    if #available(iOS 27.0, *) {
+                        return try await MultimodalFMIdentifier().identify(imageData)
+                    }
+                    return try await VisionDocumentIdentifier().identify(imageData)
                 }
-                return try await VisionDocumentIdentifier().identify(imageData)
             },
             identifyBarcode: { payload, _ in
                 WineCandidate(barcode: payload, confidence: 0.5, source: .barcode)
@@ -372,6 +383,60 @@ struct MultimodalFMIdentifier: LabelIdentifier {
             source: .label
         )
     }
+}
+
+// MARK: - Cloud Claude-vision engine
+
+/// Errors thrown by the cloud identify path.
+enum CloudVisionError: Error { case invalidResponse }
+
+/// Primary identifier: sends the label image to the deployed `identifyLabel` (Claude-vision) Cloud
+/// Function and maps the structured response into a `WineCandidate`. Any failure is propagated to the
+/// caller, which falls back to the on-device engine.
+struct CloudVisionIdentifier: LabelIdentifier {
+    func identify(_ imageData: Data) async throws -> WineCandidate {
+        let base64 = imageData.base64EncodedString()
+        let callable = Functions.functions(region: "us-central1").httpsCallable("identifyLabel")
+        let result = try await callable.call(["imageBase64": base64, "mimeType": "image/jpeg"])
+        guard let dict = result.data as? [String: Any] else {
+            throw CloudVisionError.invalidResponse
+        }
+        return wineCandidate(fromIdentifyResponse: dict)
+    }
+}
+
+/// Pure mapping from the `identifyLabel` callable result payload to a `WineCandidate`. Internal so the
+/// test target can exercise it directly. Tolerant of JSON nulls (`NSNull`), missing keys, and numbers
+/// decoded as either `Int`/`Double` or `NSNumber` (as FirebaseFunctions may surface them).
+func wineCandidate(fromIdentifyResponse dict: [String: Any]) -> WineCandidate {
+    func str(_ k: String) -> String? {
+        guard let s = dict[k] as? String, !s.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+        return s
+    }
+    // vintage may arrive as Int or NSNumber
+    let vintage = (dict["vintage"] as? Int) ?? (dict["vintage"] as? NSNumber)?.intValue
+    // region: build Region from sub-fields; nil if all sub-fields are absent/empty
+    var region: Region?
+    if let r = dict["region"] as? [String: Any] {
+        func rstr(_ k: String) -> String? {
+            guard let s = r[k] as? String, !s.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+            return s
+        }
+        let country = rstr("country"), reg = rstr("region"), sub = rstr("subregion"), app = rstr("appellation")
+        if country != nil || reg != nil || sub != nil || app != nil {
+            region = Region(country: country, region: reg, subregion: sub, appellation: app)
+        }
+    }
+    let grapes = (dict["grapes"] as? [String])?.compactMap { s -> String? in
+        let t = s.trimmingCharacters(in: .whitespacesAndNewlines); return t.isEmpty ? nil : t
+    } ?? []
+    let type = WineType(rawValue: (dict["type"] as? String) ?? "") ?? .other   // "unknown"/missing -> .other
+    _ = type   // WineCandidate has no type field; mapped/validated above for forward use.
+    let confidence = (dict["confidence"] as? Double) ?? (dict["confidence"] as? NSNumber)?.doubleValue ?? 0.9
+    return WineCandidate(
+        producer: str("producer"), name: str("name"), vintage: vintage,
+        region: region, grapes: grapes, rawText: [], confidence: confidence, source: .label
+    )
 }
 
 // MARK: - Field classification helpers

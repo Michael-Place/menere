@@ -144,6 +144,7 @@ let package = Package(
             dependencies: [
                 .product(name: "Dependencies", package: "swift-dependencies"),
                 .product(name: "DependenciesMacros", package: "swift-dependencies"),
+                .product(name: "FirebaseFunctions", package: "firebase-ios-sdk"),
                 "WineDomain",
             ],
             resources: [.process("Resources")]
@@ -226,6 +227,13 @@ let package = Package(
                 "WineDomain",
                 "JournalFeature",
                 "UserDomain",
+            ]
+        ),
+        .testTarget(
+            name: "IdentifyClientTests",
+            dependencies: [
+                "IdentifyClient",
+                "WineDomain",
             ]
         ),
         .testTarget(

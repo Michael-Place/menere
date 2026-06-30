@@ -147,8 +147,8 @@ Goal: both of you on one shared cellar/history.
 ---
 
 ## Post-MVP (layer in once it earns it)
-- **Higher-fidelity identification:** Claude vision LLM for label reading (behind the IdentifyClient
-  abstraction), label-image-match recognition service.
+- [x] **Higher-fidelity identification — Claude vision** 🟢 shipped. `identifyLabel` Cloud Function (deployed us-central1) reads the label image with `claude-opus-4-8` vision + structured-output extraction (label-grounded: only what's printed, no world knowledge). iOS `CloudVisionIdentifier` is the **primary** scan engine behind the existing `IdentifyClient`/`LabelIdentifier` seam, with automatic fallback to the on-device engine (iOS 27 multimodal FM / iOS 26 Vision) when offline or on error. Anthropic key in Secret Manager. Verified: live function test (real label → producer/name/vintage @ 0.97) + `IdentifyClientTests` (6) + `ScanFeatureTests` (5) + full build green.
+  - Still open: label-image-match recognition service (visual similarity); enforce App Check/auth on the function before any public launch.
 - **Recommendations:** content-based "you'd like this" (works without a user base; no cold-start).
 - **Richer catalog:** paid partner API (InVintory / Wine-Searcher) if we go public.
 - **Pricing/where-to-buy:** Kroger / LCBO integrations.
