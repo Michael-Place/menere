@@ -1,4 +1,5 @@
 import ComposableArchitecture
+import MenereUI
 import SwiftUI
 import UserDomain
 import WineDomain
@@ -141,7 +142,7 @@ public struct TastingDetailView: View {
         Section {
             VStack(alignment: .leading, spacing: 4) {
                 Text(store.wine.producer)
-                    .font(.headline)
+                    .wineName(.headline)
                 if let name = store.wine.name {
                     Text(name)
                         .font(.subheadline)

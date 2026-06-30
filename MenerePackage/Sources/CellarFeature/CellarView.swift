@@ -1,6 +1,7 @@
 import BottleCardFeature
 import ComposableArchitecture
 import JournalFeature
+import MenereUI
 import PersistenceClient
 import SwiftUI
 import UserDomain
@@ -524,6 +525,7 @@ public struct CellarView: View {
             .padding(.horizontal)
             .padding(.bottom, 8)
             .accessibilityIdentifier("cellar-segment")
+            .selectionHaptic(store.segment)
 
             switch store.segment {
             case .cellar:
@@ -824,7 +826,7 @@ private struct CellarRowView: View {
         VStack(alignment: .leading, spacing: 4) {
             HStack {
                 Text(row.producer)
-                    .font(.headline)
+                    .wineName(.headline)
                 Spacer()
                 Text("×\(row.bottle.quantity)")
                     .font(.subheadline.monospacedDigit())
@@ -883,7 +885,7 @@ private struct TastingRowView: View {
         VStack(alignment: .leading, spacing: 4) {
             HStack {
                 Text(row.producer)
-                    .font(.headline)
+                    .wineName(.headline)
                 Spacer()
                 Text(row.ratingText)
                     .font(.subheadline.weight(.semibold))

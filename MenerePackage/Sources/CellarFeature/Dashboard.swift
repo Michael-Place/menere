@@ -1,3 +1,4 @@
+import MenereUI
 import SwiftUI
 import WineDomain
 
@@ -186,7 +187,7 @@ struct DrinkSoonRowView: View {
         VStack(alignment: .leading, spacing: 4) {
             HStack {
                 Text(row.producer)
-                    .font(.headline)
+                    .wineName(.subheadline)
                 Spacer()
                 Text("×\(row.bottle.quantity)")
                     .font(.subheadline.monospacedDigit())
@@ -220,7 +221,7 @@ struct RecentTastingRowView: View {
         VStack(alignment: .leading, spacing: 4) {
             HStack {
                 Text(row.producer)
-                    .font(.headline)
+                    .wineName(.subheadline)
                 Spacer()
                 Text(row.ratingText)
                     .font(.subheadline.weight(.semibold))

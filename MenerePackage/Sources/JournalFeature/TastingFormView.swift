@@ -1,4 +1,5 @@
 import ComposableArchitecture
+import MenereUI
 import PersistenceClient
 import PhotosUI
 import StorageClient
@@ -345,6 +346,7 @@ public struct TastingFormView: View {
                 .accessibilityIdentifier("save-tasting-button")
             }
         }
+        .selectionHaptic(store.ratingStars)
         .navigationTitle(store.editingID == nil ? "Log a tasting" : "Edit tasting")
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {

@@ -1,5 +1,6 @@
 import ComposableArchitecture
 import JournalFeature
+import MenereUI
 import SwiftUI
 import UIKit
 import WineDomain
@@ -52,7 +53,8 @@ public struct BottleCardView: View {
             .padding(20)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .background(Color(.systemGroupedBackground))
+        .scrollContentBackground(.hidden)
+        .background(Color.parchment)
         .animation(.default, value: isResolving)
         .task { store.send(.task) }
         .sheet(item: $store.scope(state: \.destination?.addToCellar, action: \.destination.addToCellar)) { formStore in
@@ -109,13 +111,11 @@ public struct BottleCardView: View {
             labelImage
             VStack(alignment: .leading, spacing: 6) {
                 Text(wine.producer)
-                    .font(.largeTitle.bold())
-                    .foregroundStyle(.primary)
+                    .wineName(.largeTitle)
                     .accessibilityIdentifier("bottle-card-producer")
                 if let name = wine.name, !name.isEmpty {
                     Text(name)
-                        .font(.title3)
-                        .foregroundStyle(.secondary)
+                        .cuvee()
                 }
                 if let vintage = wine.vintage {
                     Text(String(vintage))
@@ -642,42 +642,6 @@ private struct Chip: View {
                 Capsule().fill(Color(.tertiarySystemFill))
             )
     }
-}
-
-// MARK: - Shimmer
-
-/// A subtle sweeping-highlight shimmer used over `.redacted(reason: .placeholder)` content to signal
-/// "loading" while enrichment resolves. The gradient is masked to the content's shape so only the
-/// redacted bars shimmer.
-private struct Shimmer: ViewModifier {
-    @State private var phase: CGFloat = -1
-
-    func body(content: Content) -> some View {
-        content
-            .overlay(
-                GeometryReader { geo in
-                    LinearGradient(
-                        colors: [.clear, Color.white.opacity(0.45), .clear],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                    .frame(width: geo.size.width)
-                    .offset(x: phase * geo.size.width * 1.6)
-                    .mask(content)
-                    .allowsHitTesting(false)
-                }
-            )
-            .onAppear {
-                withAnimation(.linear(duration: 1.2).repeatForever(autoreverses: false)) {
-                    phase = 1
-                }
-            }
-    }
-}
-
-private extension View {
-    /// Apply the loading shimmer. Pair with `.redacted(reason: .placeholder)`.
-    func shimmering() -> some View { modifier(Shimmer()) }
 }
 
 // MARK: - Previews

@@ -1,3 +1,4 @@
+import MenereUI
 import SwiftUI
 import WineDomain
 
@@ -75,13 +76,13 @@ public struct ProvenanceBadgeStyle: Equatable, Sendable {
 }
 
 public extension ProvenanceTint {
-    /// View-layer color for the tint. Reuses system semantic colors rather than hardcoded hexes.
+    /// View-layer color for the tint. Uses the Menere brand palette.
     var color: Color {
         switch self {
-        case .verified: return .green
-        case .aiEstimate: return .orange
-        case .scanned: return .secondary
-        case .user: return .accentColor
+        case .verified: return .candleGold   // brand "verified = gold"
+        case .aiEstimate: return .hold        // AI estimate = slate
+        case .scanned: return .inkSoft        // read off the label
+        case .user: return .wine              // user-confirmed = brand red
         }
     }
 }

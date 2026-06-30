@@ -1,5 +1,6 @@
 import CellarFeature
 import ComposableArchitecture
+import MenereUI
 import ScanFeature
 import SettingsFeature
 import SwiftUI
@@ -98,5 +99,7 @@ public struct MainTabView: View {
                 }
             }
         }
+        .tint(.wine)
+        .selectionHaptic(store.selectedTab)
     }
 }

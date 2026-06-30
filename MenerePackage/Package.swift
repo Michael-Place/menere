@@ -7,6 +7,7 @@ let package = Package(
     defaultLocalization: "en",
     platforms: [.iOS(.v26)],
     products: [
+        .library(name: "MenereUI", targets: ["MenereUI"]),
         .library(name: "AppCore", targets: ["AppCore"]),
         .library(name: "AuthenticationDomain", targets: ["AuthenticationDomain"]),
         .library(name: "AuthenticationFeature", targets: ["AuthenticationFeature"]),
@@ -34,11 +35,15 @@ let package = Package(
     ],
     targets: [
         .target(
+            name: "MenereUI"
+        ),
+        .target(
             name: "AppCore",
             dependencies: [
                 .product(name: "ComposableArchitecture", package: "swift-composable-architecture"),
                 .product(name: "FirebaseAuth", package: "firebase-ios-sdk"),
                 .product(name: "FirebaseFirestore", package: "firebase-ios-sdk"),
+                "MenereUI",
                 "AuthenticationDomain",
                 "AuthenticationFeature",
                 "OnboardingFeature",
@@ -68,6 +73,7 @@ let package = Package(
             dependencies: [
                 .product(name: "FirebaseAuth", package: "firebase-ios-sdk"),
                 .product(name: "ComposableArchitecture", package: "swift-composable-architecture"),
+                "MenereUI",
                 "AuthenticationDomain",
             ]
         ),
@@ -76,6 +82,7 @@ let package = Package(
             dependencies: [
                 .product(name: "ComposableArchitecture", package: "swift-composable-architecture"),
                 .product(name: "FirebaseFirestore", package: "firebase-ios-sdk"),
+                "MenereUI",
                 "AuthenticationFeature",
                 "UserDomain",
             ]
@@ -84,6 +91,7 @@ let package = Package(
             name: "SettingsFeature",
             dependencies: [
                 .product(name: "ComposableArchitecture", package: "swift-composable-architecture"),
+                "MenereUI",
                 "AuthenticationDomain",
                 "UserDomain",
                 "WineDomain",
@@ -160,6 +168,7 @@ let package = Package(
             name: "ScanFeature",
             dependencies: [
                 .product(name: "ComposableArchitecture", package: "swift-composable-architecture"),
+                "MenereUI",
                 "IdentifyClient",
                 "CatalogClient",
                 "WineDomain",
@@ -170,6 +179,7 @@ let package = Package(
             name: "BottleCardFeature",
             dependencies: [
                 .product(name: "ComposableArchitecture", package: "swift-composable-architecture"),
+                "MenereUI",
                 "WineDomain",
                 "JournalFeature",
                 "UserDomain",
@@ -179,6 +189,7 @@ let package = Package(
             name: "JournalFeature",
             dependencies: [
                 .product(name: "ComposableArchitecture", package: "swift-composable-architecture"),
+                "MenereUI",
                 "WineDomain",
                 "PersistenceClient",
                 "StorageClient",
@@ -189,6 +200,7 @@ let package = Package(
             name: "CellarFeature",
             dependencies: [
                 .product(name: "ComposableArchitecture", package: "swift-composable-architecture"),
+                "MenereUI",
                 "WineDomain",
                 "PersistenceClient",
                 "UserDomain",
