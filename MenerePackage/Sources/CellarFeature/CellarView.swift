@@ -119,6 +119,9 @@ public struct CellarReducer {
         case tastingDetail(TastingDetailReducer)
     }
 
+    /// Which preset a dashboard stat-tile tap applies to the Cellar inventory.
+    public enum StatTarget: Equatable, Sendable { case cellared, wines, tastings, wishlist }
+
     @ObservableState
     public struct State: Equatable {
         @Presents public var destination: Destination.State?
@@ -136,6 +139,9 @@ public struct CellarReducer {
         public var minRating: Double? = nil             // e.g. 4.0 = "4★+"; nil = any
         public var grapeFilter: String? = nil           // nil = all grapes
         public var historySort: HistorySort = .dateNewest
+
+        // Dashboard (folded in at the top of the Cellar segment)
+        public var dashboard: DashboardData = .empty
 
         public enum Segment: String, CaseIterable, Equatable, Sendable {
             case cellar
@@ -268,9 +274,13 @@ public struct CellarReducer {
         case task
         case loaded([CellarRow])
         case tastingsLoaded([TastingRow])
+        case dashboardLoaded(DashboardData)
         case loadFailed(String)
         case wineRowTapped(CellarRow)
         case tastingRowTapped(TastingRow)
+        case drinkSoonRowTapped(HomeBottleRow)
+        case recentTastingRowTapped(HomeTastingRow)
+        case statTileTapped(StatTarget)
         case deleteBottleSwiped(String)
         case deleteTastingSwiped(String)
         case destination(PresentationAction<Destination.Action>)
@@ -297,6 +307,7 @@ public struct CellarReducer {
                     guard let hid = user?.householdId else {
                         await send(.loaded([]))
                         await send(.tastingsLoaded([]))
+                        await send(.dashboardLoaded(.empty))
                         return
                     }
                     do {
@@ -317,6 +328,36 @@ public struct CellarReducer {
                         }
                         await send(.loaded(cellarRows))
                         await send(.tastingsLoaded(tastingRows))
+
+                        // Dashboard stats are computed from RAW bottles/tastings so they count
+                        // orphan-wine bottles (which `cellarRows`/`tastingRows` drop on the join).
+                        let cellared = bottles.filter { $0.status == .cellared }
+                        let cellaredBottleCount = cellared.reduce(0) { $0 + $1.quantity }
+                        let distinctWineCount = Set(cellared.map(\.wineId)).count
+                        let wishlistCount = bottles.filter { $0.status == .wishlist }.count
+                        let tastingCount = tastings.count
+
+                        let drinkSoon = cellared
+                            .filter { isDrinkNow($0, year: year) && byKey[$0.wineId] != nil }
+                            .sorted { ($0.drinkBy ?? .max) < ($1.drinkBy ?? .max) }
+                            .prefix(5)
+                            .map { HomeBottleRow(bottle: $0, wine: byKey[$0.wineId]!) }
+
+                        let recentTastings = tastings
+                            .filter { byKey[$0.wineId] != nil }
+                            .sorted { $0.date > $1.date }
+                            .prefix(5)
+                            .map { HomeTastingRow(tasting: $0, wine: byKey[$0.wineId]!) }
+
+                        let dashboard = DashboardData(
+                            cellaredBottleCount: cellaredBottleCount,
+                            distinctWineCount: distinctWineCount,
+                            wishlistCount: wishlistCount,
+                            tastingCount: tastingCount,
+                            drinkSoon: Array(drinkSoon),
+                            recentTastings: Array(recentTastings)
+                        )
+                        await send(.dashboardLoaded(dashboard))
                     } catch {
                         await send(.loadFailed(error.localizedDescription))
                     }
@@ -329,6 +370,10 @@ public struct CellarReducer {
 
             case let .tastingsLoaded(rows):
                 state.tastingRows = rows
+                return .none
+
+            case let .dashboardLoaded(data):
+                state.dashboard = data
                 return .none
 
             case let .loadFailed(message):
@@ -346,6 +391,36 @@ public struct CellarReducer {
                 state.destination = .tastingDetail(
                     TastingDetailReducer.State(tasting: row.tasting, wine: row.wine)
                 )
+                return .none
+
+            case let .drinkSoonRowTapped(row):
+                state.destination = .wineDetail(
+                    BottleCardFeature.State(wine: row.wine, ownedBottle: row.bottle)
+                )
+                return .none
+
+            case let .recentTastingRowTapped(row):
+                state.destination = .tastingDetail(
+                    TastingDetailReducer.State(tasting: row.tasting, wine: row.wine)
+                )
+                return .none
+
+            case let .statTileTapped(target):
+                switch target {
+                case .cellared:
+                    state.segment = .cellar
+                    state.statusFilter = .cellared
+                case .wines:
+                    state.segment = .cellar
+                    state.statusFilter = nil
+                case .tastings:
+                    state.segment = .history
+                    state.statusFilter = nil
+                case .wishlist:
+                    state.segment = .cellar
+                    state.statusFilter = .wishlist
+                }
+                state.searchText = ""
                 return .none
 
             case let .destination(.presented(.wineDetail(.delegate(.bottleDeleted(id))))):
@@ -512,24 +587,138 @@ public struct CellarView: View {
             }
             .accessibilityIdentifier("cellar-empty")
         } else {
-            List(store.visibleRows) { row in
-                Button {
-                    store.send(.wineRowTapped(row))
-                } label: {
-                    CellarRowView(row: row)
-                }
-                .buttonStyle(.plain)
-                .accessibilityIdentifier("cellar-row-\(row.id)")
-                .swipeActions(edge: .trailing) {
-                    Button(role: .destructive) {
-                        store.send(.deleteBottleSwiped(row.id))
-                    } label: {
-                        Label("Delete", systemImage: "trash")
+            List {
+                if !store.dashboard.isEmpty {
+                    Section {
+                        dashboardHeader
                     }
-                    .accessibilityIdentifier("cellar-delete-\(row.id)")
+                    .listRowInsets(EdgeInsets())
+                    .listRowBackground(Color.clear)
+                }
+                Section {
+                    ForEach(store.visibleRows) { row in
+                        Button {
+                            store.send(.wineRowTapped(row))
+                        } label: {
+                            CellarRowView(row: row)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityIdentifier("cellar-row-\(row.id)")
+                        .swipeActions(edge: .trailing) {
+                            Button(role: .destructive) {
+                                store.send(.deleteBottleSwiped(row.id))
+                            } label: {
+                                Label("Delete", systemImage: "trash")
+                            }
+                            .accessibilityIdentifier("cellar-delete-\(row.id)")
+                        }
+                    }
                 }
             }
         }
+    }
+
+    // MARK: Dashboard header (folded into the top of the Cellar segment)
+
+    private var dashboardHeader: some View {
+        VStack(alignment: .leading, spacing: 24) {
+            statTiles
+            drinkSoonSection
+            recentTastingsSection
+        }
+        .padding()
+    }
+
+    private var statTiles: some View {
+        let columns = [GridItem(.flexible()), GridItem(.flexible())]
+        return LazyVGrid(columns: columns, spacing: 12) {
+            Button {
+                store.send(.statTileTapped(.cellared))
+            } label: {
+                StatTile(
+                    value: store.dashboard.cellaredBottleCount,
+                    caption: "Cellared",
+                    systemImage: "square.stack.3d.up"
+                )
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("home-stat-cellared")
+            Button {
+                store.send(.statTileTapped(.wines))
+            } label: {
+                StatTile(
+                    value: store.dashboard.distinctWineCount,
+                    caption: "Wines",
+                    systemImage: "drop"
+                )
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("home-stat-wines")
+            Button {
+                store.send(.statTileTapped(.tastings))
+            } label: {
+                StatTile(
+                    value: store.dashboard.tastingCount,
+                    caption: "Tastings",
+                    systemImage: "wineglass"
+                )
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("home-stat-tastings")
+            Button {
+                store.send(.statTileTapped(.wishlist))
+            } label: {
+                StatTile(
+                    value: store.dashboard.wishlistCount,
+                    caption: "Wishlist",
+                    systemImage: "heart"
+                )
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("home-stat-wishlist")
+        }
+    }
+
+    private var drinkSoonSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            SectionHeader(title: "Drink soon")
+            if store.dashboard.drinkSoon.isEmpty {
+                EmptyHint(text: "Nothing in its window right now.")
+            } else {
+                VStack(spacing: 8) {
+                    ForEach(store.dashboard.drinkSoon) { row in
+                        Button {
+                            store.send(.drinkSoonRowTapped(row))
+                        } label: {
+                            DrinkSoonRowView(row: row)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+        }
+        .accessibilityIdentifier("home-drink-soon")
+    }
+
+    private var recentTastingsSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            SectionHeader(title: "Recent tastings")
+            if store.dashboard.recentTastings.isEmpty {
+                EmptyHint(text: "Log a tasting to see it here.")
+            } else {
+                VStack(spacing: 8) {
+                    ForEach(store.dashboard.recentTastings) { row in
+                        Button {
+                            store.send(.recentTastingRowTapped(row))
+                        } label: {
+                            RecentTastingRowView(row: row)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+        }
+        .accessibilityIdentifier("home-recent-tastings")
     }
 
     private var cellarFilterMenu: some View {

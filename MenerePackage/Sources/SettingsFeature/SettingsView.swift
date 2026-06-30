@@ -189,7 +189,7 @@ public struct SettingsView: View {
                 }
             }
         }
-        .navigationTitle("Settings")
+        .navigationTitle("Profile")
         .alert("Sign Out", isPresented: $store.showSignOutConfirmation) {
             Button("Cancel", role: .cancel) { store.send(.cancelSignOut) }
             Button("Sign Out", role: .destructive) { store.send(.confirmSignOut) }

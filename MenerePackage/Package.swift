@@ -11,7 +11,6 @@ let package = Package(
         .library(name: "AuthenticationDomain", targets: ["AuthenticationDomain"]),
         .library(name: "AuthenticationFeature", targets: ["AuthenticationFeature"]),
         .library(name: "OnboardingFeature", targets: ["OnboardingFeature"]),
-        .library(name: "HomeFeature", targets: ["HomeFeature"]),
         .library(name: "SettingsFeature", targets: ["SettingsFeature"]),
         .library(name: "UserDomain", targets: ["UserDomain"]),
         .library(name: "WineDomain", targets: ["WineDomain"]),
@@ -43,7 +42,6 @@ let package = Package(
                 "AuthenticationDomain",
                 "AuthenticationFeature",
                 "OnboardingFeature",
-                "HomeFeature",
                 "SettingsFeature",
                 "UserDomain",
                 "WineDomain",
@@ -80,17 +78,6 @@ let package = Package(
                 .product(name: "FirebaseFirestore", package: "firebase-ios-sdk"),
                 "AuthenticationFeature",
                 "UserDomain",
-            ]
-        ),
-        .target(
-            name: "HomeFeature",
-            dependencies: [
-                .product(name: "ComposableArchitecture", package: "swift-composable-architecture"),
-                "WineDomain",
-                "PersistenceClient",
-                "UserDomain",
-                "BottleCardFeature",
-                "JournalFeature",
             ]
         ),
         .target(
@@ -263,18 +250,6 @@ let package = Package(
             ]
         ),
         .testTarget(
-            name: "HomeFeatureTests",
-            dependencies: [
-                .product(name: "ComposableArchitecture", package: "swift-composable-architecture"),
-                "HomeFeature",
-                "WineDomain",
-                "PersistenceClient",
-                "UserDomain",
-                "BottleCardFeature",
-                "JournalFeature",
-            ]
-        ),
-        .testTarget(
             name: "SettingsFeatureTests",
             dependencies: [
                 .product(name: "ComposableArchitecture", package: "swift-composable-architecture"),
@@ -302,7 +277,6 @@ let package = Package(
             dependencies: [
                 .product(name: "ComposableArchitecture", package: "swift-composable-architecture"),
                 "AppCore",
-                "HomeFeature",
                 "CellarFeature",
                 "WineDomain",
             ]

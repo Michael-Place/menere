@@ -1,6 +1,5 @@
 import CellarFeature
 import ComposableArchitecture
-import HomeFeature
 import ScanFeature
 import SettingsFeature
 import SwiftUI
@@ -10,8 +9,7 @@ import WineDomain
 public struct MainTabReducer {
     @ObservableState
     public struct State: Equatable {
-        var selectedTab: TabItem = .home
-        var home = HomeReducer.State()
+        var selectedTab: TabItem = .cellar
         var scan = ScanReducer.State()
         var cellar = CellarReducer.State()
         var settings = SettingsReducer.State()
@@ -20,7 +18,6 @@ public struct MainTabReducer {
     }
 
     public enum Action: Equatable, BindableAction {
-        case home(HomeReducer.Action)
         case scan(ScanReducer.Action)
         case cellar(CellarReducer.Action)
         case settings(SettingsReducer.Action)
@@ -33,7 +30,6 @@ public struct MainTabReducer {
     public var body: some ReducerOf<Self> {
         BindingReducer()
 
-        Scope(state: \.home, action: \.home, child: HomeReducer.init)
         Scope(state: \.scan, action: \.scan, child: ScanReducer.init)
         Scope(state: \.cellar, action: \.cellar, child: CellarReducer.init)
         Scope(state: \.settings, action: \.settings, child: SettingsReducer.init)
@@ -43,50 +39,34 @@ public struct MainTabReducer {
             case .tabSelected(let tab):
                 state.selectedTab = tab
                 return .none
-            case .home(.delegate(.requestScan)), .cellar(.delegate(.requestScan)):
+            case .cellar(.delegate(.requestScan)):
                 state.selectedTab = .scan
                 return .none
-            case let .home(.delegate(.openCellar(target))):
-                state.selectedTab = .cellar
-                let (segment, statusFilter) = Self.preset(for: target)
-                return .send(.cellar(.applyPreset(segment: segment, statusFilter: statusFilter)))
-            case .home, .scan, .cellar, .settings, .binding:
+            case .scan, .cellar, .settings, .binding:
                 return .none
             }
-        }
-    }
-
-    static func preset(for target: HomeReducer.StatTarget) -> (segment: CellarReducer.State.Segment, statusFilter: BottleStatus?) {
-        switch target {
-        case .cellared: (.cellar, .cellared)
-        case .wines:    (.cellar, nil)
-        case .tastings: (.history, nil)
-        case .wishlist: (.cellar, .wishlist)
         }
     }
 }
 
 public enum TabItem: Int, CaseIterable, Equatable {
-    case home
-    case scan
     case cellar
+    case scan
     case settings
 
     var title: String {
         switch self {
-        case .home: "Home"
-        case .scan: "Scan"
         case .cellar: "Cellar"
-        case .settings: "Settings"
+        case .scan: "Scan"
+        case .settings: "Profile"
         }
     }
 
     var systemImage: String {
         switch self {
-        case .home: "house"
-        case .scan: "camera.viewfinder"
         case .cellar: "square.stack.3d.up"
-        case .settings: "gearshape"
+        case .scan: "camera.viewfinder"
+        case .settings: "person.crop.circle"
         }
     }
 }
@@ -100,21 +80,15 @@ public struct MainTabView: View {
 
     public var body: some View {
         TabView(selection: $store.selectedTab.sending(\.tabSelected)) {
-            Tab(TabItem.home.title, systemImage: TabItem.home.systemImage, value: TabItem.home) {
+            Tab(TabItem.cellar.title, systemImage: TabItem.cellar.systemImage, value: TabItem.cellar) {
                 NavigationStack {
-                    HomeView(store: store.scope(state: \.home, action: \.home))
+                    CellarView(store: store.scope(state: \.cellar, action: \.cellar))
                 }
             }
 
             Tab(TabItem.scan.title, systemImage: TabItem.scan.systemImage, value: TabItem.scan) {
                 NavigationStack {
                     ScanView(store: store.scope(state: \.scan, action: \.scan))
-                }
-            }
-
-            Tab(TabItem.cellar.title, systemImage: TabItem.cellar.systemImage, value: TabItem.cellar) {
-                NavigationStack {
-                    CellarView(store: store.scope(state: \.cellar, action: \.cellar))
                 }
             }
 
