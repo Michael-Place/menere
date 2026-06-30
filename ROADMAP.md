@@ -153,34 +153,44 @@ Goal: both of you on one shared cellar/history.
 - **Richer catalog:** paid partner API (InVintory / Wine-Searcher) if we go public.
 - **Pricing/where-to-buy:** Kroger / LCBO integrations.
 
-## UX / IA Enhancements (post-launch polish — worked serially)
-Driven by the 2026-06-30 navigation/IA audit. Two root problems: (1) the rich `BottleCardView` is only reachable via a fresh scan; (2) Home and Cellar are passive, overlapping dead-ends (every tile/row is a static `VStack` — 0 navigation transitions in either screen). Each phase: plan → implement → green build + reducer tests + clean sim launch before the next.
+## UX / IA Enhancements (post-launch polish — worked serially) ✅ COMPLETE (2026-06-30)
+Driven by the 2026-06-30 navigation/IA audit. Two root problems: (1) the rich `BottleCardView` is only reachable via a fresh scan; (2) Home and Cellar are passive, overlapping dead-ends (every tile/row is a static `VStack` — 0 navigation transitions in either screen). Each phase: plan → implement → green build + reducer tests + clean sim launch before the next. **All four phases shipped + driven-smoke-verified on the sim; merged to main.**
 
-### UX1 — Universal detail screens (the keystone) ⏳
+### UX1 — Universal detail screens (the keystone) ✅
 Goal: kill the 5 tap-dead-ends; make the collection browsable.
 - [ ] Tap a Cellar inventory row / Home "drink soon" row → push a wine/bottle detail (reuse `BottleCardView`; it already has `init(wine:)` and every row carries the full `Wine`+`Bottle`).
 - [ ] BottleCard **"owned" mode**: for a wine already in the cellar, show the bottle's cellar facts (qty/status/drink-window/store) and **suppress "Add to cellar"**; keep "Log a tasting".
 - [ ] Tap a Cellar history row / Home recent-tasting row → a **tasting detail** (★/100-pt, full SAT note, photos, who/occasion, wine identity).
 - **DoD:** every row in Home + Cellar leads somewhere; no dead-ends.
 
-### UX2 — Edit & delete ⏳
+### UX2 — Edit & delete ✅
 Goal: close the creation loop (today records are permanent + uneditable).
 - [ ] `PersistenceClient.deleteBottle/deleteTasting`; `BottleFormReducer`/`TastingFormReducer` gain an **edit** init (prefill + update-in-place vs create).
 - [ ] Swipe-to-delete on Cellar rows; "Edit" from the detail screen; reload after.
 - **DoD:** can edit/delete any bottle or tasting.
 
-### UX3 — Empty-state CTAs + cross-tab nav ⏳
+### UX3 — Empty-state CTAs + cross-tab nav ✅
 Goal: no text-only dead-end empty states; tiles that go somewhere.
 - [ ] The 5 empty states become real buttons → jump to the Scan tab (needs programmatic tab switch: child → `MainTabReducer` delegate).
 - [ ] Home stat tiles deep-link into a filtered Cellar (e.g. "Wishlist" → Cellar filtered to wishlist).
 - **DoD:** empty states + tiles are actionable.
 
-### UX4 — Tab IA restructure ⏳ (decision required before building)
+### UX4 — Tab IA restructure ✅
 Goal: resolve Home/Cellar overlap; right-size the tab bar.
-- [ ] Decide: **(A)** keep 4 tabs, make Home a true actionable launchpad; or **(B)** merge Home's summary into the top of Cellar → 3 tabs (Cellar · Scan · Profile). Rename **Settings → Profile** (household + account) either way.
-- **DoD:** tabs each earn their keep; agreed shape shipped.
+- [x] **Decision (B): merged Home into the top of Cellar → 3 tabs (Cellar · Scan · Profile).** The Home tab is gone; its dashboard (stat tiles, drink-soon, recent-tastings) is the first List section of the Cellar tab, with tiles re-filtering the inventory in-tab. **Settings → Profile** renamed.
+- **DoD:** ✅ tabs each earn their keep; 3-tab shape shipped + smoke-verified.
 
 > Audit verdict: tab *count* isn't the core issue — Home/Cellar redundancy + dead-ends are. UX1 is the highest-leverage single change (turns a data-entry tool into a browsable app). UX4 is the only phase with an open product decision.
+
+## Visual design system — brand "soul" ✅ COMPLETE (2026-06-30)
+Driven by the 2026-06-30 delight audit + brand book (`docs/brand-book.md`); phased plan in `docs/ux-soul-roadmap.md`. Goal: replace all-standard iOS chrome with a "Cellar & Candlelight" identity (warm parchment + Bordeaux + candle gold, New York serif for wine names, springs/haptics/symbol-effects, a wine-type mesh hero, drink-window gauge, Swift Charts composition, hero zoom transitions). All seven phases shipped serially (plan → implement → green build + reducer tests → driven sim smoke → commit):
+- [x] **D0+D1** — `MenereUI` module (color tokens, serif ramp, motion springs, haptics, branded shimmer) + instant brand wins (`.tint(.wine)`, serif wine names, haptics, branded `ProvenanceBadge`).
+- [x] **D2** — bottle card: drink-window `Gauge`, numericText reveal, wax-seal "Tucked into your cellar" celebration, wine-type `MeshGradient` hero.
+- [x] **D3** — Cellar as a shelf: rolling stat counters, `.scrollTransition` depth, branded drink-window indicator, Swift Charts "By type" composition tile.
+- [x] **D4** — journaling soul: animated candle-gold star rating, save-success haptics, polaroid photos, postcard tasting detail, real stars in history.
+- [x] **D5** — hero zoom continuity: cellar/history row → detail `.navigationTransition(.zoom)`; full-screen tasting-photo viewer.
+- [x] **D6** — first impressions & edges: Welcome wine-swirl `MeshGradient` + serif wordmark + "Every bottle, remembered.", living scan/empty/error states, Settings copy-code payoff, auth haptics.
+- **DoD:** ✅ the app reads like a wine keepsake, not standard chrome. (Open: signed-out screens — Welcome/onboarding/auth — are build-verified but await a live look; on-device pass for haptics/animation feel.)
 
 ## Key risks / dependencies
 - **APNs key** (M0) is a manual Apple Developer portal step required for Phone auth on device.
