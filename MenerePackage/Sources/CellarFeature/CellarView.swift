@@ -532,6 +532,9 @@ public struct CellarView: View {
     /// both `navigationDestination`s, so one namespace matches every source to its pushed destination.
     @Namespace private var zoomNamespace
 
+    /// Bumped whenever a load-error `ContentUnavailableView` appears so its glyph bounces on entry.
+    @State private var errorBounce = 0
+
     public init(store: StoreOf<CellarReducer>) {
         self.store = store
     }
@@ -603,6 +606,7 @@ public struct CellarView: View {
         } else if let error = store.loadError {
             ContentUnavailableView {
                 Label("Couldn't load your cellar", systemImage: "exclamationmark.triangle")
+                    .symbolEffect(.bounce, options: .nonRepeating, value: errorBounce)
             } description: {
                 Text(error)
             } actions: {
@@ -610,10 +614,12 @@ public struct CellarView: View {
                     .buttonStyle(.borderedProminent)
                     .accessibilityIdentifier("cellar-error-retry")
             }
+            .onAppear { errorBounce += 1 }
             .accessibilityIdentifier("cellar-error")
         } else if store.rows.isEmpty {
             ContentUnavailableView {
                 Label("No bottles yet", systemImage: "square.stack.3d.up")
+                    .symbolEffect(.pulse, options: .repeating)
             } description: {
                 Text("Scan a wine and Add to cellar")
             } actions: {
@@ -802,6 +808,7 @@ public struct CellarView: View {
         } else if let error = store.loadError {
             ContentUnavailableView {
                 Label("Couldn't load your history", systemImage: "exclamationmark.triangle")
+                    .symbolEffect(.bounce, options: .nonRepeating, value: errorBounce)
             } description: {
                 Text(error)
             } actions: {
@@ -809,6 +816,7 @@ public struct CellarView: View {
                     .buttonStyle(.borderedProminent)
                     .accessibilityIdentifier("cellar-history-error-retry")
             }
+            .onAppear { errorBounce += 1 }
             .accessibilityIdentifier("cellar-history-error")
         } else if store.tastingRows.isEmpty {
             ContentUnavailableView(

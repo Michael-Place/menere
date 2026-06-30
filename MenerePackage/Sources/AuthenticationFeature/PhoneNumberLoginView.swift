@@ -1,6 +1,7 @@
 import AuthenticationDomain
 import ComposableArchitecture
 import FirebaseAuth
+import MenereUI
 import SwiftUI
 
 @Reducer
@@ -148,6 +149,7 @@ struct PhoneNumberLoginView: View {
                         Image(systemName: "xmark.circle.fill")
                             .imageScale(.large)
                             .foregroundStyle(.red)
+                            .symbolEffect(.wiggle, options: .nonRepeating, value: store.errorMessage)
                         Text(errorMessage)
                             .font(.subheadline.weight(.medium))
                             .foregroundStyle(.red)
@@ -155,6 +157,7 @@ struct PhoneNumberLoginView: View {
                 }
             }
         }
+        .errorHaptic(store.errorMessage)
         .sheet(
             item: $store.scope(state: \.destination?.countryCodeSelection, action: \.destination.countryCodeSelection)
         ) { store in

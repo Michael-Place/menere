@@ -2,6 +2,7 @@ import BottleCardFeature
 import CatalogClient
 import ComposableArchitecture
 import IdentifyClient
+import MenereUI
 import PhotosUI
 import SwiftUI
 import UIKit
@@ -175,6 +176,12 @@ public struct ScanView: View {
     @State private var pickedItem: PhotosPickerItem?
     @State private var isShowingBarcodeScanner = false
     @State private var isShowingCameraCapture = false
+    /// View-local counter bumped on every capture affordance tap so the buttons fire an impact
+    /// haptic without leaning on reducer state. Held at body level so it survives the idle → result
+    /// state swap that follows a capture.
+    @State private var captureTick = 0
+    /// Bumped when the failed state appears, driving the warning-glyph wiggle + an error haptic.
+    @State private var failedTick = 0
 
     private var isBarcodeScanningAvailable: Bool {
         DataScannerViewController.isSupported && DataScannerViewController.isAvailable
@@ -192,6 +199,7 @@ public struct ScanView: View {
         content
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .animation(.default, value: store.status)
+            .impactHaptic(captureTick)
             .navigationTitle("Scan")
             .task { store.send(.task) }
             .sheet(
@@ -212,7 +220,7 @@ public struct ScanView: View {
         case .idle:
             idleView
         case .identifying:
-            ProgressView("Identifying…")
+            identifyingView
         case .result(let candidate):
             CandidateResultView(candidate: candidate) {
                 store.send(.scanAgain)
@@ -275,11 +283,26 @@ public struct ScanView: View {
         )
     }
 
+    /// The "identifying" interstitial — a variable-color `sparkles` glyph builds anticipation above
+    /// the progress label while OCR / Foundation Models resolve the captured label.
+    private var identifyingView: some View {
+        VStack(spacing: 20) {
+            Image(systemName: "sparkles")
+                .font(.system(size: 56))
+                .foregroundStyle(Color.candleGold)
+                .symbolEffect(.variableColor.iterative)
+
+            ProgressView("Identifying…")
+        }
+        .padding()
+    }
+
     private var idleView: some View {
         VStack(spacing: 20) {
             Image(systemName: "camera.viewfinder")
                 .font(.system(size: 60))
                 .foregroundStyle(.secondary)
+                .symbolEffect(.pulse, options: .repeating)
 
             Text("Scan a bottle")
                 .font(.largeTitle.bold())
@@ -292,6 +315,7 @@ public struct ScanView: View {
             VStack(spacing: 12) {
                 if isBarcodeScanningAvailable {
                     Button {
+                        captureTick += 1
                         isShowingBarcodeScanner = true
                     } label: {
                         Label("Scan barcode", systemImage: "barcode.viewfinder")
@@ -303,6 +327,7 @@ public struct ScanView: View {
 
                 if isCameraCaptureAvailable {
                     Button {
+                        captureTick += 1
                         isShowingCameraCapture = true
                     } label: {
                         Label("Photograph label", systemImage: "camera")
@@ -313,6 +338,7 @@ public struct ScanView: View {
                 }
 
                 Button {
+                    captureTick += 1
                     store.send(.useSampleTapped)
                 } label: {
                     Label("Use sample bottle", systemImage: "wineglass")
@@ -340,6 +366,7 @@ public struct ScanView: View {
         .padding()
         .onChange(of: pickedItem) { _, newItem in
             guard let newItem else { return }
+            captureTick += 1
             Task {
                 if let data = try? await newItem.loadTransferable(type: Data.self) {
                     store.send(.imageCaptured(data))
@@ -367,26 +394,21 @@ public struct ScanView: View {
     }
 
     private func failedView(_ message: String) -> some View {
-        VStack(spacing: 20) {
-            Image(systemName: "exclamationmark.triangle")
-                .font(.system(size: 60))
-                .foregroundStyle(.orange)
-
-            Text("Couldn't identify")
-                .font(.title2.bold())
-
+        ContentUnavailableView {
+            Label("Couldn't identify", systemImage: "exclamationmark.triangle")
+                .symbolEffect(.wiggle, options: .nonRepeating, value: failedTick)
+        } description: {
             Text(message)
-                .font(.body)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-
+        } actions: {
             Button("Try again") {
                 store.send(.scanAgain)
             }
             .buttonStyle(.borderedProminent)
             .accessibilityIdentifier("try-again-button")
         }
-        .padding()
+        // Bumped on appear so the glyph wiggles and an error haptic fires each time we land here.
+        .onAppear { failedTick += 1 }
+        .errorHaptic(failedTick)
     }
 }
 
@@ -419,17 +441,20 @@ private struct ScanOnboardingView: View {
                         OnboardingRow(
                             systemImage: "barcode.viewfinder",
                             title: "Scan a barcode",
-                            detail: "Fastest when the back label has one."
+                            detail: "Fastest when the back label has one.",
+                            bounceDelay: 0.25
                         )
                         OnboardingRow(
                             systemImage: "camera",
                             title: "Photograph the label",
-                            detail: "Hold steady so the text is sharp."
+                            detail: "Hold steady so the text is sharp.",
+                            bounceDelay: 0.45
                         )
                         OnboardingRow(
                             systemImage: "wineglass",
                             title: "Try a sample",
-                            detail: "Not near a bottle? Use the sample to see how it works."
+                            detail: "Not near a bottle? Use the sample to see how it works.",
+                            bounceDelay: 0.65
                         )
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -460,6 +485,9 @@ private struct OnboardingRow: View {
     let systemImage: String
     let title: String
     let detail: String
+    /// Staggered start so the three glyphs bounce in sequence as the explainer appears.
+    var bounceDelay: Double = 0
+    @State private var didBounce = false
 
     var body: some View {
         HStack(spacing: 16) {
@@ -467,6 +495,11 @@ private struct OnboardingRow: View {
                 .font(.title2)
                 .foregroundStyle(.tint)
                 .frame(width: 40)
+                .symbolEffect(.bounce, options: .nonRepeating, value: didBounce)
+                .task {
+                    try? await Task.sleep(for: .seconds(bounceDelay))
+                    didBounce = true
+                }
             VStack(alignment: .leading, spacing: 2) {
                 Text(title)
                     .font(.headline)

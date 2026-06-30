@@ -1,6 +1,7 @@
 import AuthenticationDomain
 import ComposableArchitecture
 import HouseholdClient
+import MenereUI
 import PersistenceClient
 import SwiftUI
 import UserDomain
@@ -123,6 +124,11 @@ public struct SettingsReducer {
 public struct SettingsView: View {
     @Bindable var store: StoreOf<SettingsReducer>
 
+    /// Drives the copy-button glyph swap (doc → checkmark) for ~1.5s after a copy.
+    @State private var copied = false
+    /// Bumped on each copy so a success haptic fires only on copy (not on the reset).
+    @State private var copyTick = 0
+
     public init(store: StoreOf<SettingsReducer>) {
         self.store = store
     }
@@ -152,15 +158,25 @@ public struct SettingsView: View {
                             Spacer()
                             Button {
                                 UIPasteboard.general.string = household.inviteCode
+                                copyTick += 1
+                                copied = true
+                                Task {
+                                    try? await Task.sleep(for: .seconds(1.5))
+                                    copied = false
+                                }
                             } label: {
-                                Image(systemName: "doc.on.doc")
+                                Image(systemName: copied ? "checkmark" : "doc.on.doc")
+                                    .contentTransition(.symbolEffect(.replace))
+                                    .foregroundStyle(copied ? Color.drinkNow : Color.wine)
                             }
                             .buttonStyle(.borderless)
                             .accessibilityIdentifier("copy-invite-code-button")
+                            .successHaptic(copyTick)
                         }
                         Text("\(household.members.count) member\(household.members.count == 1 ? "" : "s")")
                             .font(.caption)
                             .foregroundStyle(.secondary)
+                            .contentTransition(.numericText())
                     }
                     .padding(.vertical, 4)
                 } else if store.isLoadingHousehold {

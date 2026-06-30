@@ -1,5 +1,6 @@
 import ComposableArchitecture
 import FirebaseAuth
+import MenereUI
 import SwiftUI
 
 @Reducer
@@ -84,6 +85,7 @@ struct OtpVerificationView: View {
                         Image(systemName: "xmark.circle.fill")
                             .imageScale(.large)
                             .foregroundStyle(.red)
+                            .symbolEffect(.wiggle, options: .nonRepeating, value: store.errorMessage)
                         Text(errorMessage)
                             .font(.subheadline.weight(.medium))
                             .foregroundStyle(.red)
@@ -95,6 +97,9 @@ struct OtpVerificationView: View {
             .padding()
             .frame(maxWidth: .infinity, alignment: .leading)
         }
+        // Fires the moment the 6-digit code is fully entered (OTP completion); error haptic on failure.
+        .successHaptic(store.otpCode.count == 6)
+        .errorHaptic(store.errorMessage)
         .onAppear { isFocused = true }
     }
 }

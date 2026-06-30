@@ -1,6 +1,7 @@
 import AuthenticationFeature
 import ComposableArchitecture
 import FirebaseFirestore
+import MenereUI
 import SwiftUI
 import UserDomain
 
@@ -70,6 +71,9 @@ public struct OnboardingReducer {
 public struct OnboardingView: View {
     @Bindable var store: StoreOf<OnboardingReducer>
 
+    /// Bumped when the success ("You're Ready!") step appears so the check can bounce once on entry.
+    @State private var readyAppeared = false
+
     public init(store: StoreOf<OnboardingReducer>) {
         self.store = store
     }
@@ -90,6 +94,8 @@ public struct OnboardingView: View {
                 profileSetupView
             }
         }
+        // Fires once the moment onboarding reaches the ready step (userId becomes non-nil).
+        .successHaptic(store.userId)
     }
 
     private var profileSetupView: some View {
@@ -98,7 +104,9 @@ public struct OnboardingView: View {
 
             Image(systemName: "checkmark.circle.fill")
                 .font(.system(size: 80))
-                .foregroundStyle(.green)
+                .foregroundStyle(Color.drinkNow)
+                .symbolEffect(.bounce, options: .nonRepeating, value: readyAppeared)
+                .onAppear { readyAppeared = true }
 
             VStack(spacing: 12) {
                 Text("You're Ready!")
