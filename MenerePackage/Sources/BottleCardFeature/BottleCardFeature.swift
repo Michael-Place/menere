@@ -30,18 +30,24 @@ public struct BottleCardFeature {
         /// M5: the presented journaling form (Add to cellar / Log a tasting), if any.
         @Presents public var destination: Destination.State?
 
+        /// When set, the card renders an owned cellar bottle: shows cellar facts and suppresses
+        /// Add-to-cellar. Nil = scan path, unchanged.
+        public var ownedBottle: Bottle? = nil
+
         public init(
             wine: Wine,
             candidate: WineCandidate? = nil,
             imageData: Data? = nil,
             isResolving: Bool = false,
-            destination: Destination.State? = nil
+            destination: Destination.State? = nil,
+            ownedBottle: Bottle? = nil
         ) {
             self.wine = wine
             self.candidate = candidate
             self.imageData = imageData
             self.isResolving = isResolving
             self.destination = destination
+            self.ownedBottle = ownedBottle
         }
     }
 

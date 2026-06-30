@@ -1,3 +1,4 @@
+import BottleCardFeature
 import ComposableArchitecture
 import PersistenceClient
 import UserDomain
@@ -391,5 +392,26 @@ final class CellarReducerTests: XCTestCase {
             }
             await store.receive(.tastingsLoaded([]))
         }
+    }
+
+    // MARK: 12. Tapping a cellar row pushes the owned-bottle card
+
+    func testWineRowTappedPushesOwnedBottleCard() async {
+        let wine = Wine(producer: "Château Margaux", name: "Grand Vin", vintage: 2015)
+        let bottle = Bottle(id: "b-1", wineId: wine.id, quantity: 2, status: .cellared)
+        let row = CellarRow(bottle: bottle, wine: wine, drinkStatus: .drinkNow)
+
+        let store = TestStore(initialState: CellarReducer.State()) {
+            CellarReducer()
+        }
+        store.exhaustivity = .off
+
+        await store.send(.wineRowTapped(row))
+
+        guard case let .wineDetail(detail) = store.state.destination else {
+            return XCTFail("expected wineDetail destination")
+        }
+        XCTAssertEqual(detail.wine, wine)
+        XCTAssertEqual(detail.ownedBottle, bottle)
     }
 }

@@ -1,3 +1,4 @@
+import BottleCardFeature
 import ComposableArchitecture
 import PersistenceClient
 import UserDomain
@@ -208,5 +209,26 @@ final class HomeReducerTests: XCTestCase {
                 $0.isLoading = false
             }
         }
+    }
+
+    // MARK: 5. Tapping a drink-soon row pushes the owned-bottle card
+
+    func testDrinkSoonRowTappedPushesOwnedBottleCard() async {
+        let wine = Wine(producer: "Château Margaux", name: "Grand Vin", vintage: 2015)
+        let bottle = Bottle(id: "b-1", wineId: wine.id, quantity: 2, status: .cellared)
+        let row = HomeBottleRow(bottle: bottle, wine: wine)
+
+        let store = TestStore(initialState: HomeReducer.State()) {
+            HomeReducer()
+        }
+        store.exhaustivity = .off
+
+        await store.send(.drinkSoonRowTapped(row))
+
+        guard case let .wineDetail(detail) = store.state.destination else {
+            return XCTFail("expected wineDetail destination")
+        }
+        XCTAssertEqual(detail.wine, wine)
+        XCTAssertEqual(detail.ownedBottle, bottle)
     }
 }

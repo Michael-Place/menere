@@ -26,6 +26,12 @@ public struct BottleCardView: View {
         self.init(state: BottleCardFeature.State(wine: wine))
     }
 
+    /// Owned-mode convenience: renders a `Wine` joined to the user's cellar `Bottle` — shows cellar
+    /// facts and suppresses Add-to-cellar.
+    public init(wine: Wine, ownedBottle: Bottle) {
+        self.init(state: BottleCardFeature.State(wine: wine, ownedBottle: ownedBottle))
+    }
+
     private var wine: Wine { store.wine }
     /// Whether enrichment is still resolving — drives the shimmer placeholders for enrichment rows.
     private var isResolving: Bool { store.isResolving }
@@ -35,6 +41,7 @@ public struct BottleCardView: View {
             VStack(alignment: .leading, spacing: 24) {
                 heroBlock
                 factsBlock
+                ownedCellarBlock
                 drinkWindowBlock
                 summaryBlock
                 pairingsBlock
@@ -63,11 +70,13 @@ public struct BottleCardView: View {
     @ViewBuilder private var actionsBlock: some View {
         if !isResolving {
             VStack(spacing: 12) {
-                Button { store.send(.addToCellarTapped) } label: {
-                    Label("Add to cellar", systemImage: "plus.square.on.square").frame(maxWidth: .infinity)
+                if store.ownedBottle == nil {
+                    Button { store.send(.addToCellarTapped) } label: {
+                        Label("Add to cellar", systemImage: "plus.square.on.square").frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .accessibilityIdentifier("add-to-cellar-button")
                 }
-                .buttonStyle(.borderedProminent)
-                .accessibilityIdentifier("add-to-cellar-button")
                 Button { store.send(.logTastingTapped) } label: {
                     Label("Log a tasting", systemImage: "square.and.pencil").frame(maxWidth: .infinity)
                 }
@@ -219,6 +228,89 @@ public struct BottleCardView: View {
                 .foregroundStyle(.primary)
         }
     }
+
+    // MARK: - Owned cellar facts
+
+    /// When the card renders an owned bottle, surface the user's known cellar facts (quantity, status,
+    /// drink window, storage, store, price, purchase date). Each row appears only if present. Nil
+    /// `ownedBottle` (scan path) renders nothing.
+    @ViewBuilder private var ownedCellarBlock: some View {
+        if let bottle = store.ownedBottle {
+            Card {
+                VStack(alignment: .leading, spacing: 14) {
+                    Text("In your cellar")
+                        .font(.headline)
+                        .foregroundStyle(.primary)
+                    cellarFactRow(title: "Quantity", icon: "number") { Text("×\(bottle.quantity)") }
+                    cellarFactRow(title: "Status", icon: "tag") {
+                        Text(bottle.status.rawValue.capitalized)
+                    }
+                    if let window = ownedDrinkWindowText(bottle) {
+                        cellarFactRow(title: "Drink window", icon: "calendar") { Text(window) }
+                    }
+                    if let location = bottle.storageLocation, !location.isEmpty {
+                        cellarFactRow(title: "Storage", icon: "archivebox") { Text(location) }
+                    }
+                    if let store = bottle.store, !store.isEmpty {
+                        cellarFactRow(title: "Store", icon: "cart") { Text(store) }
+                    }
+                    if let priceText = ownedPriceText(bottle) {
+                        cellarFactRow(title: "Price", icon: "creditcard") { Text(priceText) }
+                    }
+                    if let date = bottle.purchaseDate {
+                        cellarFactRow(title: "Purchased", icon: "bag") {
+                            Text(Self.purchaseDateFormatter.string(from: date))
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// A labeled cellar-fact row: title (no provenance badge — these are user-entered facts), value.
+    private func cellarFactRow<Content: View>(
+        title: String,
+        icon: String,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Label(title, systemImage: icon)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .labelStyle(.titleOnly)
+            content()
+                .font(.body)
+                .foregroundStyle(.primary)
+        }
+    }
+
+    private func ownedDrinkWindowText(_ bottle: Bottle) -> String? {
+        switch (bottle.drinkFrom, bottle.drinkBy) {
+        case let (from?, by?): return "\(from)–\(by)"
+        case let (from?, nil): return "From \(from)"
+        case let (nil, by?): return "By \(by)"
+        case (nil, nil): return nil
+        }
+    }
+
+    private func ownedPriceText(_ bottle: Bottle) -> String? {
+        guard let price = bottle.price else { return nil }
+        let rounded = (price * 100).rounded() / 100
+        let amount = rounded == rounded.rounded()
+            ? String(Int(rounded))
+            : String(rounded)
+        if let currency = bottle.currency, !currency.isEmpty {
+            return "\(amount) \(currency)"
+        }
+        return amount
+    }
+
+    private static let purchaseDateFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateStyle = .medium
+        f.timeStyle = .none
+        return f
+    }()
 
     // MARK: - Resolving placeholders (shimmer)
 

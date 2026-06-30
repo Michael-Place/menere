@@ -1,3 +1,4 @@
+import BottleCardFeature
 import ComposableArchitecture
 import PersistenceClient
 import SwiftUI
@@ -142,8 +143,15 @@ private func isDrinkNow(_ bottle: Bottle, year: Int) -> Bool {
 
 @Reducer
 public struct HomeReducer {
+    /// Push destinations from the dashboard. UX1b adds `tastingDetail`.
+    @Reducer(state: .equatable, action: .equatable)
+    public enum Destination {
+        case wineDetail(BottleCardFeature)
+    }
+
     @ObservableState
     public struct State: Equatable {
+        @Presents public var destination: Destination.State?
         public var data: DashboardData = .empty
         public var isLoading = false
         public var loadError: String?
@@ -154,6 +162,8 @@ public struct HomeReducer {
         case task
         case loaded(DashboardData)
         case loadFailed(String)
+        case drinkSoonRowTapped(HomeBottleRow)
+        case destination(PresentationAction<Destination.Action>)
     }
 
     public init() {}
@@ -221,15 +231,25 @@ public struct HomeReducer {
                 state.isLoading = false
                 state.loadError = message
                 return .none
+
+            case let .drinkSoonRowTapped(row):
+                state.destination = .wineDetail(
+                    BottleCardFeature.State(wine: row.wine, ownedBottle: row.bottle)
+                )
+                return .none
+
+            case .destination:
+                return .none
             }
         }
+        .ifLet(\.$destination, action: \.destination)
     }
 }
 
 // MARK: - View
 
 public struct HomeView: View {
-    let store: StoreOf<HomeReducer>
+    @Bindable var store: StoreOf<HomeReducer>
 
     public init(store: StoreOf<HomeReducer>) {
         self.store = store
@@ -263,6 +283,11 @@ public struct HomeView: View {
         }
         .navigationTitle("Home")
         .task { store.send(.task) }
+        .navigationDestination(
+            item: $store.scope(state: \.destination?.wineDetail, action: \.destination.wineDetail)
+        ) { detailStore in
+            BottleCardView(store: detailStore)
+        }
     }
 
     private var dashboard: some View {
@@ -318,7 +343,12 @@ public struct HomeView: View {
             } else {
                 VStack(spacing: 8) {
                     ForEach(store.data.drinkSoon) { row in
-                        DrinkSoonRowView(row: row)
+                        Button {
+                            store.send(.drinkSoonRowTapped(row))
+                        } label: {
+                            DrinkSoonRowView(row: row)
+                        }
+                        .buttonStyle(.plain)
                     }
                 }
             }

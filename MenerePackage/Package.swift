@@ -89,6 +89,8 @@ let package = Package(
                 "WineDomain",
                 "PersistenceClient",
                 "UserDomain",
+                "BottleCardFeature",
+                "JournalFeature",
             ]
         ),
         .target(
@@ -202,6 +204,8 @@ let package = Package(
                 "WineDomain",
                 "PersistenceClient",
                 "UserDomain",
+                "BottleCardFeature",
+                "JournalFeature",
             ]
         ),
         .testTarget(
@@ -264,6 +268,8 @@ let package = Package(
                 "WineDomain",
                 "PersistenceClient",
                 "UserDomain",
+                "BottleCardFeature",
+                "JournalFeature",
             ]
         ),
         .testTarget(
@@ -285,6 +291,8 @@ let package = Package(
                 "WineDomain",
                 "PersistenceClient",
                 "UserDomain",
+                "BottleCardFeature",
+                "JournalFeature",
             ]
         ),
     ],

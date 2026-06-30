@@ -106,4 +106,34 @@ final class BottleCardFeatureTests: XCTestCase {
             }
         }
     }
+
+    // MARK: Owned mode
+
+    /// Scan path: constructing from a bare `Wine` leaves `ownedBottle` nil (Add-to-cellar present).
+    func testScanPathLeavesOwnedBottleNil() {
+        let state = BottleCardFeature.State(wine: wine)
+        XCTAssertNil(state.ownedBottle)
+    }
+
+    /// Owned path: constructing with an `ownedBottle` carries it; Log-a-tasting still presents its form
+    /// (only Add-to-cellar is suppressed, and that's view-side).
+    func testOwnedStateCarriesBottleAndLogTastingStillPresents() async {
+        await withDependencies {
+            $0.defaultFileStorage = .inMemory
+        } operation: {
+            @Shared(.user) var user
+            $user.withLock { $0 = User(id: "uid-3", displayName: "Owner", householdId: "hid-3") }
+
+            let bottle = Bottle(id: "b-owned", wineId: wine.id, quantity: 3)
+            let state = BottleCardFeature.State(wine: wine, ownedBottle: bottle)
+            XCTAssertEqual(state.ownedBottle, bottle)
+
+            let store = TestStore(initialState: state) {
+                BottleCardFeature()
+            }
+            await store.send(.logTastingTapped) {
+                $0.destination = .logTasting(TastingFormReducer.State(wine: self.wine, hid: "hid-3", uid: "uid-3"))
+            }
+        }
+    }
 }

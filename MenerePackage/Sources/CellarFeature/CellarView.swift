@@ -1,3 +1,4 @@
+import BottleCardFeature
 import ComposableArchitecture
 import PersistenceClient
 import SwiftUI
@@ -110,8 +111,15 @@ func classify(_ bottle: Bottle, year: Int) -> CellarRow.DrinkStatus {
 
 @Reducer
 public struct CellarReducer {
+    /// Push destinations from the cellar. UX1b adds `tastingDetail`.
+    @Reducer(state: .equatable, action: .equatable)
+    public enum Destination {
+        case wineDetail(BottleCardFeature)
+    }
+
     @ObservableState
     public struct State: Equatable {
+        @Presents public var destination: Destination.State?
         public var rows: [CellarRow] = []
         public var isLoading = false
         public var loadError: String?
@@ -259,6 +267,8 @@ public struct CellarReducer {
         case loaded([CellarRow])
         case tastingsLoaded([TastingRow])
         case loadFailed(String)
+        case wineRowTapped(CellarRow)
+        case destination(PresentationAction<Destination.Action>)
         case binding(BindingAction<State>)
     }
 
@@ -317,10 +327,20 @@ public struct CellarReducer {
                 state.loadError = message
                 return .none
 
+            case let .wineRowTapped(row):
+                state.destination = .wineDetail(
+                    BottleCardFeature.State(wine: row.wine, ownedBottle: row.bottle)
+                )
+                return .none
+
+            case .destination:
+                return .none
+
             case .binding:
                 return .none
             }
         }
+        .ifLet(\.$destination, action: \.destination)
     }
 }
 
@@ -365,6 +385,11 @@ public struct CellarView: View {
             }
         }
         .task { store.send(.task) }
+        .navigationDestination(
+            item: $store.scope(state: \.destination?.wineDetail, action: \.destination.wineDetail)
+        ) { detailStore in
+            BottleCardView(store: detailStore)
+        }
     }
 
     // MARK: Cellar segment
@@ -393,8 +418,13 @@ public struct CellarView: View {
             )
         } else {
             List(store.visibleRows) { row in
-                CellarRowView(row: row)
-                    .accessibilityIdentifier("cellar-row-\(row.id)")
+                Button {
+                    store.send(.wineRowTapped(row))
+                } label: {
+                    CellarRowView(row: row)
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("cellar-row-\(row.id)")
             }
         }
     }
