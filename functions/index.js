@@ -10,8 +10,12 @@
 
 const { onCall, HttpsError } = require("firebase-functions/v2/https");
 const { setGlobalOptions } = require("firebase-functions/v2");
+const { defineSecret } = require("firebase-functions/params");
 const admin = require("firebase-admin");
 const { lookupColaClassType } = require("./ttbLookup");
+const { identifyWineLabel } = require("./claudeVision");
+
+const ANTHROPIC_API_KEY = defineSecret("ANTHROPIC_API_KEY");
 
 setGlobalOptions({ region: "us-central1", maxInstances: 10 });
 
@@ -76,5 +80,34 @@ exports.joinHousehold = onCall(
       name: doc.data().name || null,
       memberCount,
     };
+  }
+);
+
+/**
+ * `identifyLabel` is a v2 HTTPS callable (us-central1) that reads a wine-bottle-label
+ * photo with Claude vision and returns label-grounded identity fields
+ * (`{ producer, name, vintage, region, grapes, type, confidence }`). The Anthropic API
+ * key is injected via the `ANTHROPIC_API_KEY` secret.
+ */
+exports.identifyLabel = onCall(
+  { timeoutSeconds: 60, memory: "512MiB", secrets: [ANTHROPIC_API_KEY] },
+  async (request) => {
+    // TODO: enforce App Check / auth before public launch (consistent with ttbColaLookup).
+    const data = request.data || {};
+    const imageBase64 = typeof data.imageBase64 === "string" ? data.imageBase64 : "";
+    const mimeType = typeof data.mimeType === "string" ? data.mimeType : "image/jpeg";
+    if (!imageBase64) {
+      throw new HttpsError("invalid-argument", "imageBase64 is required.");
+    }
+    try {
+      const candidate = await identifyWineLabel({
+        imageBase64,
+        mimeType,
+        apiKey: ANTHROPIC_API_KEY.value(),
+      });
+      return candidate;   // { producer, name, vintage, region, grapes, type, confidence }
+    } catch (err) {
+      throw new HttpsError("internal", `Label identification failed: ${err.message}`);
+    }
   }
 );
