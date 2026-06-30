@@ -1,4 +1,5 @@
 import ComposableArchitecture
+import MenereUI
 import PersistenceClient
 import SwiftUI
 import WineDomain
@@ -26,6 +27,9 @@ public struct BottleFormReducer {
         var status: BottleStatus = .cellared
         var isSaving: Bool = false
         var errorMessage: String?
+        /// Transient trigger bumped on each successful save, just before `.delegate(.saved)`. The view
+        /// observes it via `.successHaptic(_:)` so a save celebration fires even as the form dismisses.
+        var savedTick = 0
 
         /// Non-nil in edit mode: the id of the bottle being edited (save reuses it instead of minting).
         public var editingID: String? = nil
@@ -120,6 +124,7 @@ public struct BottleFormReducer {
 
             case .saveResponse(.success(let bottle)):
                 state.isSaving = false
+                state.savedTick += 1
                 return .send(.delegate(.saved(bottle)))
 
             case .saveResponse(.failure(let message)):
@@ -224,6 +229,7 @@ public struct BottleFormView: View {
                 .accessibilityIdentifier("save-bottle-button")
             }
         }
+        .successHaptic(store.savedTick)
         .navigationTitle(store.editingID == nil ? "Add to cellar" : "Edit bottle")
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {

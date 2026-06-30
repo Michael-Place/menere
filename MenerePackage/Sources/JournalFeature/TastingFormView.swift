@@ -35,6 +35,9 @@ public struct TastingFormReducer {
         var pendingPhotos: [Data] = []          // selected, not yet uploaded
         var isSaving = false
         var errorMessage: String?
+        /// Transient trigger bumped on each successful save, just before `.delegate(.saved)`. The view
+        /// observes it via `.successHaptic(_:)` so a save celebration fires even as the form dismisses.
+        var savedTick = 0
 
         /// Non-nil in edit mode: the id of the tasting being edited (save reuses it instead of minting).
         public var editingID: String? = nil
@@ -190,6 +193,7 @@ public struct TastingFormReducer {
 
             case .saveResponse(.success(let tasting)):
                 state.isSaving = false
+                state.savedTick += 1
                 return .send(.delegate(.saved(tasting)))
 
             case .saveResponse(.failure(let message)):
@@ -347,6 +351,7 @@ public struct TastingFormView: View {
             }
         }
         .selectionHaptic(store.ratingStars)
+        .successHaptic(store.savedTick)
         .navigationTitle(store.editingID == nil ? "Log a tasting" : "Edit tasting")
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {
@@ -402,26 +407,34 @@ public struct TastingFormView: View {
             symbol = "star"
         }
         return Image(systemName: symbol)
-            .foregroundStyle(.yellow)
+            .foregroundStyle(Color.candleGold)
+            .contentTransition(.symbolEffect(.replace))
+            .symbolEffect(.bounce, value: store.ratingStars)
             .onTapGesture {
                 // Tap toggles between half and full for the same position.
-                store.ratingStars = value == half ? full : half
+                withAnimation(.menereBouncy) {
+                    store.ratingStars = value == half ? full : half
+                }
             }
     }
 
     private func thumbnail(data: Data, index: Int) -> some View {
         ZStack(alignment: .topTrailing) {
-            if let image = UIImage(data: data) {
-                Image(uiImage: image)
-                    .resizable()
-                    .scaledToFill()
-                    .frame(width: 64, height: 64)
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
-            } else {
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(.secondary.opacity(0.2))
-                    .frame(width: 64, height: 64)
+            Group {
+                if let image = UIImage(data: data) {
+                    Image(uiImage: image)
+                        .resizable()
+                        .scaledToFill()
+                        .frame(width: 64, height: 64)
+                } else {
+                    Rectangle()
+                        .fill(.secondary.opacity(0.2))
+                        .frame(width: 64, height: 64)
+                }
             }
+            .polaroid(rotation: index.isMultiple(of: 2) ? -1.5 : 1.5)
+            .transition(.opacity)
+
             Button {
                 store.send(.removePhoto(index))
             } label: {
@@ -431,6 +444,7 @@ public struct TastingFormView: View {
             .accessibilityIdentifier("remove-photo-\(index)")
             .padding(2)
         }
+        .animation(.menereSnappy, value: store.pendingPhotos.count)
     }
 
     private func bottleLabel(_ bottle: Bottle) -> String {

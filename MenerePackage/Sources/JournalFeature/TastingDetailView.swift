@@ -94,6 +94,8 @@ public struct TastingDetailReducer {
 
 public struct TastingDetailView: View {
     @Bindable var store: StoreOf<TastingDetailReducer>
+    /// Flipped true on appear to fire a one-shot `.bounce` on the read-only star row.
+    @State private var starsAppeared = false
 
     public init(store: StoreOf<TastingDetailReducer>) {
         self.store = store
@@ -115,6 +117,8 @@ public struct TastingDetailView: View {
             satSection
             photosSection
         }
+        .scrollContentBackground(.hidden)
+        .background(Color.parchment)
         .navigationTitle("Tasting")
         .accessibilityIdentifier("tasting-detail")
         .toolbar {
@@ -221,19 +225,29 @@ public struct TastingDetailView: View {
         if !store.tasting.photoURLs.isEmpty {
             Section("Photos") {
                 ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 8) {
-                        ForEach(store.tasting.photoURLs, id: \.self) { url in
-                            AsyncImage(url: url) { image in
-                                image
-                                    .resizable()
-                                    .scaledToFill()
-                            } placeholder: {
-                                ProgressView()
+                    HStack(spacing: 16) {
+                        ForEach(Array(store.tasting.photoURLs.enumerated()), id: \.element) { index, url in
+                            AsyncImage(url: url, transaction: Transaction(animation: .menereSnappy)) { phase in
+                                switch phase {
+                                case .success(let image):
+                                    image
+                                        .resizable()
+                                        .scaledToFill()
+                                        .frame(width: 96, height: 96)
+                                        .transition(.opacity)
+                                case .failure:
+                                    Image(systemName: "photo")
+                                        .foregroundStyle(.secondary)
+                                        .frame(width: 96, height: 96)
+                                default:
+                                    ProgressView()
+                                        .frame(width: 96, height: 96)
+                                }
                             }
-                            .frame(width: 96, height: 96)
-                            .clipShape(RoundedRectangle(cornerRadius: 8))
+                            .polaroid(rotation: index.isMultiple(of: 2) ? -1.5 : 1.5)
                         }
                     }
+                    .padding(.vertical, 8)
                 }
             }
         }
@@ -265,10 +279,12 @@ public struct TastingDetailView: View {
         HStack(spacing: 4) {
             ForEach(1...5, id: \.self) { position in
                 Image(systemName: Self.starSymbol(for: value, position: position))
-                    .foregroundStyle(.yellow)
+                    .foregroundStyle(Color.candleGold)
+                    .symbolEffect(.bounce, value: starsAppeared)
             }
         }
         .accessibilityIdentifier("rating-stars")
+        .onAppear { starsAppeared = true }
     }
 
     private static func starSymbol(for value: Double, position: Int) -> String {

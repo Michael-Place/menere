@@ -67,6 +67,7 @@ final class BottleFormReducerTests: XCTestCase {
         }
         await store.receive(.saveResponse(.success(expectedBottle))) {
             $0.isSaving = false
+            $0.savedTick = 1
         }
         await store.receive(.delegate(.saved(expectedBottle)))
 
@@ -154,12 +155,60 @@ final class BottleFormReducerTests: XCTestCase {
         }
         await store.receive(.saveResponse(.success(expected))) {
             $0.isSaving = false
+            $0.savedTick = 1
         }
         await store.receive(.delegate(.saved(expected)))
 
         XCTAssertEqual(captured.value?.hid, "test-hid")
         XCTAssertEqual(captured.value?.bottle.id, "existing-bottle-id")
         XCTAssertEqual(captured.value?.bottle.createdAt, Date(timeIntervalSince1970: 5000))
+    }
+
+    /// D4 save-success haptic trigger: `savedTick` bumps 0 → 1 on the successful-save path (the view
+    /// observes it via `.successHaptic(_:)`). The failure path must NOT bump it — the exhaustive
+    /// `testSaveFailureSurfacesErrorAndEmitsNoSavedDelegate` already pins state to only `isSaving`/`error`.
+    func testSuccessfulSaveBumpsSavedTick() async {
+        let wine = Wine(producer: "Domaine Leflaive", vintage: 2019)
+
+        let store = TestStore(initialState: BottleFormReducer.State(wine: wine, hid: "test-hid")) {
+            BottleFormReducer()
+        } withDependencies: {
+            $0.persistence.saveBottle = { _, _ in }
+            $0.uuid = .incrementing
+            $0.date = .constant(Date(timeIntervalSince1970: 0))
+        }
+
+        XCTAssertEqual(store.state.savedTick, 0)
+
+        // Drop the (nondeterministic `Date()`) purchase date so `expected` is stable.
+        await store.send(.binding(.set(\.includePurchaseDate, false))) {
+            $0.includePurchaseDate = false
+        }
+
+        let expected = Bottle(
+            id: "00000000-0000-0000-0000-000000000000",
+            wineId: wine.id,
+            purchaseDate: nil,
+            price: nil,
+            currency: "USD",
+            quantity: 1,
+            store: nil,
+            storageLocation: nil,
+            drinkFrom: nil,
+            drinkBy: nil,
+            status: .cellared,
+            createdAt: Date(timeIntervalSince1970: 0)
+        )
+
+        await store.send(.saveTapped) {
+            $0.isSaving = true
+            $0.errorMessage = nil
+        }
+        await store.receive(.saveResponse(.success(expected))) {
+            $0.isSaving = false
+            $0.savedTick = 1
+        }
+        await store.receive(.delegate(.saved(expected)))
     }
 
     /// Cancel: emits `.delegate(.cancelled)` with no persistence side effects.

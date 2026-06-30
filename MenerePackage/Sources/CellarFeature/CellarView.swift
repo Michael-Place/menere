@@ -930,9 +930,7 @@ private struct TastingRowView: View {
                 Text(row.producer)
                     .wineName(.headline)
                 Spacer()
-                Text(row.ratingText)
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(.secondary)
+                ratingView
             }
 
             if let subtitle {
@@ -960,6 +958,42 @@ private struct TastingRowView: View {
             }
         }
         .padding(.vertical, 2)
+    }
+
+    /// Compact rating: a real 5-star `.candleGold` row (half-star aware) when stars exist, else the
+    /// 100-pt score, else an em dash. Mirrors the form/detail glyph logic.
+    @ViewBuilder
+    private var ratingView: some View {
+        if let stars = row.tasting.ratingStars {
+            HStack(spacing: 2) {
+                ForEach(1...5, id: \.self) { position in
+                    Image(systemName: Self.starSymbol(for: stars, position: position))
+                        .font(.caption)
+                        .foregroundStyle(Color.candleGold)
+                }
+            }
+            .accessibilityLabel("\(stars) stars")
+        } else if let pts = row.tasting.rating100 {
+            Text("\(pts) pts")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.secondary)
+        } else {
+            Text("—")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private static func starSymbol(for value: Double, position: Int) -> String {
+        let full = Double(position)
+        let half = full - 0.5
+        if value >= full {
+            return "star.fill"
+        } else if value >= half {
+            return "star.leadinghalf.filled"
+        } else {
+            return "star"
+        }
     }
 
     private var subtitle: String? {

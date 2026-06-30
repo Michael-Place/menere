@@ -76,6 +76,7 @@ final class TastingFormReducerTests: XCTestCase {
         }
         await store.receive(.saveResponse(.success(expected))) {
             $0.isSaving = false
+            $0.savedTick = 1
         }
         await store.receive(.delegate(.saved(expected)))
 
@@ -120,6 +121,7 @@ final class TastingFormReducerTests: XCTestCase {
         }
         await store.receive(.saveResponse(.success(expected))) {
             $0.isSaving = false
+            $0.savedTick = 1
         }
         await store.receive(.delegate(.saved(expected)))
     }
@@ -182,6 +184,7 @@ final class TastingFormReducerTests: XCTestCase {
         }
         await store.receive(.saveResponse(.success(expected))) {
             $0.isSaving = false
+            $0.savedTick = 1
         }
         await store.receive(.delegate(.saved(expected)))
 
@@ -275,6 +278,7 @@ final class TastingFormReducerTests: XCTestCase {
         }
         await store.receive(.saveResponse(.success(expected))) {
             $0.isSaving = false
+            $0.savedTick = 1
         }
         await store.receive(.delegate(.saved(expected)))
 
@@ -325,6 +329,42 @@ final class TastingFormReducerTests: XCTestCase {
         }
         await store.receive(.saveResponse(.success(expected))) {
             $0.isSaving = false
+            $0.savedTick = 1
+        }
+        await store.receive(.delegate(.saved(expected)))
+    }
+
+    /// 9. D4 save-success haptic trigger: `savedTick` bumps 0 → 1 on the successful-save path (the view
+    /// observes it via `.successHaptic(_:)`). A failed save must NOT bump it (covered by test 3, which
+    /// asserts no state change beyond `isSaving`/`errorMessage` under the exhaustive TestStore).
+    func testSuccessfulSaveBumpsSavedTick() async {
+        let wine = Wine(producer: "Domaine Leflaive", vintage: 2019)
+
+        let store = TestStore(initialState: TastingFormReducer.State(wine: wine, hid: "test-hid", uid: "test-uid")) {
+            TastingFormReducer()
+        } withDependencies: {
+            $0.uuid = .incrementing
+            $0.date = .constant(epoch)
+            $0.persistence.saveTasting = { _, _ in }
+        }
+
+        XCTAssertEqual(store.state.savedTick, 0)
+
+        let expected = Tasting(
+            id: firstId,
+            wineId: wine.id,
+            date: epoch,
+            photoURLs: [],
+            createdAt: epoch
+        )
+
+        await store.send(.saveTapped) {
+            $0.isSaving = true
+            $0.errorMessage = nil
+        }
+        await store.receive(.saveResponse(.success(expected))) {
+            $0.isSaving = false
+            $0.savedTick = 1
         }
         await store.receive(.delegate(.saved(expected)))
     }
