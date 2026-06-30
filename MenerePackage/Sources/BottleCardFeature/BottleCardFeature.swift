@@ -37,6 +37,11 @@ public struct BottleCardFeature {
         /// Add-to-cellar. Nil = scan path, unchanged.
         public var ownedBottle: Bottle? = nil
 
+        /// D2: a monotonic bump counter fired when a bottle is successfully added to the cellar. The
+        /// view observes changes to play the wax-seal celebration + a success haptic. Transient UI
+        /// trigger only — not persisted, not part of the constructable surface.
+        public var sealStamp: Int = 0
+
         public init(
             wine: Wine,
             candidate: WineCandidate? = nil,
@@ -134,9 +139,16 @@ public struct BottleCardFeature {
                 state.destination = nil
                 return .none
 
+            case .destination(.presented(.addToCellar(.delegate(.saved)))):
+                // Bottle tucked into the cellar → dismiss the form and fire the wax-seal celebration.
+                // (Persistence happens inside the form reducer.)
+                state.destination = nil
+                state.sealStamp += 1
+                return .none
+
             case .destination(.presented(.addToCellar(.delegate))),
                  .destination(.presented(.logTasting(.delegate))):
-                // saved OR cancelled → dismiss the form. (Persistence happens inside the form reducer.)
+                // cancelled (or logTasting saved/cancelled) → just dismiss the form.
                 state.destination = nil
                 return .none
 

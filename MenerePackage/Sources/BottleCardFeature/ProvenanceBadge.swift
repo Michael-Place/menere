@@ -104,6 +104,10 @@ public extension Wine {
 public struct ProvenanceBadge: View {
     let style: ProvenanceBadgeStyle
 
+    /// One-shot trigger for the verified-seal bounce: flips on appear so the seal pops the moment a
+    /// "Verified" field resolves into view. No-op for non-verified tints.
+    @State private var appeared = false
+
     public init(style: ProvenanceBadgeStyle) {
         self.style = style
     }
@@ -113,11 +117,13 @@ public struct ProvenanceBadge: View {
             .font(.caption2.weight(.semibold))
             .labelStyle(.titleAndIcon)
             .foregroundStyle(style.tint.color)
+            .symbolEffect(.bounce, value: style.tint == .verified && appeared)
             .padding(.horizontal, 8)
             .padding(.vertical, 3)
             .background(
                 Capsule().fill(style.tint.color.opacity(0.12))
             )
             .accessibilityLabel("Source: \(style.label)")
+            .onAppear { appeared = true }
     }
 }

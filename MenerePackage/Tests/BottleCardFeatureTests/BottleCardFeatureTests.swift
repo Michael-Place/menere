@@ -86,7 +86,44 @@ final class BottleCardFeatureTests: XCTestCase {
             let bottle = Bottle(id: "b-1", wineId: wine.id)
             await store.send(.destination(.presented(.addToCellar(.delegate(.saved(bottle)))))) {
                 $0.destination = nil
+                // D2: saved → bump the wax-seal celebration trigger.
+                $0.sealStamp = 1
             }
+        }
+    }
+
+    /// D2: the add-to-cellar *saved* path bumps `sealStamp` (drives the wax-seal celebration); the
+    /// *cancelled* path dismisses without bumping it.
+    func testAddToCellarSavedBumpsSealStamp() async {
+        await withDependencies {
+            $0.defaultFileStorage = .inMemory
+        } operation: {
+            // Saved → dismiss + bump.
+            let savedStore = TestStore(
+                initialState: BottleCardFeature.State(
+                    wine: wine,
+                    destination: .addToCellar(BottleFormReducer.State(wine: wine, hid: "hid-1"))
+                )
+            ) { BottleCardFeature() }
+            XCTAssertEqual(savedStore.state.sealStamp, 0)
+
+            let bottle = Bottle(id: "b-1", wineId: wine.id)
+            await savedStore.send(.destination(.presented(.addToCellar(.delegate(.saved(bottle)))))) {
+                $0.destination = nil
+                $0.sealStamp = 1
+            }
+
+            // Cancelled → dismiss only, no celebration.
+            let cancelStore = TestStore(
+                initialState: BottleCardFeature.State(
+                    wine: wine,
+                    destination: .addToCellar(BottleFormReducer.State(wine: wine, hid: "hid-1"))
+                )
+            ) { BottleCardFeature() }
+            await cancelStore.send(.destination(.presented(.addToCellar(.delegate(.cancelled))))) {
+                $0.destination = nil
+            }
+            XCTAssertEqual(cancelStore.state.sealStamp, 0)
         }
     }
 

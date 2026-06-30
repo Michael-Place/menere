@@ -10,6 +10,10 @@ import WineDomain
 public struct BottleCardView: View {
     @Bindable var store: StoreOf<BottleCardFeature>
 
+    /// Current wall-clock — sourced the same way as the cellar's drink-window classification
+    /// (`Calendar.current.component(.year, from: date.now)`), so the gauge agrees with the cellar.
+    @Dependency(\.date.now) private var now
+
     public init(store: StoreOf<BottleCardFeature>) {
         self.store = store
     }
@@ -36,6 +40,8 @@ public struct BottleCardView: View {
     private var wine: Wine { store.wine }
     /// Whether enrichment is still resolving — drives the shimmer placeholders for enrichment rows.
     private var isResolving: Bool { store.isResolving }
+    /// The current calendar year, used to position the drink-window gauge needle.
+    private var currentYear: Int { Calendar.current.component(.year, from: now) }
 
     public var body: some View {
         ScrollView {
@@ -55,7 +61,9 @@ public struct BottleCardView: View {
         }
         .scrollContentBackground(.hidden)
         .background(Color.parchment)
-        .animation(.default, value: isResolving)
+        .animation(.menereBouncy, value: isResolving)
+        .overlay { SealStamp(trigger: store.sealStamp) }
+        .successHaptic(store.sealStamp)
         .task { store.send(.task) }
         .sheet(item: $store.scope(state: \.destination?.addToCellar, action: \.destination.addToCellar)) { formStore in
             NavigationStack { BottleFormView(store: formStore) }
@@ -122,6 +130,8 @@ public struct BottleCardView: View {
                         .font(.title2.weight(.semibold))
                         .foregroundStyle(.secondary)
                         .monospacedDigit()
+                        .contentTransition(.numericText())
+                        .animation(.menereBouncy, value: vintage)
                 }
             }
         }
@@ -134,22 +144,18 @@ public struct BottleCardView: View {
         // `labelImageURL` (later milestone) and finally a graceful placeholder. M4 only DISPLAYS the
         // local image — it is not uploaded to Storage here.
         ZStack {
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .fill(Color(.secondarySystemBackground))
             if let data = store.imageData, let uiImage = UIImage(data: data) {
                 Image(uiImage: uiImage)
                     .resizable()
                     .scaledToFill()
-                    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
             } else if let url = wine.labelImageURL {
                 AsyncImage(url: url) { image in
                     image.resizable().scaledToFill()
                 } placeholder: {
-                    placeholderIcon
+                    gradientPlaceholder
                 }
-                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
             } else {
-                placeholderIcon
+                gradientPlaceholder
             }
         }
         .frame(height: 220)
@@ -157,10 +163,16 @@ public struct BottleCardView: View {
         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
     }
 
-    private var placeholderIcon: some View {
-        Image(systemName: "wineglass")
-            .font(.system(size: 56))
-            .foregroundStyle(.tertiary)
+    /// No label image yet → a soft, wine-type-tinted mesh behind a centered wineglass. Replaces the
+    /// former flat gray placeholder so even unenriched cards feel branded.
+    private var gradientPlaceholder: some View {
+        WineTypeGradient(type: WineTypeGradient.Kind(rawValue: wine.type.rawValue) ?? .other)
+            .overlay {
+                Image(systemName: "wineglass")
+                    .font(.system(size: 56))
+                    .foregroundStyle(Color.candleGold)
+                    .shadow(color: .black.opacity(0.18), radius: 5, y: 2)
+            }
     }
 
     // MARK: - Facts
@@ -213,6 +225,8 @@ public struct BottleCardView: View {
                                 icon: "percent"
                             ) {
                                 Text(abvText(abv))
+                                    .contentTransition(.numericText())
+                                    .animation(.menereBouncy, value: abv)
                             }
                         }
                     }
@@ -261,7 +275,10 @@ public struct BottleCardView: View {
                     cellarFactRow(title: "Status", icon: "tag") {
                         Text(bottle.status.rawValue.capitalized)
                     }
-                    if let window = ownedDrinkWindowText(bottle) {
+                    // Full numeric window is rendered as the living gauge in `drinkWindowBlock`; here
+                    // we only surface a partial (from-only / by-only) window as text to avoid dupes.
+                    if bottle.drinkFrom == nil || bottle.drinkBy == nil,
+                       let window = ownedDrinkWindowText(bottle) {
                         cellarFactRow(title: "Drink window", icon: "calendar") { Text(window) }
                     }
                     if let location = bottle.storageLocation, !location.isEmpty {
@@ -374,6 +391,11 @@ public struct BottleCardView: View {
         if isResolving {
             Card {
                 placeholderFactRow(title: "Drink window", icon: "calendar", sample: "2025–2050")
+            }
+        } else if let from = store.ownedBottle?.drinkFrom, let by = store.ownedBottle?.drinkBy {
+            // Owned bottle with a numeric window → the living gauge (it carries its own label + status).
+            Card {
+                DrinkWindowGauge(from: from, by: by, currentYear: currentYear)
             }
         } else if let window = wine.enrichment?.drinkingWindow, !window.isEmpty {
             Card {
