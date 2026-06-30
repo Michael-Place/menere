@@ -527,6 +527,11 @@ func deleteTastingAndReload(_ id: String) -> Effect<CellarReducer.Action> {
 public struct CellarView: View {
     @Bindable var store: StoreOf<CellarReducer>
 
+    /// Shared zoom-transition namespace for D5 "hero zoom continuity". Owned here because this view
+    /// holds all four source kinds (cellar rows, history rows, dashboard drink-soon + recent rows) and
+    /// both `navigationDestination`s, so one namespace matches every source to its pushed destination.
+    @Namespace private var zoomNamespace
+
     public init(store: StoreOf<CellarReducer>) {
         self.store = store
     }
@@ -568,11 +573,23 @@ public struct CellarView: View {
             item: $store.scope(state: \.destination?.wineDetail, action: \.destination.wineDetail)
         ) { detailStore in
             BottleCardView(store: detailStore)
+                // Zoom from whichever cellar / drink-soon row was tapped. The source id is the
+                // bottle id when owned (these destinations always carry an `ownedBottle`), else the
+                // wine id — matching the source row's `matchedTransitionSource` id.
+                .navigationTransition(
+                    .zoom(
+                        sourceID: detailStore.ownedBottle?.id ?? detailStore.wine.id,
+                        in: zoomNamespace
+                    )
+                )
         }
         .navigationDestination(
             item: $store.scope(state: \.destination?.tastingDetail, action: \.destination.tastingDetail)
         ) { detailStore in
             TastingDetailView(store: detailStore)
+                // Zoom from whichever history / recent-tasting row was tapped; source id is the
+                // tasting id, matching the source row's `matchedTransitionSource` id.
+                .navigationTransition(.zoom(sourceID: detailStore.tasting.id, in: zoomNamespace))
         }
     }
 
@@ -623,6 +640,7 @@ public struct CellarView: View {
                         }
                         .buttonStyle(.plain)
                         .accessibilityIdentifier("cellar-row-\(row.id)")
+                        .matchedTransitionSource(id: row.id, in: zoomNamespace)
                         .shelfScrollTransition()
                         .swipeActions(edge: .trailing) {
                             Button(role: .destructive) {
@@ -717,6 +735,7 @@ public struct CellarView: View {
                             DrinkSoonRowView(row: row)
                         }
                         .buttonStyle(.plain)
+                        .matchedTransitionSource(id: row.id, in: zoomNamespace)
                         .shelfScrollTransition()
                     }
                 }
@@ -739,6 +758,7 @@ public struct CellarView: View {
                             RecentTastingRowView(row: row)
                         }
                         .buttonStyle(.plain)
+                        .matchedTransitionSource(id: row.id, in: zoomNamespace)
                         .shelfScrollTransition()
                     }
                 }
@@ -805,6 +825,7 @@ public struct CellarView: View {
                 }
                 .buttonStyle(.plain)
                 .accessibilityIdentifier("history-row-\(row.id)")
+                .matchedTransitionSource(id: row.id, in: zoomNamespace)
                 .shelfScrollTransition()
                 .swipeActions(edge: .trailing) {
                     Button(role: .destructive) {

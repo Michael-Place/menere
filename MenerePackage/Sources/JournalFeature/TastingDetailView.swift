@@ -97,6 +97,18 @@ public struct TastingDetailView: View {
     /// Flipped true on appear to fire a one-shot `.bounce` on the read-only star row.
     @State private var starsAppeared = false
 
+    /// D5 "hero zoom continuity": the tapped polaroid is presented full-screen, zooming open from its
+    /// thumbnail. This is view-local presentation state only — no reducer/state change.
+    @State private var selectedPhoto: SelectedPhoto?
+    /// Shared namespace pairing each polaroid thumbnail to its full-screen viewer for the zoom.
+    @Namespace private var photoZoom
+
+    /// Identifiable wrapper so a photo `URL` can drive `.fullScreenCover(item:)`.
+    private struct SelectedPhoto: Identifiable, Equatable {
+        let url: URL
+        var id: URL { url }
+    }
+
     public init(store: StoreOf<TastingDetailReducer>) {
         self.store = store
     }
@@ -138,6 +150,11 @@ public struct TastingDetailView: View {
             NavigationStack { TastingFormView(store: formStore) }
         }
         .confirmationDialog($store.scope(state: \.confirmDelete, action: \.confirmDelete))
+        .fullScreenCover(item: $selectedPhoto) { photo in
+            PhotoZoomViewer(url: photo.url) { selectedPhoto = nil }
+                // Pairs with the thumbnail's `matchedTransitionSource(id:)` so the photo zooms open.
+                .navigationTransition(.zoom(sourceID: photo.url, in: photoZoom))
+        }
     }
 
     // MARK: - Sections
@@ -245,6 +262,9 @@ public struct TastingDetailView: View {
                                 }
                             }
                             .polaroid(rotation: index.isMultiple(of: 2) ? -1.5 : 1.5)
+                            .matchedTransitionSource(id: url, in: photoZoom)
+                            .onTapGesture { selectedPhoto = SelectedPhoto(url: url) }
+                            .accessibilityIdentifier("tasting-photo-\(index)")
                         }
                     }
                     .padding(.vertical, 8)
@@ -312,5 +332,58 @@ private struct LabeledRow: View {
             Text(value)
                 .multilineTextAlignment(.trailing)
         }
+    }
+}
+
+/// Full-screen photo viewer for a tasting polaroid. Shows the image large on a black backdrop;
+/// dismissable by tapping anywhere or swiping down. Paired with the thumbnail's
+/// `matchedTransitionSource` + this cover's `navigationTransition(.zoom)` so it zooms open/closed.
+private struct PhotoZoomViewer: View {
+    let url: URL
+    let onDismiss: () -> Void
+
+    /// Live vertical drag offset for the swipe-down-to-dismiss gesture.
+    @State private var dragOffset: CGFloat = 0
+
+    var body: some View {
+        ZStack {
+            Color.black.ignoresSafeArea()
+
+            AsyncImage(url: url, transaction: Transaction(animation: .menereSnappy)) { phase in
+                switch phase {
+                case .success(let image):
+                    image
+                        .resizable()
+                        .scaledToFit()
+                        .transition(.opacity)
+                case .failure:
+                    Image(systemName: "photo")
+                        .font(.largeTitle)
+                        .foregroundStyle(.secondary)
+                default:
+                    ProgressView()
+                        .tint(.white)
+                }
+            }
+            .padding()
+            .offset(y: dragOffset)
+        }
+        .contentShape(Rectangle())
+        .onTapGesture { onDismiss() }
+        .gesture(
+            DragGesture()
+                .onChanged { value in
+                    dragOffset = max(0, value.translation.height)
+                }
+                .onEnded { value in
+                    if value.translation.height > 120 {
+                        onDismiss()
+                    } else {
+                        withAnimation(.menereSnappy) { dragOffset = 0 }
+                    }
+                }
+        )
+        .accessibilityIdentifier("tasting-photo-viewer")
+        .accessibilityAddTraits(.isModal)
     }
 }
