@@ -230,9 +230,7 @@ public struct ScanView: View {
             if let cardStore = store.scope(state: \.bottleCard, action: \.bottleCard) {
                 BottleCardView(store: cardStore)
                     .id("bottle-card")
-                    .safeAreaInset(edge: .bottom) {
-                        scanAgainButton
-                    }
+                    .toolbar { ToolbarItem(placement: .topBarTrailing) { scanAgainToolbarButton } }
             }
         case .failed(let message):
             failedView(message)
@@ -244,20 +242,16 @@ public struct ScanView: View {
     private func bottleCard(_ state: BottleCardFeature.State) -> some View {
         BottleCardView(state: state)
             .id("bottle-card")
-            .safeAreaInset(edge: .bottom) {
-                scanAgainButton
-            }
+            .toolbar { ToolbarItem(placement: .topBarTrailing) { scanAgainToolbarButton } }
     }
 
-    /// Shared "Scan again" affordance pinned to the bottom of the card (both resolving + resolved).
-    private var scanAgainButton: some View {
+    /// "Scan again" affordance in the nav bar (top-trailing) so it doesn't overlap the card's own
+    /// in-content "Add to cellar" / "Log a tasting" CTAs — it previously sat as a pinned bottom
+    /// `.thinMaterial` bar over them, intercepting taps on the bottom action.
+    private var scanAgainToolbarButton: some View {
         Button("Scan again") {
             store.send(.scanAgain)
         }
-        .buttonStyle(.borderedProminent)
-        .padding()
-        .frame(maxWidth: .infinity)
-        .background(.thinMaterial)
         .accessibilityIdentifier("scan-again-button")
     }
 
