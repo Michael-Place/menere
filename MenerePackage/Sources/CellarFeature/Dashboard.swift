@@ -1,4 +1,3 @@
-import Charts
 import MenereUI
 import SwiftUI
 import WineDomain
@@ -176,9 +175,7 @@ struct StatTile: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding()
-        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12))
+        .dashboardCard()
     }
 }
 
@@ -229,9 +226,7 @@ struct DrinkSoonRowView: View {
                 }
             }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding()
-        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12))
+        .dashboardCard()
         .accessibilityIdentifier("home-drink-soon-row-\(row.id)")
     }
 }
@@ -253,9 +248,7 @@ struct RecentTastingRowView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding()
-        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12))
+        .dashboardCard()
         .accessibilityIdentifier("home-recent-tastings-row-\(row.id)")
     }
 }
@@ -266,31 +259,49 @@ struct RecentTastingRowView: View {
 struct CellarCompositionChart: View {
     let slices: [TypeSlice]
 
+    private var maxCount: Int { max(1, slices.map(\.count).max() ?? 1) }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 14) {
             SectionHeader(title: "By type")
-            Chart(slices) { slice in
-                BarMark(
-                    x: .value("Bottles", slice.count),
-                    y: .value("Type", slice.type.displayName)
-                )
-                .foregroundStyle(slice.type.chartColor)
-                .cornerRadius(4)
-                .annotation(position: .trailing, alignment: .leading) {
-                    Text("\(slice.count)")
-                        .font(.caption2.monospacedDigit())
-                        .foregroundStyle(.secondary)
+            ForEach(slices) { slice in
+                VStack(alignment: .leading, spacing: 5) {
+                    HStack {
+                        Text(slice.type.displayName)
+                            .font(.caption)
+                            .foregroundStyle(Color.inkSoft)
+                        Spacer()
+                        Text("\(slice.count)")
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(Color.inkSoft)
+                    }
+                    GeometryReader { geo in
+                        ZStack(alignment: .leading) {
+                            Capsule().fill(Color.inkSoft.opacity(0.12))
+                            Capsule()
+                                .fill(slice.type.chartColor)
+                                .frame(width: max(8, geo.size.width * (Double(slice.count) / Double(maxCount))))
+                        }
+                    }
+                    .frame(height: 8)
                 }
             }
-            .chartXAxis(.hidden)
-            .chartYScale(domain: Array(slices.map(\.type.displayName).reversed()))
-            .chartLegend(.hidden)
-            .frame(height: CGFloat(slices.count) * 32 + 8)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding()
-        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12))
+        .dashboardCard()
         .accessibilityIdentifier("home-cellar-composition")
+    }
+}
+
+private extension View {
+    /// Unified dashboard card surface: a white/parchment card with a soft shadow so tiles read as
+    /// raised surfaces against the grouped-list background. (The old `secondarySystemBackground` was
+    /// the same grey as the list, so the cards were invisible and content looked like floating text.)
+    func dashboardCard() -> some View {
+        self
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding()
+            .background(Color.surfaceMenere, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .shadow(color: Color.ink.opacity(0.06), radius: 7, y: 3)
     }
 }
 
