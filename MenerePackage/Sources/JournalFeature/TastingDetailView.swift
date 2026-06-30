@@ -1,38 +1,98 @@
 import ComposableArchitecture
 import SwiftUI
+import UserDomain
 import WineDomain
 
-/// Read-only view of a logged `Tasting` joined to its catalog `Wine`. Pushed from the History list
-/// and the Home "Recent tastings" section. Deliberately inert for UX1 — the `.task` action is a seam
-/// for UX2 (edit / delete); the reducer holds no mutable state.
+/// Detail view of a logged `Tasting` joined to its catalog `Wine`. Pushed from the History list and
+/// the Home "Recent tastings" section. UX2a adds owned Edit / Delete: editing presents a prefilled
+/// `TastingFormReducer`; delete confirms then reports `.delegate(.tastingDeleted)` upward (the parent
+/// performs the deletion + reload). The `.task` action stays inert.
 @Reducer
 public struct TastingDetailReducer {
     @ObservableState
     public struct State: Equatable {
         public let tasting: Tasting
         public let wine: Wine
+        @Presents public var destination: Destination.State?
+        @Presents public var confirmDelete: ConfirmationDialogState<Action.ConfirmDelete>?
         public init(tasting: Tasting, wine: Wine) {
             self.tasting = tasting
             self.wine = wine
         }
     }
 
-    public enum Action: Equatable { case task }   // read-only for UX1; seam for UX2 edit/delete
+    @Reducer(state: .equatable, action: .equatable)
+    public enum Destination {
+        case editTasting(TastingFormReducer)
+    }
+
+    public enum Action: Equatable {
+        case task   // inert; reserved seam
+        case editTapped
+        case deleteTapped
+        case confirmDelete(PresentationAction<ConfirmDelete>)
+        case destination(PresentationAction<Destination.Action>)
+        case delegate(Delegate)
+
+        public enum ConfirmDelete: Equatable { case confirm }
+
+        public enum Delegate: Equatable {
+            case tastingDeleted(String)
+            case tastingUpdated(Tasting)
+        }
+    }
 
     public init() {}
 
     public var body: some ReducerOf<Self> {
-        Reduce { _, action in
+        Reduce { state, action in
             switch action {
             case .task:
                 return .none
+
+            case .editTapped:
+                @Shared(.user) var user
+                guard let uid = user?.id, let hid = user?.householdId else { return .none }
+                state.destination = .editTasting(
+                    TastingFormReducer.State(editing: state.tasting, wine: state.wine, hid: hid, uid: uid)
+                )
+                return .none
+
+            case .deleteTapped:
+                state.confirmDelete = ConfirmationDialogState {
+                    TextState("Delete this tasting?")
+                } actions: {
+                    ButtonState(role: .destructive, action: .confirm) {
+                        TextState("Delete")
+                    }
+                    ButtonState(role: .cancel) {
+                        TextState("Cancel")
+                    }
+                }
+                return .none
+
+            case .confirmDelete(.presented(.confirm)):
+                return .send(.delegate(.tastingDeleted(state.tasting.id)))
+
+            case .destination(.presented(.editTasting(.delegate(.saved(let tasting))))):
+                state.destination = nil
+                return .send(.delegate(.tastingUpdated(tasting)))
+
+            case .destination(.presented(.editTasting(.delegate(.cancelled)))):
+                state.destination = nil
+                return .none
+
+            case .confirmDelete, .destination, .delegate:
+                return .none
             }
         }
+        .ifLet(\.$destination, action: \.destination)
+        .ifLet(\.$confirmDelete, action: \.confirmDelete)
     }
 }
 
 public struct TastingDetailView: View {
-    let store: StoreOf<TastingDetailReducer>
+    @Bindable var store: StoreOf<TastingDetailReducer>
 
     public init(store: StoreOf<TastingDetailReducer>) {
         self.store = store
@@ -56,7 +116,23 @@ public struct TastingDetailView: View {
         }
         .navigationTitle("Tasting")
         .accessibilityIdentifier("tasting-detail")
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button("Edit") { store.send(.editTapped) }
+                    .accessibilityIdentifier("edit-tasting-button")
+            }
+            ToolbarItem(placement: .topBarTrailing) {
+                Button(role: .destructive) { store.send(.deleteTapped) } label: {
+                    Image(systemName: "trash")
+                }
+                .accessibilityIdentifier("delete-tasting-button")
+            }
+        }
         .task { store.send(.task) }
+        .sheet(item: $store.scope(state: \.destination?.editTasting, action: \.destination.editTasting)) { formStore in
+            NavigationStack { TastingFormView(store: formStore) }
+        }
+        .confirmationDialog($store.scope(state: \.confirmDelete, action: \.confirmDelete))
     }
 
     // MARK: - Sections

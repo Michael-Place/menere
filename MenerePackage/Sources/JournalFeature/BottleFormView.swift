@@ -27,9 +27,39 @@ public struct BottleFormReducer {
         var isSaving: Bool = false
         var errorMessage: String?
 
+        /// Non-nil in edit mode: the id of the bottle being edited (save reuses it instead of minting).
+        public var editingID: String? = nil
+        /// The original `createdAt` of the bottle being edited, preserved across saves.
+        var originalCreatedAt: Date? = nil
+
         public init(wine: Wine, hid: String) {
             self.wine = wine
             self.hid = hid
+        }
+
+        /// Edit mode: prefill every field from an existing `Bottle`. Save reuses `editingID` +
+        /// `originalCreatedAt` so the id and creation timestamp survive the round-trip.
+        public init(editing bottle: Bottle, wine: Wine, hid: String) {
+            self.wine = wine
+            self.hid = hid
+            self.priceText = bottle.price.map { price in
+                price == price.rounded() ? String(Int(price)) : String(price)
+            } ?? ""
+            self.currency = bottle.currency ?? "USD"
+            self.quantity = bottle.quantity
+            self.store = bottle.store ?? ""
+            self.storageLocation = bottle.storageLocation ?? ""
+            if let purchaseDate = bottle.purchaseDate {
+                self.purchaseDate = purchaseDate
+                self.includePurchaseDate = true
+            } else {
+                self.includePurchaseDate = false
+            }
+            self.drinkFromText = bottle.drinkFrom.map(String.init) ?? ""
+            self.drinkByText = bottle.drinkBy.map(String.init) ?? ""
+            self.status = bottle.status
+            self.editingID = bottle.id
+            self.originalCreatedAt = bottle.createdAt
         }
     }
 
@@ -64,7 +94,7 @@ public struct BottleFormReducer {
             case .saveTapped:
                 guard !state.isSaving else { return .none }
                 let bottle = Bottle(
-                    id: uuid().uuidString,
+                    id: state.editingID ?? uuid().uuidString,
                     wineId: state.wine.id,
                     purchaseDate: state.includePurchaseDate ? state.purchaseDate : nil,
                     price: Double(state.priceText.trimmingCharacters(in: .whitespaces)),
@@ -75,7 +105,7 @@ public struct BottleFormReducer {
                     drinkFrom: Int(state.drinkFromText.trimmingCharacters(in: .whitespaces)),
                     drinkBy: Int(state.drinkByText.trimmingCharacters(in: .whitespaces)),
                     status: state.status,
-                    createdAt: now
+                    createdAt: state.originalCreatedAt ?? now
                 )
                 state.isSaving = true
                 state.errorMessage = nil
@@ -185,7 +215,7 @@ public struct BottleFormView: View {
                         ProgressView()
                             .frame(maxWidth: .infinity)
                     } else {
-                        Text("Save to cellar")
+                        Text(store.editingID == nil ? "Save to cellar" : "Save changes")
                             .frame(maxWidth: .infinity)
                     }
                 }
@@ -194,6 +224,7 @@ public struct BottleFormView: View {
                 .accessibilityIdentifier("save-bottle-button")
             }
         }
+        .navigationTitle(store.editingID == nil ? "Add to cellar" : "Edit bottle")
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {
                 Button("Cancel") { store.send(.cancelTapped) }

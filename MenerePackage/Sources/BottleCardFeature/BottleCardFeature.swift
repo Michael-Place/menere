@@ -27,8 +27,11 @@ public struct BottleCardFeature {
         /// Whether enrichment is still resolving. Phase 2 uses this for the shimmer / progressive UI.
         public var isResolving: Bool
 
-        /// M5: the presented journaling form (Add to cellar / Log a tasting), if any.
+        /// M5: the presented journaling form (Add to cellar / Log a tasting / Edit), if any.
         @Presents public var destination: Destination.State?
+
+        /// UX2a: owned-bottle delete confirmation dialog.
+        @Presents public var confirmDelete: ConfirmationDialogState<Action.ConfirmDelete>?
 
         /// When set, the card renders an owned cellar bottle: shows cellar facts and suppresses
         /// Add-to-cellar. Nil = scan path, unchanged.
@@ -55,13 +58,25 @@ public struct BottleCardFeature {
         case task
         case addToCellarTapped
         case logTastingTapped
+        case editTapped
+        case deleteTapped
+        case confirmDelete(PresentationAction<ConfirmDelete>)
         case destination(PresentationAction<Destination.Action>)
+        case delegate(Delegate)
+
+        public enum ConfirmDelete: Equatable { case confirm }
+
+        public enum Delegate: Equatable {
+            case bottleDeleted(String)
+            case bottleUpdated(Bottle)
+        }
     }
 
     @Reducer(state: .equatable, action: .equatable)
     public enum Destination {
         case addToCellar(BottleFormReducer)
         case logTasting(TastingFormReducer)
+        case editBottle(BottleFormReducer)
     }
 
     public init() {}
@@ -84,10 +99,48 @@ public struct BottleCardFeature {
                 state.destination = .logTasting(TastingFormReducer.State(wine: state.wine, hid: hid, uid: uid))
                 return .none
 
+            case .editTapped:
+                guard let bottle = state.ownedBottle else { return .none }
+                @Shared(.user) var user
+                guard let hid = user?.householdId else { return .none }
+                state.destination = .editBottle(
+                    BottleFormReducer.State(editing: bottle, wine: state.wine, hid: hid)
+                )
+                return .none
+
+            case .deleteTapped:
+                guard state.ownedBottle != nil else { return .none }
+                state.confirmDelete = ConfirmationDialogState {
+                    TextState("Delete this bottle?")
+                } actions: {
+                    ButtonState(role: .destructive, action: .confirm) {
+                        TextState("Delete")
+                    }
+                    ButtonState(role: .cancel) {
+                        TextState("Cancel")
+                    }
+                }
+                return .none
+
+            case .confirmDelete(.presented(.confirm)):
+                guard let bottle = state.ownedBottle else { return .none }
+                return .send(.delegate(.bottleDeleted(bottle.id)))
+
+            case .destination(.presented(.editBottle(.delegate(.saved(let bottle))))):
+                state.destination = nil
+                return .send(.delegate(.bottleUpdated(bottle)))
+
+            case .destination(.presented(.editBottle(.delegate(.cancelled)))):
+                state.destination = nil
+                return .none
+
             case .destination(.presented(.addToCellar(.delegate))),
                  .destination(.presented(.logTasting(.delegate))):
                 // saved OR cancelled → dismiss the form. (Persistence happens inside the form reducer.)
                 state.destination = nil
+                return .none
+
+            case .confirmDelete, .delegate:
                 return .none
 
             case .destination:
@@ -95,5 +148,6 @@ public struct BottleCardFeature {
             }
         }
         .ifLet(\.$destination, action: \.destination)
+        .ifLet(\.$confirmDelete, action: \.confirmDelete)
     }
 }

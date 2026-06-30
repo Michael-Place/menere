@@ -30,6 +30,9 @@ public struct PersistenceClient: Sendable {
     public var tastings: @Sendable (_ hid: String) async throws -> [Tasting]
     public var saveTasting: @Sendable (_ hid: String, _ tasting: Tasting) async throws -> Void
 
+    public var deleteBottle: @Sendable (_ hid: String, _ bottleId: String) async throws -> Void
+    public var deleteTasting: @Sendable (_ hid: String, _ tastingId: String) async throws -> Void
+
     // MARK: Households
     /// Fetch a household by id. Nil if it doesn't exist.
     public var household: @Sendable (_ hid: String) async throws -> Household?
@@ -82,6 +85,12 @@ extension PersistenceClient: DependencyKey {
                 try await households().document(hid).collection("tastings").document(tasting.id).setData(
                     Firestore.Encoder().encode(tasting), merge: true
                 )
+            },
+            deleteBottle: { hid, bottleId in
+                try await households().document(hid).collection("bottles").document(bottleId).delete()
+            },
+            deleteTasting: { hid, tastingId in
+                try await households().document(hid).collection("tastings").document(tastingId).delete()
             },
             household: { hid in
                 let s = try await households().document(hid).getDocument()

@@ -206,6 +206,129 @@ final class TastingFormReducerTests: XCTestCase {
         }
     }
 
+    /// 7. UX2a edit mode with a new photo: existing remote URLs are preserved and the newly-picked
+    /// photo is appended; id/date/createdAt survive; storage is called exactly once (for the new one).
+    func testEditSaveKeepsIDAndPreservesPhotos() async {
+        let wine = Wine(producer: "Château Margaux", name: "Grand Vin", vintage: 2015)
+        let u1 = URL(string: "https://example.com/u1.jpg")!
+        let u2 = URL(string: "https://example.com/u2.jpg")!
+        let u3 = URL(string: "https://example.com/u3.jpg")!
+        let existingTasting = Tasting(
+            id: "existing-tasting-id",
+            wineId: wine.id,
+            bottleId: "b1",
+            date: Date(timeIntervalSince1970: 1000),
+            ratingStars: 4.0,
+            rating100: 92,
+            note: "Old note",
+            sat: SATNote(appearance: "Ruby", nose: "Cassis", palate: "Long", conclusions: "Hold"),
+            photoURLs: [u1, u2],
+            withWhom: "Dad",
+            occasion: "Dinner",
+            createdAt: Date(timeIntervalSince1970: 500)
+        )
+
+        let captured = LockIsolated<(hid: String, tasting: Tasting)?>(nil)
+        let uploadCount = LockIsolated(0)
+
+        let store = TestStore(
+            initialState: TastingFormReducer.State(editing: existingTasting, wine: wine, hid: "test-hid", uid: "test-uid")
+        ) {
+            TastingFormReducer()
+        } withDependencies: {
+            $0.uuid = .incrementing
+            $0.date = .constant(epoch)
+            $0.storage.uploadTastingPhoto = { _, _, _ in
+                uploadCount.withValue { $0 += 1 }
+                return u3
+            }
+            $0.persistence.saveTasting = { hid, tasting in captured.setValue((hid, tasting)) }
+        }
+
+        XCTAssertEqual(store.state.editingID, "existing-tasting-id")
+        XCTAssertEqual(store.state.existingPhotoURLs, [u1, u2])
+        XCTAssertEqual(store.state.note, "Old note")
+        XCTAssertEqual(store.state.rating100Text, "92")
+
+        await store.send(.photosPicked([Data("new".utf8)])) {
+            $0.pendingPhotos = [Data("new".utf8)]
+        }
+
+        let expected = Tasting(
+            id: "existing-tasting-id",
+            wineId: wine.id,
+            bottleId: "b1",
+            date: Date(timeIntervalSince1970: 1000),
+            ratingStars: 4.0,
+            rating100: 92,
+            note: "Old note",
+            sat: SATNote(appearance: "Ruby", nose: "Cassis", palate: "Long", conclusions: "Hold"),
+            photoURLs: [u1, u2, u3],
+            withWhom: "Dad",
+            occasion: "Dinner",
+            createdAt: Date(timeIntervalSince1970: 500)
+        )
+
+        await store.send(.saveTapped) {
+            $0.isSaving = true
+            $0.errorMessage = nil
+        }
+        await store.receive(.saveResponse(.success(expected))) {
+            $0.isSaving = false
+        }
+        await store.receive(.delegate(.saved(expected)))
+
+        XCTAssertEqual(uploadCount.value, 1)
+        XCTAssertEqual(captured.value?.tasting.id, "existing-tasting-id")
+        XCTAssertEqual(captured.value?.tasting.date, Date(timeIntervalSince1970: 1000))
+        XCTAssertEqual(captured.value?.tasting.createdAt, Date(timeIntervalSince1970: 500))
+        XCTAssertEqual(captured.value?.tasting.photoURLs, [u1, u2, u3])
+    }
+
+    /// 8. UX2a edit mode with no new photos: storage is NEVER called; existing URLs are kept as-is.
+    func testEditSaveNoNewPhotosDoesNotCallStorage() async {
+        let wine = Wine(producer: "Ridge Vineyards", name: "Monte Bello", vintage: 2018)
+        let u1 = URL(string: "https://example.com/u1.jpg")!
+        let existingTasting = Tasting(
+            id: "t-existing",
+            wineId: wine.id,
+            date: Date(timeIntervalSince1970: 2000),
+            photoURLs: [u1],
+            createdAt: Date(timeIntervalSince1970: 1500)
+        )
+
+        let store = TestStore(
+            initialState: TastingFormReducer.State(editing: existingTasting, wine: wine, hid: "test-hid", uid: "test-uid")
+        ) {
+            TastingFormReducer()
+        } withDependencies: {
+            $0.uuid = .incrementing
+            $0.date = .constant(epoch)
+            $0.storage.uploadTastingPhoto = { _, _, _ in
+                XCTFail("Storage must not be called when there are no new photos")
+                return URL(string: "https://example.com/should-not-happen.jpg")!
+            }
+            $0.persistence.saveTasting = { _, _ in }
+        }
+
+        let expected = Tasting(
+            id: "t-existing",
+            wineId: wine.id,
+            date: Date(timeIntervalSince1970: 2000),
+            photoURLs: [u1],
+            createdAt: Date(timeIntervalSince1970: 1500)
+        )
+
+        await store.send(.saveTapped) {
+            $0.isSaving = true
+            $0.errorMessage = nil
+        }
+        await store.receive(.saveResponse(.success(expected))) {
+            $0.isSaving = false
+        }
+        await store.receive(.delegate(.saved(expected)))
+    }
+
     /// 6. Cancel emits `.delegate(.cancelled)` with no side effects.
     func testCancelEmitsCancelledDelegate() async {
         let wine = Wine(producer: "Anything", vintage: 2020)

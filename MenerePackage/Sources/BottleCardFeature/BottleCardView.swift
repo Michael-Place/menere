@@ -56,11 +56,15 @@ public struct BottleCardView: View {
         .animation(.default, value: isResolving)
         .task { store.send(.task) }
         .sheet(item: $store.scope(state: \.destination?.addToCellar, action: \.destination.addToCellar)) { formStore in
-            NavigationStack { BottleFormView(store: formStore).navigationTitle("Add to cellar") }
+            NavigationStack { BottleFormView(store: formStore) }
         }
         .sheet(item: $store.scope(state: \.destination?.logTasting, action: \.destination.logTasting)) { formStore in
-            NavigationStack { TastingFormView(store: formStore).navigationTitle("Log a tasting") }
+            NavigationStack { TastingFormView(store: formStore) }
         }
+        .sheet(item: $store.scope(state: \.destination?.editBottle, action: \.destination.editBottle)) { formStore in
+            NavigationStack { BottleFormView(store: formStore) }
+        }
+        .confirmationDialog($store.scope(state: \.confirmDelete, action: \.confirmDelete))
     }
 
     // MARK: - Actions
@@ -82,6 +86,18 @@ public struct BottleCardView: View {
                 }
                 .buttonStyle(.bordered)
                 .accessibilityIdentifier("log-tasting-button")
+                if store.ownedBottle != nil {
+                    Button { store.send(.editTapped) } label: {
+                        Label("Edit", systemImage: "pencil").frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.bordered)
+                    .accessibilityIdentifier("edit-bottle-button")
+                    Button(role: .destructive) { store.send(.deleteTapped) } label: {
+                        Label("Delete", systemImage: "trash").frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.bordered)
+                    .accessibilityIdentifier("delete-bottle-button")
+                }
             }
         }
     }

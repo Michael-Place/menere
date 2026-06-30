@@ -115,6 +115,75 @@ final class BottleCardFeatureTests: XCTestCase {
         XCTAssertNil(state.ownedBottle)
     }
 
+    /// UX2a: owned-mode Edit presents a `BottleFormReducer` prefilled from the owned bottle.
+    func testEditTappedPresentsEditBottlePrefilled() async {
+        await withDependencies {
+            $0.defaultFileStorage = .inMemory
+        } operation: {
+            @Shared(.user) var user
+            $user.withLock { $0 = User(id: "uid-1", displayName: "Owner", householdId: "hid-1") }
+
+            let bottle = Bottle(id: "b-owned", wineId: wine.id, quantity: 4, status: .cellared)
+            let store = TestStore(initialState: BottleCardFeature.State(wine: wine, ownedBottle: bottle)) {
+                BottleCardFeature()
+            }
+            store.exhaustivity = .off
+
+            await store.send(.editTapped)
+            guard case let .editBottle(formState) = store.state.destination else {
+                return XCTFail("expected editBottle destination")
+            }
+            XCTAssertEqual(formState.editingID, "b-owned")
+            XCTAssertEqual(formState.hid, "hid-1")
+            XCTAssertEqual(formState.wine, wine)
+        }
+    }
+
+    /// UX2a: owned-mode Delete arms the confirmation dialog; confirming reports `.delegate(.bottleDeleted)`.
+    func testDeleteTappedConfirmEmitsBottleDeleted() async {
+        await withDependencies {
+            $0.defaultFileStorage = .inMemory
+        } operation: {
+            @Shared(.user) var user
+            $user.withLock { $0 = User(id: "uid-1", displayName: "Owner", householdId: "hid-1") }
+
+            let bottle = Bottle(id: "b-owned", wineId: wine.id)
+            let store = TestStore(initialState: BottleCardFeature.State(wine: wine, ownedBottle: bottle)) {
+                BottleCardFeature()
+            }
+            store.exhaustivity = .off
+
+            await store.send(.deleteTapped)
+            XCTAssertNotNil(store.state.confirmDelete)
+
+            await store.send(.confirmDelete(.presented(.confirm)))
+            await store.receive(.delegate(.bottleDeleted("b-owned")))
+        }
+    }
+
+    /// UX2a: editBottle saved → dismiss the sheet and report `.delegate(.bottleUpdated)`.
+    func testEditBottleSavedEmitsBottleUpdatedAndDismisses() async {
+        await withDependencies {
+            $0.defaultFileStorage = .inMemory
+        } operation: {
+            let bottle = Bottle(id: "b-owned", wineId: wine.id, quantity: 2)
+            let initial = BottleCardFeature.State(
+                wine: wine,
+                destination: .editBottle(BottleFormReducer.State(editing: bottle, wine: wine, hid: "hid-1")),
+                ownedBottle: bottle
+            )
+            let store = TestStore(initialState: initial) {
+                BottleCardFeature()
+            }
+            store.exhaustivity = .off
+
+            let updated = Bottle(id: "b-owned", wineId: wine.id, quantity: 9)
+            await store.send(.destination(.presented(.editBottle(.delegate(.saved(updated))))))
+            await store.receive(.delegate(.bottleUpdated(updated)))
+            XCTAssertNil(store.state.destination)
+        }
+    }
+
     /// Owned path: constructing with an `ownedBottle` carries it; Log-a-tasting still presents its form
     /// (only Add-to-cellar is suppressed, and that's view-side).
     func testOwnedStateCarriesBottleAndLogTastingStillPresents() async {

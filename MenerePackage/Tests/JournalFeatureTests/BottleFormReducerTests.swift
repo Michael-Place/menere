@@ -102,6 +102,66 @@ final class BottleFormReducerTests: XCTestCase {
         // Exhaustive TestStore: any unasserted `.delegate(.saved)` effect would fail the test.
     }
 
+    /// UX2a edit mode: the edit init prefills every field; saving reuses the existing `Bottle.id` and
+    /// `createdAt` (so `\.uuid` is NOT consumed — `editingID ?? uuid()` short-circuits).
+    func testEditPrefillAndSaveKeepsID() async {
+        let wine = Wine(producer: "Château Margaux", name: "Grand Vin", vintage: 2015)
+        let original = Bottle(
+            id: "existing-bottle-id",
+            wineId: wine.id,
+            purchaseDate: Date(timeIntervalSince1970: 1000),
+            price: 80,
+            currency: "EUR",
+            quantity: 6,
+            store: "K&L",
+            storageLocation: "Rack 3",
+            drinkFrom: 2025,
+            drinkBy: 2040,
+            status: .cellared,
+            createdAt: Date(timeIntervalSince1970: 5000)
+        )
+
+        let captured = LockIsolated<(hid: String, bottle: Bottle)?>(nil)
+
+        let store = TestStore(
+            initialState: BottleFormReducer.State(editing: original, wine: wine, hid: "test-hid")
+        ) {
+            BottleFormReducer()
+        } withDependencies: {
+            $0.persistence.saveBottle = { hid, bottle in captured.setValue((hid, bottle)) }
+            $0.uuid = .incrementing
+            $0.date = .constant(Date(timeIntervalSince1970: 0))
+        }
+
+        // Prefill assertions.
+        XCTAssertEqual(store.state.editingID, "existing-bottle-id")
+        XCTAssertEqual(store.state.priceText, "80")
+        XCTAssertEqual(store.state.currency, "EUR")
+        XCTAssertEqual(store.state.quantity, 6)
+        XCTAssertEqual(store.state.store, "K&L")
+        XCTAssertEqual(store.state.storageLocation, "Rack 3")
+        XCTAssertEqual(store.state.drinkFromText, "2025")
+        XCTAssertEqual(store.state.drinkByText, "2040")
+        XCTAssertEqual(store.state.status, .cellared)
+        XCTAssertTrue(store.state.includePurchaseDate)
+
+        // Saving keeps the original id + createdAt (date dependency epoch is ignored in edit mode).
+        let expected = original
+
+        await store.send(.saveTapped) {
+            $0.isSaving = true
+            $0.errorMessage = nil
+        }
+        await store.receive(.saveResponse(.success(expected))) {
+            $0.isSaving = false
+        }
+        await store.receive(.delegate(.saved(expected)))
+
+        XCTAssertEqual(captured.value?.hid, "test-hid")
+        XCTAssertEqual(captured.value?.bottle.id, "existing-bottle-id")
+        XCTAssertEqual(captured.value?.bottle.createdAt, Date(timeIntervalSince1970: 5000))
+    }
+
     /// Cancel: emits `.delegate(.cancelled)` with no persistence side effects.
     func testCancelEmitsCancelledDelegate() async {
         let wine = Wine(producer: "Anything", vintage: 2020)

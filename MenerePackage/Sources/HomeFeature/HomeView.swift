@@ -247,11 +247,66 @@ public struct HomeReducer {
                 )
                 return .none
 
+            case let .destination(.presented(.wineDetail(.delegate(.bottleDeleted(id))))):
+                state.destination = nil
+                return deleteBottleAndReload(id)
+
+            case .destination(.presented(.wineDetail(.delegate(.bottleUpdated)))):
+                state.destination = nil
+                return .send(.task)
+
+            case let .destination(.presented(.tastingDetail(.delegate(.tastingDeleted(id))))):
+                state.destination = nil
+                return deleteTastingAndReload(id)
+
+            case .destination(.presented(.tastingDetail(.delegate(.tastingUpdated)))):
+                state.destination = nil
+                return .send(.task)
+
             case .destination:
                 return .none
             }
         }
         .ifLet(\.$destination, action: \.destination)
+    }
+}
+
+// MARK: - Mutation + reload helpers
+
+/// Delete a bottle from the household then reload the dashboard (re-send `.task`). Shared by the
+/// detail screen's delegate and (later, UX2b) the Home swipe action. On delete error, surfaces
+/// `.loadFailed`. Reading `@Shared(.user)` here mirrors the `.task` load effect.
+func deleteBottleAndReload(_ id: String) -> Effect<HomeReducer.Action> {
+    @Dependency(\.persistence) var persistence
+    return .run { send in
+        @Shared(.user) var user
+        if let hid = user?.householdId {
+            do {
+                try await persistence.deleteBottle(hid, id)
+            } catch {
+                await send(.loadFailed(error.localizedDescription))
+                return
+            }
+        }
+        await send(.task)
+    }
+}
+
+/// Delete a tasting from the household then reload (re-send `.task`). Shared by the detail screen's
+/// delegate and (later, UX2b) a Home swipe action.
+func deleteTastingAndReload(_ id: String) -> Effect<HomeReducer.Action> {
+    @Dependency(\.persistence) var persistence
+    return .run { send in
+        @Shared(.user) var user
+        if let hid = user?.householdId {
+            do {
+                try await persistence.deleteTasting(hid, id)
+            } catch {
+                await send(.loadFailed(error.localizedDescription))
+                return
+            }
+        }
+        await send(.task)
     }
 }
 

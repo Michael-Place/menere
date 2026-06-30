@@ -1,5 +1,6 @@
 import BottleCardFeature
 import ComposableArchitecture
+import JournalFeature
 import PersistenceClient
 import UserDomain
 import WineDomain
@@ -251,5 +252,117 @@ final class HomeReducerTests: XCTestCase {
         }
         XCTAssertEqual(detail.tasting, tasting)
         XCTAssertEqual(detail.wine, wine)
+    }
+
+    // MARK: 7. wineDetail delete delegate → deletes + pops + reloads
+
+    func testWineDetailBottleDeletedDeletesAndReloads() async {
+        await withDependencies {
+            $0.defaultFileStorage = .inMemory
+        } operation: {
+            @Shared(.user) var user
+            $user.withLock { $0 = User(id: "uid-1", displayName: "T", householdId: "hid-1") }
+
+            let captured = LockIsolated<(hid: String, id: String)?>(nil)
+            let w = Wine(producer: "Estate", vintage: 2018)
+            let b = Bottle(id: "b1", wineId: w.id, status: .cellared, createdAt: Date(timeIntervalSince1970: 100))
+
+            var initial = HomeReducer.State()
+            initial.destination = .wineDetail(BottleCardFeature.State(wine: w, ownedBottle: b))
+
+            let store = TestStore(initialState: initial) {
+                HomeReducer()
+            } withDependencies: {
+                $0.persistence.deleteBottle = { hid, id in captured.setValue((hid, id)) }
+                $0.persistence.bottles = { _ in [] }
+                $0.persistence.tastings = { _ in [] }
+                $0.persistence.wines = { _ in [] }
+                $0.date = .constant(self.year2026)
+            }
+            store.exhaustivity = .off
+
+            await store.send(.destination(.presented(.wineDetail(.delegate(.bottleDeleted("b1"))))))
+            await store.receive(\.loaded)
+
+            XCTAssertNil(store.state.destination)
+            XCTAssertEqual(captured.value?.hid, "hid-1")
+            XCTAssertEqual(captured.value?.id, "b1")
+        }
+    }
+
+    // MARK: 8. tastingDetail delete delegate → deletes + reloads
+
+    func testTastingDetailTastingDeletedDeletesAndReloads() async {
+        await withDependencies {
+            $0.defaultFileStorage = .inMemory
+        } operation: {
+            @Shared(.user) var user
+            $user.withLock { $0 = User(id: "uid-1", displayName: "T", householdId: "hid-1") }
+
+            let captured = LockIsolated<(hid: String, id: String)?>(nil)
+            let w = Wine(producer: "Estate", vintage: 2018)
+            let t = Tasting(id: "t1", wineId: w.id, ratingStars: 4.0)
+
+            var initial = HomeReducer.State()
+            initial.destination = .tastingDetail(TastingDetailReducer.State(tasting: t, wine: w))
+
+            let store = TestStore(initialState: initial) {
+                HomeReducer()
+            } withDependencies: {
+                $0.persistence.deleteTasting = { hid, id in captured.setValue((hid, id)) }
+                $0.persistence.bottles = { _ in [] }
+                $0.persistence.tastings = { _ in [] }
+                $0.persistence.wines = { _ in [] }
+                $0.date = .constant(self.year2026)
+            }
+            store.exhaustivity = .off
+
+            await store.send(.destination(.presented(.tastingDetail(.delegate(.tastingDeleted("t1"))))))
+            await store.receive(\.loaded)
+
+            XCTAssertNil(store.state.destination)
+            XCTAssertEqual(captured.value?.hid, "hid-1")
+            XCTAssertEqual(captured.value?.id, "t1")
+        }
+    }
+
+    // MARK: 9. update delegates → reload only (no delete)
+
+    func testUpdateDelegatesReloadWithoutDeleting() async {
+        await withDependencies {
+            $0.defaultFileStorage = .inMemory
+        } operation: {
+            @Shared(.user) var user
+            $user.withLock { $0 = User(id: "uid-1", displayName: "T", householdId: "hid-1") }
+
+            let w = Wine(producer: "Estate", vintage: 2018)
+            let b = Bottle(id: "b1", wineId: w.id, status: .cellared, createdAt: Date(timeIntervalSince1970: 100))
+            let t = Tasting(id: "t1", wineId: w.id, ratingStars: 4.0)
+
+            var initial = HomeReducer.State()
+            initial.destination = .wineDetail(BottleCardFeature.State(wine: w, ownedBottle: b))
+
+            let store = TestStore(initialState: initial) {
+                HomeReducer()
+            } withDependencies: {
+                $0.persistence.deleteBottle = { _, _ in XCTFail("delete must not be called on update") }
+                $0.persistence.deleteTasting = { _, _ in XCTFail("delete must not be called on update") }
+                $0.persistence.bottles = { _ in [] }
+                $0.persistence.tastings = { _ in [] }
+                $0.persistence.wines = { _ in [] }
+                $0.date = .constant(self.year2026)
+            }
+            store.exhaustivity = .off
+
+            await store.send(.destination(.presented(.wineDetail(.delegate(.bottleUpdated(b))))))
+            await store.receive(\.loaded)
+            XCTAssertNil(store.state.destination)
+
+            // tastingUpdated reloads too. Re-present a tasting detail via a row tap.
+            await store.send(.recentTastingRowTapped(HomeTastingRow(tasting: t, wine: w)))
+            await store.send(.destination(.presented(.tastingDetail(.delegate(.tastingUpdated(t))))))
+            await store.receive(\.loaded)
+            XCTAssertNil(store.state.destination)
+        }
     }
 }

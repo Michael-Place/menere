@@ -35,10 +35,42 @@ public struct TastingFormReducer {
         var isSaving = false
         var errorMessage: String?
 
+        /// Non-nil in edit mode: the id of the tasting being edited (save reuses it instead of minting).
+        public var editingID: String? = nil
+        /// Already-uploaded photo URLs from the tasting being edited; preserved on save (newly-picked
+        /// `pendingPhotos` are appended after these). Removing existing remote photos is deferred (UX2c).
+        var existingPhotoURLs: [URL] = []
+        /// The original tasting `date`, preserved across saves.
+        var originalDate: Date? = nil
+        /// The original `createdAt`, preserved across saves.
+        var originalCreatedAt: Date? = nil
+
         public init(wine: Wine, hid: String, uid: String) {
             self.wine = wine
             self.hid = hid
             self.uid = uid
+        }
+
+        /// Edit mode: prefill every field from an existing `Tasting`. Save reuses `editingID`,
+        /// `originalDate`, `originalCreatedAt`, and keeps `existingPhotoURLs`.
+        public init(editing tasting: Tasting, wine: Wine, hid: String, uid: String) {
+            self.wine = wine
+            self.hid = hid
+            self.uid = uid
+            self.ratingStars = tasting.ratingStars
+            self.rating100Text = tasting.rating100.map(String.init) ?? ""
+            self.note = tasting.note ?? ""
+            self.appearance = tasting.sat?.appearance ?? ""
+            self.nose = tasting.sat?.nose ?? ""
+            self.palate = tasting.sat?.palate ?? ""
+            self.conclusions = tasting.sat?.conclusions ?? ""
+            self.withWhom = tasting.withWhom ?? ""
+            self.occasion = tasting.occasion ?? ""
+            self.bottleId = tasting.bottleId
+            self.existingPhotoURLs = tasting.photoURLs
+            self.editingID = tasting.id
+            self.originalDate = tasting.date
+            self.originalCreatedAt = tasting.createdAt
         }
     }
 
@@ -102,8 +134,10 @@ public struct TastingFormReducer {
                 guard !state.isSaving else { return .none }
                 state.isSaving = true
                 state.errorMessage = nil
-                let tastingId = uuid().uuidString
+                let tastingId = state.editingID ?? uuid().uuidString
                 let now = date.now
+                let savedDate = state.originalDate ?? now
+                let createdAt = state.originalCreatedAt ?? now
                 let sat = Self.makeSAT(
                     appearance: state.appearance,
                     nose: state.nose,
@@ -114,6 +148,7 @@ public struct TastingFormReducer {
                     uid = state.uid,
                     hid = state.hid,
                     pending = state.pendingPhotos,
+                    existing = state.existingPhotoURLs,
                     wineId = state.wine.id,
                     bottleId = state.bottleId,
                     ratingStars = state.ratingStars,
@@ -122,11 +157,12 @@ public struct TastingFormReducer {
                     withWhom = state.withWhom,
                     occasion = state.occasion,
                     tastingId,
-                    now,
+                    savedDate,
+                    createdAt,
                     sat
                 ] send in
                     do {
-                        var urls: [URL] = []
+                        var urls: [URL] = existing
                         for data in pending {
                             urls.append(try await storage.uploadTastingPhoto(uid, tastingId, data))
                         }
@@ -134,7 +170,7 @@ public struct TastingFormReducer {
                             id: tastingId,
                             wineId: wineId,
                             bottleId: bottleId,
-                            date: now,
+                            date: savedDate,
                             ratingStars: ratingStars,
                             rating100: Int(rating100Text.trimmingCharacters(in: .whitespaces)),
                             note: note.isEmpty ? nil : note,
@@ -142,7 +178,7 @@ public struct TastingFormReducer {
                             photoURLs: urls,
                             withWhom: withWhom.isEmpty ? nil : withWhom,
                             occasion: occasion.isEmpty ? nil : occasion,
-                            createdAt: now
+                            createdAt: createdAt
                         )
                         try await persistence.saveTasting(hid, tasting)
                         await send(.saveResponse(.success(tasting)))
@@ -300,7 +336,7 @@ public struct TastingFormView: View {
                         ProgressView()
                             .frame(maxWidth: .infinity)
                     } else {
-                        Text("Save tasting")
+                        Text(store.editingID == nil ? "Save tasting" : "Save changes")
                             .frame(maxWidth: .infinity)
                     }
                 }
@@ -309,6 +345,7 @@ public struct TastingFormView: View {
                 .accessibilityIdentifier("save-tasting-button")
             }
         }
+        .navigationTitle(store.editingID == nil ? "Log a tasting" : "Edit tasting")
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {
                 Button("Cancel") { store.send(.cancelTapped) }
