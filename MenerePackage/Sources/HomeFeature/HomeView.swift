@@ -167,7 +167,11 @@ public struct HomeReducer {
         case drinkSoonRowTapped(HomeBottleRow)
         case recentTastingRowTapped(HomeTastingRow)
         case destination(PresentationAction<Destination.Action>)
+        case delegate(Delegate)
     }
+
+    public enum Delegate: Equatable { case requestScan; case openCellar(StatTarget) }
+    public enum StatTarget: Equatable, Sendable { case cellared, wines, tastings, wishlist }
 
     public init() {}
 
@@ -265,6 +269,9 @@ public struct HomeReducer {
 
             case .destination:
                 return .none
+
+            case .delegate:
+                return .none
             }
         }
         .ifLet(\.$destination, action: \.destination)
@@ -336,11 +343,16 @@ public struct HomeView: View {
                 }
                 .accessibilityIdentifier("home-error")
             } else if store.data.isEmpty {
-                ContentUnavailableView(
-                    "Your cellar is empty",
-                    systemImage: "wineglass",
-                    description: Text("Scan a bottle to start your cellar.")
-                )
+                ContentUnavailableView {
+                    Label("Your cellar is empty", systemImage: "wineglass")
+                } description: {
+                    Text("Scan a bottle to start your cellar.")
+                } actions: {
+                    Button("Scan a bottle") { store.send(.delegate(.requestScan)) }
+                        .buttonStyle(.borderedProminent)
+                        .accessibilityIdentifier("home-empty-scan")
+                }
+                .accessibilityIdentifier("home-empty")
             } else {
                 dashboard
             }
@@ -375,29 +387,49 @@ public struct HomeView: View {
     private var statTiles: some View {
         let columns = [GridItem(.flexible()), GridItem(.flexible())]
         return LazyVGrid(columns: columns, spacing: 12) {
-            StatTile(
-                value: store.data.cellaredBottleCount,
-                caption: "Cellared",
-                systemImage: "square.stack.3d.up"
-            )
+            Button {
+                store.send(.delegate(.openCellar(.cellared)))
+            } label: {
+                StatTile(
+                    value: store.data.cellaredBottleCount,
+                    caption: "Cellared",
+                    systemImage: "square.stack.3d.up"
+                )
+            }
+            .buttonStyle(.plain)
             .accessibilityIdentifier("home-stat-cellared")
-            StatTile(
-                value: store.data.distinctWineCount,
-                caption: "Wines",
-                systemImage: "drop"
-            )
+            Button {
+                store.send(.delegate(.openCellar(.wines)))
+            } label: {
+                StatTile(
+                    value: store.data.distinctWineCount,
+                    caption: "Wines",
+                    systemImage: "drop"
+                )
+            }
+            .buttonStyle(.plain)
             .accessibilityIdentifier("home-stat-wines")
-            StatTile(
-                value: store.data.tastingCount,
-                caption: "Tastings",
-                systemImage: "wineglass"
-            )
+            Button {
+                store.send(.delegate(.openCellar(.tastings)))
+            } label: {
+                StatTile(
+                    value: store.data.tastingCount,
+                    caption: "Tastings",
+                    systemImage: "wineglass"
+                )
+            }
+            .buttonStyle(.plain)
             .accessibilityIdentifier("home-stat-tastings")
-            StatTile(
-                value: store.data.wishlistCount,
-                caption: "Wishlist",
-                systemImage: "heart"
-            )
+            Button {
+                store.send(.delegate(.openCellar(.wishlist)))
+            } label: {
+                StatTile(
+                    value: store.data.wishlistCount,
+                    caption: "Wishlist",
+                    systemImage: "heart"
+                )
+            }
+            .buttonStyle(.plain)
             .accessibilityIdentifier("home-stat-wishlist")
         }
     }

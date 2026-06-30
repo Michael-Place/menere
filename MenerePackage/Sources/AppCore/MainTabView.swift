@@ -4,6 +4,7 @@ import HomeFeature
 import ScanFeature
 import SettingsFeature
 import SwiftUI
+import WineDomain
 
 @Reducer
 public struct MainTabReducer {
@@ -42,9 +43,25 @@ public struct MainTabReducer {
             case .tabSelected(let tab):
                 state.selectedTab = tab
                 return .none
+            case .home(.delegate(.requestScan)), .cellar(.delegate(.requestScan)):
+                state.selectedTab = .scan
+                return .none
+            case let .home(.delegate(.openCellar(target))):
+                state.selectedTab = .cellar
+                let (segment, statusFilter) = Self.preset(for: target)
+                return .send(.cellar(.applyPreset(segment: segment, statusFilter: statusFilter)))
             case .home, .scan, .cellar, .settings, .binding:
                 return .none
             }
+        }
+    }
+
+    static func preset(for target: HomeReducer.StatTarget) -> (segment: CellarReducer.State.Segment, statusFilter: BottleStatus?) {
+        switch target {
+        case .cellared: (.cellar, .cellared)
+        case .wines:    (.cellar, nil)
+        case .tastings: (.history, nil)
+        case .wishlist: (.cellar, .wishlist)
         }
     }
 }

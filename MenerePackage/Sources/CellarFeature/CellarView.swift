@@ -274,7 +274,11 @@ public struct CellarReducer {
         case deleteBottleSwiped(String)
         case deleteTastingSwiped(String)
         case destination(PresentationAction<Destination.Action>)
+        case applyPreset(segment: State.Segment, statusFilter: BottleStatus?)
+        case delegate(Delegate)
         case binding(BindingAction<State>)
+
+        public enum Delegate: Equatable { case requestScan }
     }
 
     public init() {}
@@ -367,6 +371,15 @@ public struct CellarReducer {
                 return deleteTastingAndReload(id)
 
             case .destination:
+                return .none
+
+            case let .applyPreset(segment, statusFilter):
+                state.segment = segment
+                state.statusFilter = statusFilter
+                state.searchText = ""
+                return .none
+
+            case .delegate:
                 return .none
 
             case .binding:
@@ -488,11 +501,16 @@ public struct CellarView: View {
             }
             .accessibilityIdentifier("cellar-error")
         } else if store.rows.isEmpty {
-            ContentUnavailableView(
-                "No bottles yet",
-                systemImage: "square.stack.3d.up",
-                description: Text("Scan a wine and Add to cellar")
-            )
+            ContentUnavailableView {
+                Label("No bottles yet", systemImage: "square.stack.3d.up")
+            } description: {
+                Text("Scan a wine and Add to cellar")
+            } actions: {
+                Button("Scan a wine") { store.send(.delegate(.requestScan)) }
+                    .buttonStyle(.borderedProminent)
+                    .accessibilityIdentifier("cellar-empty-scan")
+            }
+            .accessibilityIdentifier("cellar-empty")
         } else {
             List(store.visibleRows) { row in
                 Button {

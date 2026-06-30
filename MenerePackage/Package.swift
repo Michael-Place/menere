@@ -297,6 +297,16 @@ let package = Package(
                 "JournalFeature",
             ]
         ),
+        .testTarget(
+            name: "AppCoreTests",
+            dependencies: [
+                .product(name: "ComposableArchitecture", package: "swift-composable-architecture"),
+                "AppCore",
+                "HomeFeature",
+                "CellarFeature",
+                "WineDomain",
+            ]
+        ),
     ],
     swiftLanguageModes: [.v5]
 )

@@ -365,4 +365,15 @@ final class HomeReducerTests: XCTestCase {
             XCTAssertNil(store.state.destination)
         }
     }
+
+    // MARK: Delegate actions (handled by the parent; no-ops here)
+
+    func testDelegateActionsAreNoOps() async {
+        let store = TestStore(initialState: HomeReducer.State()) {
+            HomeReducer()
+        }
+
+        await store.send(.delegate(.requestScan))
+        await store.send(.delegate(.openCellar(.wishlist)))
+    }
 }

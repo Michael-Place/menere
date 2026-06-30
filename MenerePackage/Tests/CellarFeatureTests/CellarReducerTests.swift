@@ -610,4 +610,27 @@ final class CellarReducerTests: XCTestCase {
             XCTAssertNil(store.state.destination)
         }
     }
+
+    // MARK: applyPreset (cross-tab deep-link presets)
+
+    func testApplyPresetSetsSegmentStatusAndClearsSearch() async {
+        let store = TestStore(initialState: CellarReducer.State()) {
+            CellarReducer()
+        }
+
+        await store.send(.binding(.set(\.searchText, "x"))) {
+            $0.searchText = "x"
+        }
+
+        await store.send(.applyPreset(segment: .cellar, statusFilter: .wishlist)) {
+            $0.segment = .cellar
+            $0.statusFilter = .wishlist
+            $0.searchText = ""
+        }
+
+        await store.send(.applyPreset(segment: .history, statusFilter: nil)) {
+            $0.segment = .history
+            $0.statusFilter = nil
+        }
+    }
 }
