@@ -1,5 +1,6 @@
 import BottleCardFeature
 import ComposableArchitecture
+import JournalFeature
 import PersistenceClient
 import SwiftUI
 import UserDomain
@@ -143,10 +144,11 @@ private func isDrinkNow(_ bottle: Bottle, year: Int) -> Bool {
 
 @Reducer
 public struct HomeReducer {
-    /// Push destinations from the dashboard. UX1b adds `tastingDetail`.
+    /// Push destinations from the dashboard.
     @Reducer(state: .equatable, action: .equatable)
     public enum Destination {
         case wineDetail(BottleCardFeature)
+        case tastingDetail(TastingDetailReducer)
     }
 
     @ObservableState
@@ -163,6 +165,7 @@ public struct HomeReducer {
         case loaded(DashboardData)
         case loadFailed(String)
         case drinkSoonRowTapped(HomeBottleRow)
+        case recentTastingRowTapped(HomeTastingRow)
         case destination(PresentationAction<Destination.Action>)
     }
 
@@ -238,6 +241,12 @@ public struct HomeReducer {
                 )
                 return .none
 
+            case let .recentTastingRowTapped(row):
+                state.destination = .tastingDetail(
+                    TastingDetailReducer.State(tasting: row.tasting, wine: row.wine)
+                )
+                return .none
+
             case .destination:
                 return .none
             }
@@ -287,6 +296,11 @@ public struct HomeView: View {
             item: $store.scope(state: \.destination?.wineDetail, action: \.destination.wineDetail)
         ) { detailStore in
             BottleCardView(store: detailStore)
+        }
+        .navigationDestination(
+            item: $store.scope(state: \.destination?.tastingDetail, action: \.destination.tastingDetail)
+        ) { detailStore in
+            TastingDetailView(store: detailStore)
         }
     }
 
@@ -366,7 +380,12 @@ public struct HomeView: View {
             } else {
                 VStack(spacing: 8) {
                     ForEach(store.data.recentTastings) { row in
-                        RecentTastingRowView(row: row)
+                        Button {
+                            store.send(.recentTastingRowTapped(row))
+                        } label: {
+                            RecentTastingRowView(row: row)
+                        }
+                        .buttonStyle(.plain)
                     }
                 }
             }

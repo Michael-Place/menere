@@ -414,4 +414,25 @@ final class CellarReducerTests: XCTestCase {
         XCTAssertEqual(detail.wine, wine)
         XCTAssertEqual(detail.ownedBottle, bottle)
     }
+
+    // MARK: 13. Tapping a history row pushes the read-only tasting detail
+
+    func testTastingRowTappedPushesTastingDetail() async {
+        let wine = Wine(producer: "Château Margaux", name: "Grand Vin", vintage: 2015)
+        let tasting = Tasting(id: "t-1", wineId: wine.id, ratingStars: 4.0)
+        let row = TastingRow(tasting: tasting, wine: wine)
+
+        let store = TestStore(initialState: CellarReducer.State()) {
+            CellarReducer()
+        }
+        store.exhaustivity = .off
+
+        await store.send(.tastingRowTapped(row))
+
+        guard case let .tastingDetail(detail) = store.state.destination else {
+            return XCTFail("expected tastingDetail destination")
+        }
+        XCTAssertEqual(detail.tasting, tasting)
+        XCTAssertEqual(detail.wine, wine)
+    }
 }

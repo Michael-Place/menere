@@ -1,5 +1,6 @@
 import BottleCardFeature
 import ComposableArchitecture
+import JournalFeature
 import PersistenceClient
 import SwiftUI
 import UserDomain
@@ -111,10 +112,11 @@ func classify(_ bottle: Bottle, year: Int) -> CellarRow.DrinkStatus {
 
 @Reducer
 public struct CellarReducer {
-    /// Push destinations from the cellar. UX1b adds `tastingDetail`.
+    /// Push destinations from the cellar.
     @Reducer(state: .equatable, action: .equatable)
     public enum Destination {
         case wineDetail(BottleCardFeature)
+        case tastingDetail(TastingDetailReducer)
     }
 
     @ObservableState
@@ -268,6 +270,7 @@ public struct CellarReducer {
         case tastingsLoaded([TastingRow])
         case loadFailed(String)
         case wineRowTapped(CellarRow)
+        case tastingRowTapped(TastingRow)
         case destination(PresentationAction<Destination.Action>)
         case binding(BindingAction<State>)
     }
@@ -333,6 +336,12 @@ public struct CellarReducer {
                 )
                 return .none
 
+            case let .tastingRowTapped(row):
+                state.destination = .tastingDetail(
+                    TastingDetailReducer.State(tasting: row.tasting, wine: row.wine)
+                )
+                return .none
+
             case .destination:
                 return .none
 
@@ -389,6 +398,11 @@ public struct CellarView: View {
             item: $store.scope(state: \.destination?.wineDetail, action: \.destination.wineDetail)
         ) { detailStore in
             BottleCardView(store: detailStore)
+        }
+        .navigationDestination(
+            item: $store.scope(state: \.destination?.tastingDetail, action: \.destination.tastingDetail)
+        ) { detailStore in
+            TastingDetailView(store: detailStore)
         }
     }
 
@@ -480,8 +494,13 @@ public struct CellarView: View {
             )
         } else {
             List(store.visibleTastingRows) { row in
-                TastingRowView(row: row)
-                    .accessibilityIdentifier("history-row-\(row.id)")
+                Button {
+                    store.send(.tastingRowTapped(row))
+                } label: {
+                    TastingRowView(row: row)
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("history-row-\(row.id)")
             }
         }
     }

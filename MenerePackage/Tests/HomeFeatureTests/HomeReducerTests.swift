@@ -231,4 +231,25 @@ final class HomeReducerTests: XCTestCase {
         XCTAssertEqual(detail.wine, wine)
         XCTAssertEqual(detail.ownedBottle, bottle)
     }
+
+    // MARK: 6. Tapping a recent-tasting row pushes the read-only tasting detail
+
+    func testRecentTastingRowTappedPushesTastingDetail() async {
+        let wine = Wine(producer: "Château Margaux", name: "Grand Vin", vintage: 2015)
+        let tasting = Tasting(id: "t-1", wineId: wine.id, ratingStars: 4.0)
+        let row = HomeTastingRow(tasting: tasting, wine: wine)
+
+        let store = TestStore(initialState: HomeReducer.State()) {
+            HomeReducer()
+        }
+        store.exhaustivity = .off
+
+        await store.send(.recentTastingRowTapped(row))
+
+        guard case let .tastingDetail(detail) = store.state.destination else {
+            return XCTFail("expected tastingDetail destination")
+        }
+        XCTAssertEqual(detail.tasting, tasting)
+        XCTAssertEqual(detail.wine, wine)
+    }
 }
