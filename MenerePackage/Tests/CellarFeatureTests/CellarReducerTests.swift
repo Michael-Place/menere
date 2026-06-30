@@ -84,7 +84,8 @@ final class CellarReducerTests: XCTestCase {
                 wishlistCount: 0,
                 tastingCount: 1,
                 drinkSoon: [HomeBottleRow(bottle: b2, wine: w2)],   // b1 is hold, b3 has no wine
-                recentTastings: [HomeTastingRow(tasting: t1, wine: w1)]
+                recentTastings: [HomeTastingRow(tasting: t1, wine: w1)],
+                typeBreakdown: [TypeSlice(type: .other, count: 2)]  // w1+w2 default .other; b3 skipped
             )
             await store.receive(.dashboardLoaded(expectedDashboard)) {
                 $0.dashboard = expectedDashboard
@@ -416,7 +417,8 @@ final class CellarReducerTests: XCTestCase {
             await store.receive(.tastingsLoaded([]))
             let expectedDashboard = DashboardData(
                 cellaredBottleCount: 1,
-                distinctWineCount: 1
+                distinctWineCount: 1,
+                typeBreakdown: [TypeSlice(type: .other, count: 1)]
             )
             await store.receive(.dashboardLoaded(expectedDashboard)) {
                 $0.dashboard = expectedDashboard
@@ -776,11 +778,53 @@ final class CellarReducerTests: XCTestCase {
                 recentTastings: [
                     HomeTastingRow(tasting: t1, wine: w1),
                     HomeTastingRow(tasting: t2, wine: w2),
-                ]                            // t3 dropped (no wine), sorted date desc
+                ],                           // t3 dropped (no wine), sorted date desc
+                typeBreakdown: [TypeSlice(type: .other, count: 5)]  // b1(2)+b2(3); b3/b4/b5 excluded
             )
 
             await store.send(.task)
             await store.receive(.dashboardLoaded(expected))
+        }
+    }
+
+    // MARK: Dashboard aggregation — cellar composition by wine type
+
+    func testDashboardComputesTypeBreakdown() async {
+        await withDependencies {
+            $0.defaultFileStorage = .inMemory
+        } operation: {
+            @Shared(.user) var user
+            $user.withLock { $0 = User(id: "uid-1", displayName: "T", householdId: "hid-1") }
+
+            let red1 = Wine(producer: "Red One", vintage: 2018, type: .red)
+            let red2 = Wine(producer: "Red Two", vintage: 2019, type: .red)
+            let white = Wine(producer: "White One", vintage: 2020, type: .white)
+
+            // Two cellared reds + one cellared white → [red:2, white:1] (qty-summed, count desc).
+            let b1 = Bottle(id: "b1", wineId: red1.id, status: .cellared, createdAt: Date(timeIntervalSince1970: 100))
+            let b2 = Bottle(id: "b2", wineId: red2.id, status: .cellared, createdAt: Date(timeIntervalSince1970: 200))
+            let b3 = Bottle(id: "b3", wineId: white.id, status: .cellared, createdAt: Date(timeIntervalSince1970: 300))
+            // Wishlist + orphan (missing wine) must not contribute to the breakdown.
+            let b4 = Bottle(id: "b4", wineId: red1.id, status: .wishlist, createdAt: Date(timeIntervalSince1970: 400))
+            let b5 = Bottle(id: "b5", wineId: "missing", status: .cellared, createdAt: Date(timeIntervalSince1970: 500))
+
+            let store = TestStore(initialState: CellarReducer.State()) {
+                CellarReducer()
+            } withDependencies: {
+                $0.persistence.bottles = { _ in [b1, b2, b3, b4, b5] }
+                $0.persistence.tastings = { _ in [] }
+                $0.persistence.wines = { _ in [red1, red2, white] }
+                $0.date = .constant(self.year2026)
+            }
+            store.exhaustivity = .off
+
+            await store.send(.task)
+            await store.receive(\.dashboardLoaded)
+
+            XCTAssertEqual(store.state.dashboard.typeBreakdown, [
+                TypeSlice(type: .red, count: 2),
+                TypeSlice(type: .white, count: 1),
+            ])
         }
     }
 
@@ -831,7 +875,8 @@ final class CellarReducerTests: XCTestCase {
                     HomeBottleRow(bottle: c, wine: wines[2]),
                     HomeBottleRow(bottle: d, wine: wines[3]),
                     HomeBottleRow(bottle: e, wine: wines[4]),
-                ]
+                ],
+                typeBreakdown: [TypeSlice(type: .other, count: 8)]  // all 8 wines default .other
             )
 
             await store.send(.task)

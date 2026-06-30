@@ -350,13 +350,30 @@ public struct CellarReducer {
                             .prefix(5)
                             .map { HomeTastingRow(tasting: $0, wine: byKey[$0.wineId]!) }
 
+                        // Cellar composition by wine type. Qty-summed (matches `cellaredBottleCount`);
+                        // bottles whose wine is missing from the join are skipped. Sorted by count
+                        // descending, ties broken by type for determinism.
+                        var typeCounts: [WineType: Int] = [:]
+                        for b in cellared {
+                            guard let w = byKey[b.wineId] else { continue }
+                            typeCounts[w.type, default: 0] += b.quantity
+                        }
+                        let typeBreakdown = typeCounts
+                            .map { TypeSlice(type: $0.key, count: $0.value) }
+                            .sorted { lhs, rhs in
+                                lhs.count != rhs.count
+                                    ? lhs.count > rhs.count
+                                    : lhs.type.rawValue < rhs.type.rawValue
+                            }
+
                         let dashboard = DashboardData(
                             cellaredBottleCount: cellaredBottleCount,
                             distinctWineCount: distinctWineCount,
                             wishlistCount: wishlistCount,
                             tastingCount: tastingCount,
                             drinkSoon: Array(drinkSoon),
-                            recentTastings: Array(recentTastings)
+                            recentTastings: Array(recentTastings),
+                            typeBreakdown: typeBreakdown
                         )
                         await send(.dashboardLoaded(dashboard))
                     } catch {
@@ -606,6 +623,7 @@ public struct CellarView: View {
                         }
                         .buttonStyle(.plain)
                         .accessibilityIdentifier("cellar-row-\(row.id)")
+                        .shelfScrollTransition()
                         .swipeActions(edge: .trailing) {
                             Button(role: .destructive) {
                                 store.send(.deleteBottleSwiped(row.id))
@@ -617,6 +635,7 @@ public struct CellarView: View {
                     }
                 }
             }
+            .selectionHaptic(store.statusFilter)
         }
     }
 
@@ -625,6 +644,9 @@ public struct CellarView: View {
     private var dashboardHeader: some View {
         VStack(alignment: .leading, spacing: 24) {
             statTiles
+            if !store.dashboard.typeBreakdown.isEmpty {
+                CellarCompositionChart(slices: store.dashboard.typeBreakdown)
+            }
             drinkSoonSection
             recentTastingsSection
         }
@@ -695,6 +717,7 @@ public struct CellarView: View {
                             DrinkSoonRowView(row: row)
                         }
                         .buttonStyle(.plain)
+                        .shelfScrollTransition()
                     }
                 }
             }
@@ -716,6 +739,7 @@ public struct CellarView: View {
                             RecentTastingRowView(row: row)
                         }
                         .buttonStyle(.plain)
+                        .shelfScrollTransition()
                     }
                 }
             }
@@ -781,6 +805,7 @@ public struct CellarView: View {
                 }
                 .buttonStyle(.plain)
                 .accessibilityIdentifier("history-row-\(row.id)")
+                .shelfScrollTransition()
                 .swipeActions(edge: .trailing) {
                     Button(role: .destructive) {
                         store.send(.deleteTastingSwiped(row.id))
@@ -847,10 +872,17 @@ private struct CellarRowView: View {
                     .background(.quaternary, in: Capsule())
 
                 if let window = row.drinkWindowText {
-                    HStack(spacing: 4) {
-                        Circle()
-                            .fill(dotColor)
-                            .frame(width: 8, height: 8)
+                    HStack(spacing: 6) {
+                        HStack(spacing: 4) {
+                            Capsule()
+                                .fill(windowColor)
+                                .frame(width: 16, height: 5)
+                            if let label = windowLabel {
+                                Text(label)
+                                    .font(.caption2.weight(.semibold))
+                                    .foregroundStyle(windowColor)
+                            }
+                        }
                         Text(window)
                             .font(.caption)
                             .foregroundStyle(.secondary)
@@ -868,12 +900,23 @@ private struct CellarRowView: View {
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
 
-    private var dotColor: Color {
+    /// Brand drink-window tint, replacing the old green/orange/red dot.
+    private var windowColor: Color {
         switch row.drinkStatus {
-        case .drinkNow: .green
-        case .hold: .orange
-        case .past: .red
-        case .unknown: .gray
+        case .drinkNow: .drinkNow
+        case .hold: .hold
+        case .past: .past
+        case .unknown: .inkSoft
+        }
+    }
+
+    /// Short status label paired with the capsule; nil when the window is unknown.
+    private var windowLabel: String? {
+        switch row.drinkStatus {
+        case .drinkNow: "Drink now"
+        case .hold: "Hold"
+        case .past: "Past"
+        case .unknown: nil
         }
     }
 }
@@ -931,6 +974,18 @@ private struct TastingRowView: View {
         if let withWhom = row.tasting.withWhom, !withWhom.isEmpty { parts.append(withWhom) }
         if let occasion = row.tasting.occasion, !occasion.isEmpty { parts.append(occasion) }
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    }
+}
+
+private extension View {
+    /// Subtle "shelf depth" as rows scroll into view: they fade and ease up from a slight shrink,
+    /// settling at full size/opacity when centered. Kept gentle so the list never feels busy.
+    func shelfScrollTransition() -> some View {
+        scrollTransition { content, phase in
+            content
+                .opacity(phase.isIdentity ? 1 : 0)
+                .scaleEffect(phase.isIdentity ? 1 : 0.92)
+        }
     }
 }
 

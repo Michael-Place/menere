@@ -1,3 +1,4 @@
+import Charts
 import MenereUI
 import SwiftUI
 import WineDomain
@@ -76,6 +77,19 @@ public struct HomeTastingRow: Equatable, Identifiable, Sendable {
 
 // MARK: - Dashboard data
 
+/// One slice of the cellar-composition chart: a wine `type` and how many cellared bottles share it.
+/// `count` follows the same qty-summed convention as `cellaredBottleCount`.
+public struct TypeSlice: Equatable, Sendable, Identifiable {
+    public var id: WineType { type }
+    public let type: WineType
+    public let count: Int
+
+    public init(type: WineType, count: Int) {
+        self.type = type
+        self.count = count
+    }
+}
+
 /// The fully-computed dashboard, built once in the load effect so the view stays pure.
 public struct DashboardData: Equatable, Sendable {
     /// Sum of `quantity` over bottles with status `.cellared`.
@@ -90,6 +104,9 @@ public struct DashboardData: Equatable, Sendable {
     public var drinkSoon: [HomeBottleRow]
     /// Tastings sorted by date descending, capped at 5.
     public var recentTastings: [HomeTastingRow]
+    /// Cellared bottles bucketed by wine `type` (qty-summed), sorted by count descending, zeros
+    /// dropped. Bottles whose wine is missing from the catalog join are skipped.
+    public var typeBreakdown: [TypeSlice]
 
     public init(
         cellaredBottleCount: Int = 0,
@@ -97,7 +114,8 @@ public struct DashboardData: Equatable, Sendable {
         wishlistCount: Int = 0,
         tastingCount: Int = 0,
         drinkSoon: [HomeBottleRow] = [],
-        recentTastings: [HomeTastingRow] = []
+        recentTastings: [HomeTastingRow] = [],
+        typeBreakdown: [TypeSlice] = []
     ) {
         self.cellaredBottleCount = cellaredBottleCount
         self.distinctWineCount = distinctWineCount
@@ -105,6 +123,7 @@ public struct DashboardData: Equatable, Sendable {
         self.tastingCount = tastingCount
         self.drinkSoon = drinkSoon
         self.recentTastings = recentTastings
+        self.typeBreakdown = typeBreakdown
     }
 
     public static let empty = DashboardData()
@@ -148,8 +167,11 @@ struct StatTile: View {
             Image(systemName: systemImage)
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
+                .symbolEffect(.bounce, value: value)
             Text("\(value)")
                 .font(.largeTitle.bold().monospacedDigit())
+                .contentTransition(.numericText())
+                .animation(.menereSnappy, value: value)
             Text(caption)
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -200,7 +222,7 @@ struct DrinkSoonRowView: View {
             }
             if let window = row.drinkWindowText {
                 HStack(spacing: 4) {
-                    Circle().fill(.green).frame(width: 8, height: 8)
+                    Circle().fill(Color.drinkNow).frame(width: 8, height: 8)
                     Text(window)
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -235,5 +257,67 @@ struct RecentTastingRowView: View {
         .padding()
         .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12))
         .accessibilityIdentifier("home-recent-tastings-row-\(row.id)")
+    }
+}
+
+/// Compact "what's in my cellar" breakdown: a horizontal `BarMark` per wine type, brand-tinted,
+/// with the bottle count annotated at the bar's trailing edge. Bars settle in count-descending
+/// order (largest on top). The caller hides this entirely when `slices` is empty.
+struct CellarCompositionChart: View {
+    let slices: [TypeSlice]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            SectionHeader(title: "By type")
+            Chart(slices) { slice in
+                BarMark(
+                    x: .value("Bottles", slice.count),
+                    y: .value("Type", slice.type.displayName)
+                )
+                .foregroundStyle(slice.type.chartColor)
+                .cornerRadius(4)
+                .annotation(position: .trailing, alignment: .leading) {
+                    Text("\(slice.count)")
+                        .font(.caption2.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .chartXAxis(.hidden)
+            .chartYScale(domain: Array(slices.map(\.type.displayName).reversed()))
+            .chartLegend(.hidden)
+            .frame(height: CGFloat(slices.count) * 32 + 8)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding()
+        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12))
+        .accessibilityIdentifier("home-cellar-composition")
+    }
+}
+
+private extension WineType {
+    /// Display label for the composition chart (rosé keeps its accent).
+    var displayName: String {
+        switch self {
+        case .red: "Red"
+        case .white: "White"
+        case .rose: "Rosé"
+        case .sparkling: "Sparkling"
+        case .dessert: "Dessert"
+        case .fortified: "Fortified"
+        case .other: "Other"
+        }
+    }
+
+    /// Brand-token tint per type, drawn from the same palette as `WineTypeGradient`.
+    var chartColor: Color {
+        switch self {
+        case .red: .wine
+        case .white: .candleGold
+        case .rose: .past
+        case .sparkling: .candleGold.opacity(0.55)
+        case .dessert: .oxblood
+        case .fortified: .oxblood.opacity(0.7)
+        case .other: .inkSoft
+        }
     }
 }
