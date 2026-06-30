@@ -1041,13 +1041,14 @@ private struct TastingRowView: View {
 }
 
 private extension View {
-    /// Subtle "shelf depth" as rows scroll into view: they fade and ease up from a slight shrink,
-    /// settling at full size/opacity when centered. Kept gentle so the list never feels busy.
+    /// Subtle "shelf depth" as rows scroll into view: they ease up from a slight shrink, settling at
+    /// full size when centered. Scale-only on purpose — a `List` leaves non-scrolling rows (e.g. a
+    /// single History row) stuck in a non-identity phase, so fading opacity here would render them
+    /// fully transparent (blank cards). A gentle scale floor keeps every row visible.
     func shelfScrollTransition() -> some View {
         scrollTransition { content, phase in
             content
-                .opacity(phase.isIdentity ? 1 : 0)
-                .scaleEffect(phase.isIdentity ? 1 : 0.92)
+                .scaleEffect(phase.isIdentity ? 1 : 0.97)
         }
     }
 }
