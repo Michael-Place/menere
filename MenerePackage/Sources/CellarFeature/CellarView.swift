@@ -271,6 +271,8 @@ public struct CellarReducer {
         case loadFailed(String)
         case wineRowTapped(CellarRow)
         case tastingRowTapped(TastingRow)
+        case deleteBottleSwiped(String)
+        case deleteTastingSwiped(String)
         case destination(PresentationAction<Destination.Action>)
         case binding(BindingAction<State>)
     }
@@ -357,6 +359,12 @@ public struct CellarReducer {
             case .destination(.presented(.tastingDetail(.delegate(.tastingUpdated)))):
                 state.destination = nil
                 return .send(.task)
+
+            case let .deleteBottleSwiped(id):
+                return deleteBottleAndReload(id)
+
+            case let .deleteTastingSwiped(id):
+                return deleteTastingAndReload(id)
 
             case .destination:
                 return .none
@@ -494,6 +502,14 @@ public struct CellarView: View {
                 }
                 .buttonStyle(.plain)
                 .accessibilityIdentifier("cellar-row-\(row.id)")
+                .swipeActions(edge: .trailing) {
+                    Button(role: .destructive) {
+                        store.send(.deleteBottleSwiped(row.id))
+                    } label: {
+                        Label("Delete", systemImage: "trash")
+                    }
+                    .accessibilityIdentifier("cellar-delete-\(row.id)")
+                }
             }
         }
     }
@@ -556,6 +572,14 @@ public struct CellarView: View {
                 }
                 .buttonStyle(.plain)
                 .accessibilityIdentifier("history-row-\(row.id)")
+                .swipeActions(edge: .trailing) {
+                    Button(role: .destructive) {
+                        store.send(.deleteTastingSwiped(row.id))
+                    } label: {
+                        Label("Delete", systemImage: "trash")
+                    }
+                    .accessibilityIdentifier("history-delete-\(row.id)")
+                }
             }
         }
     }
