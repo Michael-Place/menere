@@ -240,16 +240,16 @@ public struct TastingFormView: View {
             Section {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(store.wine.producer)
-                        .font(.headline)
+                        .wineName(.headline)
+                        .foregroundStyle(Color.ink)
                     if let name = store.wine.name {
                         Text(name)
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
+                            .cuvee()
                     }
                     if let vintage = store.wine.vintage {
                         Text(String(vintage))
                             .font(.subheadline)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(Color.inkSoft)
                     }
                 }
                 .padding(.vertical, 4)
@@ -350,6 +350,8 @@ public struct TastingFormView: View {
                 .accessibilityIdentifier("save-tasting-button")
             }
         }
+        .scrollContentBackground(.hidden)
+        .background(Color.parchment)
         .selectionHaptic(store.ratingStars)
         .successHaptic(store.savedTick)
         .navigationTitle(store.editingID == nil ? "Log a tasting" : "Edit tasting")

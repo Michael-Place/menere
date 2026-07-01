@@ -3,6 +3,7 @@ import AuthenticationServices
 import ComposableArchitecture
 import FirebaseAuth
 import Foundation
+import MenereUI
 import SwiftUI
 
 @Reducer
@@ -118,6 +119,7 @@ public struct LoginView: View {
         .task { store.send(.task) }
         .navigationTitle("Sign In")
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color.parchment.ignoresSafeArea())
     }
 }
 

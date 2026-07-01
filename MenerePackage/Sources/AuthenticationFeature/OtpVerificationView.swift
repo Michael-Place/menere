@@ -76,7 +76,7 @@ struct OtpVerificationView: View {
                     .font(.system(size: 32, weight: .bold, design: .monospaced))
                     .multilineTextAlignment(.center)
                     .padding()
-                    .background(Color(.secondarySystemBackground))
+                    .background(Color.surfaceMenere)
                     .cornerRadius(10)
                     .focused($isFocused)
 
@@ -97,6 +97,7 @@ struct OtpVerificationView: View {
             .padding()
             .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .background(Color.parchment.ignoresSafeArea())
         // Fires the moment the 6-digit code is fully entered (OTP completion); error haptic on failure.
         .successHaptic(store.otpCode.count == 6)
         .errorHaptic(store.errorMessage)

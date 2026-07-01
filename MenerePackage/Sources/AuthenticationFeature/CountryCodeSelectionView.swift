@@ -1,5 +1,6 @@
 import AuthenticationDomain
 import ComposableArchitecture
+import MenereUI
 import SwiftUI
 
 @Reducer
@@ -60,5 +61,6 @@ struct CountryCodeSelectionView: View {
             .padding(.horizontal)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+        .background(Color.parchment.ignoresSafeArea())
     }
 }

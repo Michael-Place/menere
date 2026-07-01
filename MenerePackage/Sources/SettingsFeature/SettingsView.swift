@@ -205,6 +205,8 @@ public struct SettingsView: View {
                 }
             }
         }
+        .scrollContentBackground(.hidden)
+        .background(Color.parchment)
         .navigationTitle("Profile")
         .alert("Sign Out", isPresented: $store.showSignOutConfirmation) {
             Button("Cancel", role: .cancel) { store.send(.cancelSignOut) }
@@ -247,6 +249,8 @@ public struct SettingsView: View {
                     .accessibilityIdentifier("submit-join-button")
                 }
             }
+            .scrollContentBackground(.hidden)
+            .background(Color.parchment)
             .navigationTitle("Join a Household")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

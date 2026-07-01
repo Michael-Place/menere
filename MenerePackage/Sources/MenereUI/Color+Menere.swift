@@ -9,6 +9,24 @@ public extension UIColor {
         let b = CGFloat(hex & 0xFF) / 255.0
         self.init(red: r, green: g, blue: b, alpha: 1.0)
     }
+
+    // Dynamic light/dark surface + ink tokens as `UIColor`, mirroring the `Color` brand tokens below.
+    // Needed for UIKit appearance proxies (e.g. the parchment nav bar in `MenereAppearance`).
+    static var parchmentUI: UIColor {
+        UIColor { trait in
+            trait.userInterfaceStyle == .dark ? UIColor(hex: 0x1A1614) : UIColor(hex: 0xF5EFE6)
+        }
+    }
+    static var surfaceMenereUI: UIColor {
+        UIColor { trait in
+            trait.userInterfaceStyle == .dark ? UIColor(hex: 0x241F1C) : UIColor(hex: 0xFFFFFF)
+        }
+    }
+    static var inkUI: UIColor {
+        UIColor { trait in
+            trait.userInterfaceStyle == .dark ? UIColor(hex: 0xF2EBE2) : UIColor(hex: 0x2A2422)
+        }
+    }
 }
 
 public extension Color {
@@ -17,16 +35,11 @@ public extension Color {
     static let oxblood = Color(uiColor: UIColor(hex: 0x7B2D3A))
     static let candleGold = Color(uiColor: UIColor(hex: 0xC8A24B))
 
-    // Surfaces + ink — dynamic light/dark, resolved with no asset catalog.
-    static let parchment = Color(uiColor: UIColor { trait in
-        trait.userInterfaceStyle == .dark ? UIColor(hex: 0x1A1614) : UIColor(hex: 0xF5EFE6)
-    })
-    static let surfaceMenere = Color(uiColor: UIColor { trait in
-        trait.userInterfaceStyle == .dark ? UIColor(hex: 0x241F1C) : UIColor(hex: 0xFFFFFF)
-    })
-    static let ink = Color(uiColor: UIColor { trait in
-        trait.userInterfaceStyle == .dark ? UIColor(hex: 0xF2EBE2) : UIColor(hex: 0x2A2422)
-    })
+    // Surfaces + ink — dynamic light/dark, resolved with no asset catalog. These reuse the matching
+    // `UIColor` tokens above so the SwiftUI + UIKit chrome stay perfectly in sync.
+    static let parchment = Color(uiColor: .parchmentUI)
+    static let surfaceMenere = Color(uiColor: .surfaceMenereUI)
+    static let ink = Color(uiColor: .inkUI)
     static let inkSoft = Color(uiColor: UIColor { trait in
         trait.userInterfaceStyle == .dark ? UIColor(hex: 0xB7AAA0) : UIColor(hex: 0x6B5F58)
     })

@@ -1,6 +1,7 @@
 import AuthenticationDomain
 import AuthenticationFeature
 import ComposableArchitecture
+import MenereUI
 import OnboardingFeature
 import Sharing
 import SwiftUI
@@ -148,6 +149,9 @@ public struct AppView: View {
 
     public init(store: StoreOf<AppReducer>) {
         self.store = store
+        // Apply the brand chrome (parchment nav bar, ink titles) once at launch so no default
+        // white nav/status-bar seam shows above parchment content on any screen.
+        MenereAppearance.apply()
     }
 
     public var body: some View {
@@ -171,11 +175,11 @@ public struct AppView: View {
             .animation(.easeInOut, value: store.state)
         } else {
             ZStack {
-                Color(.systemBackground)
+                Color.parchment
                     .ignoresSafeArea()
                 ProgressView()
                     .controlSize(.large)
-                    .tint(.secondary)
+                    .tint(.wine)
             }
         }
     }

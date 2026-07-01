@@ -195,7 +195,7 @@ struct EmptyHint: View {
             .foregroundStyle(.secondary)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding()
-            .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12))
+            .background(Color.surfaceMenere, in: RoundedRectangle(cornerRadius: 12))
     }
 }
 

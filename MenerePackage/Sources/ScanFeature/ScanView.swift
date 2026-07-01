@@ -198,6 +198,7 @@ public struct ScanView: View {
     public var body: some View {
         content
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(Color.parchment)
             .animation(.default, value: store.status)
             .impactHaptic(captureTick)
             .navigationTitle("Scan")
@@ -476,6 +477,8 @@ private struct ScanOnboardingView: View {
             .padding(.vertical, 16)
             .accessibilityIdentifier("scan-onboarding-dismiss")
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color.parchment)
         .accessibilityIdentifier("scan-onboarding")
         .interactiveDismissDisabled()
     }
@@ -522,6 +525,8 @@ private struct CandidateResultView: View {
             Section {
                 LabeledContent("Producer") {
                     Text(candidate.producer ?? "Unknown producer")
+                        .wineName(.body)
+                        .foregroundStyle(Color.ink)
                         .accessibilityIdentifier("candidate-producer")
                 }
                 if let name = candidate.name, !name.isEmpty {
@@ -565,6 +570,8 @@ private struct CandidateResultView: View {
                 .accessibilityIdentifier("scan-again-button")
             }
         }
+        .scrollContentBackground(.hidden)
+        .background(Color.parchment)
     }
 
     private var vintageText: String {

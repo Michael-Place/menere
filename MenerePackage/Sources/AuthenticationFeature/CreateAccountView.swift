@@ -1,6 +1,7 @@
 import AuthenticationDomain
 import AuthenticationServices
 import ComposableArchitecture
+import MenereUI
 import SwiftUI
 
 @Reducer
@@ -97,5 +98,6 @@ public struct CreateAccountView: View {
             .padding(.horizontal, 16)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color.parchment.ignoresSafeArea())
     }
 }
