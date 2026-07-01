@@ -164,6 +164,12 @@ public struct CellarReducer {
 
         public init() {}
 
+        /// True while the user has a non-empty (trimmed) search query. Drives hiding the dashboard
+        /// and swapping in the native "No Results" view. Computed, not stored — no reducer/test impact.
+        public var isSearching: Bool {
+            !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+
         /// Search + filters + sort applied in order, derived from `rows`. Keeps the view pure.
         public var visibleRows: [CellarRow] {
             var result = rows
@@ -604,6 +610,7 @@ public struct CellarView: View {
         if store.isLoading && store.rows.isEmpty {
             ProgressView()
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(Color.parchment)
         } else if let error = store.loadError {
             ContentUnavailableView {
                 Label("Couldn't load your cellar", systemImage: "exclamationmark.triangle")
@@ -616,8 +623,11 @@ public struct CellarView: View {
                     .accessibilityIdentifier("cellar-error-retry")
             }
             .onAppear { errorBounce += 1 }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(Color.parchment)
             .accessibilityIdentifier("cellar-error")
         } else if store.rows.isEmpty {
+            // Genuinely empty cellar (no bottles at all — search never touches `rows`).
             ContentUnavailableView {
                 Label("No bottles yet", systemImage: "square.stack.3d.up")
                     .symbolEffect(.pulse, options: .repeating)
@@ -628,10 +638,19 @@ public struct CellarView: View {
                     .buttonStyle(.borderedProminent)
                     .accessibilityIdentifier("cellar-empty-scan")
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(Color.parchment)
             .accessibilityIdentifier("cellar-empty")
+        } else if store.isSearching && store.visibleRows.isEmpty {
+            // Searching with no matches: native "No Results" view instead of an empty list.
+            ContentUnavailableView.search(text: store.searchText)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(Color.parchment)
         } else {
             List {
-                if !store.dashboard.isEmpty {
+                // Dashboard is a browse-only affordance: hide it entirely while searching so the
+                // filtered rows sit at the top of the screen and typing visibly narrows the list.
+                if !store.isSearching && !store.dashboard.isEmpty {
                     Section {
                         dashboardHeader
                     }
@@ -649,6 +668,7 @@ public struct CellarView: View {
                         .accessibilityIdentifier("cellar-row-\(row.id)")
                         .matchedTransitionSource(id: row.id, in: zoomNamespace)
                         .shelfScrollTransition()
+                        .listRowBackground(Color.parchment)
                         .swipeActions(edge: .trailing) {
                             Button(role: .destructive) {
                                 store.send(.deleteBottleSwiped(row.id))
@@ -660,6 +680,8 @@ public struct CellarView: View {
                     }
                 }
             }
+            .scrollContentBackground(.hidden)
+            .background(Color.parchment)
             .selectionHaptic(store.statusFilter)
         }
     }
@@ -667,13 +689,11 @@ public struct CellarView: View {
     // MARK: Dashboard header (folded into the top of the Cellar segment)
 
     private var dashboardHeader: some View {
-        VStack(alignment: .leading, spacing: 24) {
+        VStack(alignment: .leading, spacing: 16) {
             statTiles
             if !store.dashboard.typeBreakdown.isEmpty {
                 CellarCompositionChart(slices: store.dashboard.typeBreakdown)
             }
-            drinkSoonSection
-            recentTastingsSection
         }
         .padding()
     }
@@ -728,52 +748,6 @@ public struct CellarView: View {
         }
     }
 
-    private var drinkSoonSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            SectionHeader(title: "Drink soon")
-            if store.dashboard.drinkSoon.isEmpty {
-                EmptyHint(text: "Nothing in its window right now.")
-            } else {
-                VStack(spacing: 8) {
-                    ForEach(store.dashboard.drinkSoon) { row in
-                        Button {
-                            store.send(.drinkSoonRowTapped(row))
-                        } label: {
-                            DrinkSoonRowView(row: row)
-                        }
-                        .buttonStyle(.plain)
-                        .matchedTransitionSource(id: row.id, in: zoomNamespace)
-                        .shelfScrollTransition()
-                    }
-                }
-            }
-        }
-        .accessibilityIdentifier("home-drink-soon")
-    }
-
-    private var recentTastingsSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            SectionHeader(title: "Recent tastings")
-            if store.dashboard.recentTastings.isEmpty {
-                EmptyHint(text: "Log a tasting to see it here.")
-            } else {
-                VStack(spacing: 8) {
-                    ForEach(store.dashboard.recentTastings) { row in
-                        Button {
-                            store.send(.recentTastingRowTapped(row))
-                        } label: {
-                            RecentTastingRowView(row: row)
-                        }
-                        .buttonStyle(.plain)
-                        .matchedTransitionSource(id: row.id, in: zoomNamespace)
-                        .shelfScrollTransition()
-                    }
-                }
-            }
-        }
-        .accessibilityIdentifier("home-recent-tastings")
-    }
-
     private var cellarFilterMenu: some View {
         Menu {
             Picker("Sort", selection: $store.sort) {
@@ -806,6 +780,7 @@ public struct CellarView: View {
         if store.isLoading && store.tastingRows.isEmpty {
             ProgressView()
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(Color.parchment)
         } else if let error = store.loadError {
             ContentUnavailableView {
                 Label("Couldn't load your history", systemImage: "exclamationmark.triangle")
@@ -818,6 +793,8 @@ public struct CellarView: View {
                     .accessibilityIdentifier("cellar-history-error-retry")
             }
             .onAppear { errorBounce += 1 }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(Color.parchment)
             .accessibilityIdentifier("cellar-history-error")
         } else if store.tastingRows.isEmpty {
             ContentUnavailableView(
@@ -825,6 +802,13 @@ public struct CellarView: View {
                 systemImage: "wineglass",
                 description: Text("Log one from a bottle card")
             )
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(Color.parchment)
+        } else if store.isSearching && store.visibleTastingRows.isEmpty {
+            // Searching with no matches: native "No Results" view.
+            ContentUnavailableView.search(text: store.searchText)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(Color.parchment)
         } else {
             List(store.visibleTastingRows) { row in
                 Button {
@@ -836,6 +820,7 @@ public struct CellarView: View {
                 .accessibilityIdentifier("history-row-\(row.id)")
                 .matchedTransitionSource(id: row.id, in: zoomNamespace)
                 .shelfScrollTransition()
+                .listRowBackground(Color.parchment)
                 .swipeActions(edge: .trailing) {
                     Button(role: .destructive) {
                         store.send(.deleteTastingSwiped(row.id))
@@ -845,6 +830,8 @@ public struct CellarView: View {
                     .accessibilityIdentifier("history-delete-\(row.id)")
                 }
             }
+            .scrollContentBackground(.hidden)
+            .background(Color.parchment)
         }
     }
 
