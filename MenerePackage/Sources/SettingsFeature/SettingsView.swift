@@ -208,6 +208,7 @@ public struct SettingsView: View {
         .scrollContentBackground(.hidden)
         .background(Color.parchment)
         .navigationTitle("Profile")
+        .navigationBarTitleDisplayMode(.inline)
         .alert("Sign Out", isPresented: $store.showSignOutConfirmation) {
             Button("Cancel", role: .cancel) { store.send(.cancelSignOut) }
             Button("Sign Out", role: .destructive) { store.send(.confirmSignOut) }
