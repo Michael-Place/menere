@@ -15,12 +15,18 @@ let package = Package(
         .library(name: "SettingsFeature", targets: ["SettingsFeature"]),
         .library(name: "UserDomain", targets: ["UserDomain"]),
         .library(name: "WineDomain", targets: ["WineDomain"]),
+        .library(name: "FamilyDomain", targets: ["FamilyDomain"]),
+        .library(name: "ListsFeature", targets: ["ListsFeature"]),
+        .library(name: "CalendarFeature", targets: ["CalendarFeature"]),
+        .library(name: "ChoresFeature", targets: ["ChoresFeature"]),
+        .library(name: "RecipesFeature", targets: ["RecipesFeature"]),
         .library(name: "PersistenceClient", targets: ["PersistenceClient"]),
         .library(name: "StorageClient", targets: ["StorageClient"]),
         .library(name: "IdentifyClient", targets: ["IdentifyClient"]),
         .library(name: "EnrichmentClient", targets: ["EnrichmentClient"]),
         .library(name: "CatalogClient", targets: ["CatalogClient"]),
         .library(name: "HouseholdClient", targets: ["HouseholdClient"]),
+        .library(name: "PushClient", targets: ["PushClient"]),
         .library(name: "ScanFeature", targets: ["ScanFeature"]),
         .library(name: "BottleCardFeature", targets: ["BottleCardFeature"]),
         .library(name: "JournalFeature", targets: ["JournalFeature"]),
@@ -50,11 +56,16 @@ let package = Package(
                 "SettingsFeature",
                 "UserDomain",
                 "WineDomain",
+                "FamilyDomain",
                 "PersistenceClient",
                 "StorageClient",
                 "IdentifyClient",
                 "ScanFeature",
                 "CellarFeature",
+                "ListsFeature",
+                "CalendarFeature",
+                "ChoresFeature",
+                "RecipesFeature",
             ]
         ),
         .target(
@@ -95,8 +106,50 @@ let package = Package(
                 "AuthenticationDomain",
                 "UserDomain",
                 "WineDomain",
+                "FamilyDomain",
                 "PersistenceClient",
                 "HouseholdClient",
+            ]
+        ),
+        .target(
+            name: "ListsFeature",
+            dependencies: [
+                .product(name: "ComposableArchitecture", package: "swift-composable-architecture"),
+                "MenereUI",
+                "FamilyDomain",
+                "PersistenceClient",
+                "UserDomain",
+            ]
+        ),
+        .target(
+            name: "CalendarFeature",
+            dependencies: [
+                .product(name: "ComposableArchitecture", package: "swift-composable-architecture"),
+                "MenereUI",
+                "FamilyDomain",
+                "PersistenceClient",
+                "UserDomain",
+            ]
+        ),
+        .target(
+            name: "ChoresFeature",
+            dependencies: [
+                .product(name: "ComposableArchitecture", package: "swift-composable-architecture"),
+                "MenereUI",
+                "FamilyDomain",
+                "PersistenceClient",
+                "UserDomain",
+            ]
+        ),
+        .target(
+            name: "RecipesFeature",
+            dependencies: [
+                .product(name: "ComposableArchitecture", package: "swift-composable-architecture"),
+                .product(name: "FirebaseFunctions", package: "firebase-ios-sdk"),
+                "MenereUI",
+                "FamilyDomain",
+                "PersistenceClient",
+                "UserDomain",
             ]
         ),
         .target(
@@ -105,6 +158,14 @@ let package = Package(
                 .product(name: "Dependencies", package: "swift-dependencies"),
                 .product(name: "DependenciesMacros", package: "swift-dependencies"),
                 .product(name: "FirebaseFunctions", package: "firebase-ios-sdk"),
+            ]
+        ),
+        .target(
+            name: "PushClient",
+            dependencies: [
+                .product(name: "FirebaseMessaging", package: "firebase-ios-sdk"),
+                .product(name: "FirebaseAuth", package: "firebase-ios-sdk"),
+                .product(name: "FirebaseFirestore", package: "firebase-ios-sdk"),
             ]
         ),
         .target(
@@ -120,12 +181,16 @@ let package = Package(
             name: "WineDomain"
         ),
         .target(
+            name: "FamilyDomain"
+        ),
+        .target(
             name: "PersistenceClient",
             dependencies: [
                 .product(name: "Dependencies", package: "swift-dependencies"),
                 .product(name: "DependenciesMacros", package: "swift-dependencies"),
                 .product(name: "FirebaseFirestore", package: "firebase-ios-sdk"),
                 "WineDomain",
+                "FamilyDomain",
             ]
         ),
         .target(

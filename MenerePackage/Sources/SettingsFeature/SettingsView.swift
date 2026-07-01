@@ -1,5 +1,6 @@
 import AuthenticationDomain
 import ComposableArchitecture
+import FamilyDomain
 import HouseholdClient
 import MenereUI
 import PersistenceClient
@@ -13,13 +14,22 @@ public struct SettingsReducer {
     public struct State: Equatable {
         var showSignOutConfirmation = false
         var household: Household?
+        var members: [HouseholdMember] = []
         var isLoadingHousehold = false
         var showJoinSheet = false
         var joinCode = ""
         var isJoining = false
         var joinError: String?
+        @Presents var profileEdit: ProfileEditReducer.State?
 
         public init() {}
+
+        /// The signed-in user's own member profile, if loaded.
+        var myMember: HouseholdMember? {
+            @Shared(.user) var user
+            guard let uid = user?.id else { return nil }
+            return members.first { $0.id == uid }
+        }
     }
 
     public enum JoinResult: Equatable {
@@ -33,10 +43,13 @@ public struct SettingsReducer {
         case cancelSignOut
         case task
         case householdLoaded(Household?)
+        case membersLoaded([HouseholdMember])
         case joinHouseholdTapped
         case submitJoinTapped
         case joinResponse(JoinResult)
         case dismissJoinSheet
+        case editProfileTapped
+        case profileEdit(PresentationAction<ProfileEditReducer.Action>)
         case binding(BindingAction<State>)
     }
 
@@ -46,6 +59,22 @@ public struct SettingsReducer {
         BindingReducer()
         Reduce { state, action in
             switch action {
+            case .editProfileTapped:
+                guard let me = state.myMember else { return .none }
+                state.profileEdit = ProfileEditReducer.State(member: me)
+                return .none
+
+            case let .profileEdit(.presented(.delegate(.saved(member)))):
+                if let i = state.members.firstIndex(where: { $0.id == member.id }) {
+                    state.members[i] = member
+                } else {
+                    state.members.append(member)
+                }
+                return .none
+
+            case .profileEdit:
+                return .none
+
             case .signOutTapped:
                 state.showSignOutConfirmation = true
                 return .none
@@ -69,11 +98,17 @@ public struct SettingsReducer {
                     @Dependency(\.persistence) var persistence
                     let h = try? await persistence.household(hid)
                     await send(.householdLoaded(h))
+                    let members = (try? await persistence.members(hid)) ?? []
+                    await send(.membersLoaded(members))
                 }
 
             case let .householdLoaded(h):
                 state.isLoadingHousehold = false
                 state.household = h
+                return .none
+
+            case let .membersLoaded(members):
+                state.members = members.sorted { $0.joinedAt < $1.joinedAt }
                 return .none
 
             case .joinHouseholdTapped:
@@ -107,7 +142,15 @@ public struct SettingsReducer {
                 @Shared(.user) var user
                 $user.withLock { $0?.householdId = hid }
                 state.showJoinSheet = false
-                return .send(.task)
+                let uid = user?.id
+                let name = user?.displayName ?? ""
+                return .run { send in
+                    if let uid {
+                        @Dependency(\.persistence) var persistence
+                        _ = try? await persistence.ensureMember(hid, uid, name)
+                    }
+                    await send(.task)
+                }
 
             case let .joinResponse(.failure(message)):
                 state.isJoining = false
@@ -117,6 +160,9 @@ public struct SettingsReducer {
             case .binding:
                 return .none
             }
+        }
+        .ifLet(\.$profileEdit, action: \.profileEdit) {
+            ProfileEditReducer()
         }
     }
 }
@@ -135,16 +181,40 @@ public struct SettingsView: View {
 
     public var body: some View {
         List {
-            Section {
-                HStack {
-                    Text("Version")
-                    Spacer()
-                    Text(appVersion)
-                        .foregroundStyle(.secondary)
+            if let me = store.myMember {
+                Section("My Profile") {
+                    Button {
+                        store.send(.editProfileTapped)
+                    } label: {
+                        HStack(spacing: 12) {
+                            let rgb = me.color.rgb
+                            Image(systemName: me.avatarSystemName)
+                                .font(.largeTitle)
+                                .foregroundStyle(Color(red: rgb.red, green: rgb.green, blue: rgb.blue))
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(me.name).font(.headline).foregroundStyle(Color.ink)
+                                Text("Edit name, color, avatar")
+                                    .font(.caption).foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            Image(systemName: "chevron.right").font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
+                    .accessibilityIdentifier("edit-profile-row")
                 }
             }
 
-            Section("Household") {
+            Section("Family") {
+                if store.members.isEmpty, store.isLoadingHousehold {
+                    ProgressView()
+                } else {
+                    ForEach(store.members) { member in
+                        memberRow(member)
+                    }
+                }
+            }
+
+            Section("Invite") {
                 if let household = store.household {
                     VStack(alignment: .leading, spacing: 8) {
                         Text("Invite code")
@@ -188,7 +258,7 @@ public struct SettingsView: View {
                 } label: {
                     HStack {
                         Image(systemName: "person.badge.plus")
-                        Text("Join a household")
+                        Text("Join a family")
                     }
                 }
                 .accessibilityIdentifier("join-household-button")
@@ -217,6 +287,9 @@ public struct SettingsView: View {
         }
         .sheet(isPresented: $store.showJoinSheet) {
             joinSheet
+        }
+        .sheet(item: $store.scope(state: \.profileEdit, action: \.profileEdit)) { editStore in
+            ProfileEditView(store: editStore)
         }
         .task { store.send(.task) }
     }
@@ -260,6 +333,29 @@ public struct SettingsView: View {
                 }
             }
         }
+    }
+
+    @ViewBuilder
+    private func memberRow(_ member: HouseholdMember) -> some View {
+        HStack(spacing: 12) {
+            let rgb = member.color.rgb
+            Image(systemName: member.avatarSystemName)
+                .font(.title2)
+                .foregroundStyle(Color(red: rgb.red, green: rgb.green, blue: rgb.blue))
+                .accessibilityHidden(true)
+            Text(member.name)
+            Spacer()
+            if member.role != .member {
+                Text(member.role.rawValue.capitalized)
+                    .font(.caption2)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 2)
+                    .background(Capsule().fill(Color.secondary.opacity(0.15)))
+            }
+        }
+        .accessibilityElement(children: .combine)
     }
 
     private var appVersion: String {

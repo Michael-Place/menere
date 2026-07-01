@@ -1,5 +1,6 @@
 import Dependencies
 import DependenciesMacros
+import FamilyDomain
 import FirebaseFirestore
 import Foundation
 import WineDomain
@@ -38,6 +39,58 @@ public struct PersistenceClient: Sendable {
     public var household: @Sendable (_ hid: String) async throws -> Household?
     /// Ensure the user has a personal household; returns its id. Idempotent.
     public var ensureHousehold: @Sendable (_ uid: String) async throws -> String
+
+    // MARK: Members
+    /// All member profiles in a household.
+    public var members: @Sendable (_ hid: String) async throws -> [HouseholdMember]
+    /// Create or update a member profile.
+    public var saveMember: @Sendable (_ hid: String, _ member: HouseholdMember) async throws -> Void
+    /// Ensure a member profile exists for `uid`; seeds one (using `name`) if absent.
+    /// Idempotent — never overwrites an existing profile's edits. Returns the profile.
+    public var ensureMember: @Sendable (_ hid: String, _ uid: String, _ name: String) async throws -> HouseholdMember
+
+    // MARK: Lists
+    public var lists: @Sendable (_ hid: String) async throws -> [FamilyList]
+    public var saveList: @Sendable (_ hid: String, _ list: FamilyList) async throws -> Void
+    public var deleteList: @Sendable (_ hid: String, _ listID: String) async throws -> Void
+    public var listItems: @Sendable (_ hid: String, _ listID: String) async throws -> [ListItem]
+    public var saveListItem: @Sendable (_ hid: String, _ item: ListItem) async throws -> Void
+    public var deleteListItem: @Sendable (_ hid: String, _ listID: String, _ itemID: String) async throws -> Void
+
+    // MARK: Events
+    public var events: @Sendable (_ hid: String) async throws -> [FamilyEvent]
+    public var saveEvent: @Sendable (_ hid: String, _ event: FamilyEvent) async throws -> Void
+    public var deleteEvent: @Sendable (_ hid: String, _ eventID: String) async throws -> Void
+
+    // MARK: Chores + gamification
+    public var chores: @Sendable (_ hid: String) async throws -> [Chore]
+    public var saveChore: @Sendable (_ hid: String, _ chore: Chore) async throws -> Void
+    public var deleteChore: @Sendable (_ hid: String, _ choreID: String) async throws -> Void
+    public var memberStats: @Sendable (_ hid: String) async throws -> [MemberStats]
+    public var saveMemberStats: @Sendable (_ hid: String, _ stats: MemberStats) async throws -> Void
+    /// Live stream of member stats (updates as the server-side XP trigger writes them).
+    public var observeMemberStats: @Sendable (_ hid: String) -> AsyncStream<[MemberStats]> = { _ in
+        AsyncStream { $0.finish() }
+    }
+    public var rewards: @Sendable (_ hid: String) async throws -> [Reward]
+    public var saveReward: @Sendable (_ hid: String, _ reward: Reward) async throws -> Void
+    public var deleteReward: @Sendable (_ hid: String, _ rewardID: String) async throws -> Void
+    public var redemptions: @Sendable (_ hid: String) async throws -> [RewardRedemption]
+    public var saveRedemption: @Sendable (_ hid: String, _ redemption: RewardRedemption) async throws -> Void
+
+    // MARK: Recipes + meal plan
+    public var recipes: @Sendable (_ hid: String) async throws -> [Recipe]
+    public var saveRecipe: @Sendable (_ hid: String, _ recipe: Recipe) async throws -> Void
+    public var deleteRecipe: @Sendable (_ hid: String, _ recipeID: String) async throws -> Void
+    public var mealPlan: @Sendable (_ hid: String) async throws -> [MealPlanEntry]
+    public var saveMealPlanEntry: @Sendable (_ hid: String, _ entry: MealPlanEntry) async throws -> Void
+    public var deleteMealPlanEntry: @Sendable (_ hid: String, _ entryID: String) async throws -> Void
+
+    // MARK: Activity feed
+    /// Recent activity, newest first (capped at 50).
+    public var activity: @Sendable (_ hid: String) async throws -> [ActivityItem]
+    /// Append an activity-feed entry (fire-and-forget at call sites).
+    public var logActivity: @Sendable (_ hid: String, _ item: ActivityItem) async throws -> Void
 }
 
 extension PersistenceClient: DependencyKey {
@@ -112,6 +165,168 @@ extension PersistenceClient: DependencyKey {
                 try await households().document(hid).setData(Firestore.Encoder().encode(household))
                 try await userRef.setData(["householdId": hid], merge: true)
                 return hid
+            },
+            members: { hid in
+                let snapshot = try await households().document(hid).collection("members").getDocuments()
+                return try snapshot.documents.map { try Firestore.Decoder().decode(HouseholdMember.self, from: $0.data()) }
+            },
+            saveMember: { hid, member in
+                try await households().document(hid).collection("members").document(member.id).setData(
+                    Firestore.Encoder().encode(member), merge: true
+                )
+            },
+            ensureMember: { hid, uid, name in
+                let ref = households().document(hid).collection("members").document(uid)
+                let snap = try await ref.getDocument()
+                if let data = snap.data(),
+                   let existing = try? Firestore.Decoder().decode(HouseholdMember.self, from: data) {
+                    return existing
+                }
+                // Assign the first palette color not already taken by another member.
+                let taken = try await households().document(hid).collection("members").getDocuments()
+                    .documents.compactMap { $0.data()["color"] as? String }
+                let color = MemberColor.allCases.first { !taken.contains($0.rawValue) } ?? .ocean
+                let fallbackName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+                let member = HouseholdMember(
+                    id: uid,
+                    name: fallbackName.isEmpty ? "Member" : fallbackName,
+                    color: color
+                )
+                try await ref.setData(Firestore.Encoder().encode(member))
+                return member
+            },
+            lists: { hid in
+                let snapshot = try await households().document(hid).collection("lists").getDocuments()
+                return try snapshot.documents.map { try Firestore.Decoder().decode(FamilyList.self, from: $0.data()) }
+            },
+            saveList: { hid, list in
+                try await households().document(hid).collection("lists").document(list.id).setData(
+                    Firestore.Encoder().encode(list), merge: true
+                )
+            },
+            deleteList: { hid, listID in
+                let listRef = households().document(hid).collection("lists").document(listID)
+                // Delete child items first, then the list doc.
+                let items = try await listRef.collection("items").getDocuments()
+                for item in items.documents { try await item.reference.delete() }
+                try await listRef.delete()
+            },
+            listItems: { hid, listID in
+                let snapshot = try await households().document(hid).collection("lists")
+                    .document(listID).collection("items").getDocuments()
+                return try snapshot.documents.map { try Firestore.Decoder().decode(ListItem.self, from: $0.data()) }
+            },
+            saveListItem: { hid, item in
+                try await households().document(hid).collection("lists")
+                    .document(item.listID).collection("items").document(item.id).setData(
+                        Firestore.Encoder().encode(item), merge: true
+                    )
+            },
+            deleteListItem: { hid, listID, itemID in
+                try await households().document(hid).collection("lists")
+                    .document(listID).collection("items").document(itemID).delete()
+            },
+            events: { hid in
+                let snapshot = try await households().document(hid).collection("events").getDocuments()
+                return try snapshot.documents.map { try Firestore.Decoder().decode(FamilyEvent.self, from: $0.data()) }
+            },
+            saveEvent: { hid, event in
+                try await households().document(hid).collection("events").document(event.id).setData(
+                    Firestore.Encoder().encode(event), merge: true
+                )
+            },
+            deleteEvent: { hid, eventID in
+                try await households().document(hid).collection("events").document(eventID).delete()
+            },
+            chores: { hid in
+                let snapshot = try await households().document(hid).collection("chores").getDocuments()
+                return try snapshot.documents.map { try Firestore.Decoder().decode(Chore.self, from: $0.data()) }
+            },
+            saveChore: { hid, chore in
+                try await households().document(hid).collection("chores").document(chore.id).setData(
+                    Firestore.Encoder().encode(chore), merge: true
+                )
+            },
+            deleteChore: { hid, choreID in
+                try await households().document(hid).collection("chores").document(choreID).delete()
+            },
+            memberStats: { hid in
+                let snapshot = try await households().document(hid).collection("memberStats").getDocuments()
+                return try snapshot.documents.map { try Firestore.Decoder().decode(MemberStats.self, from: $0.data()) }
+            },
+            saveMemberStats: { hid, stats in
+                try await households().document(hid).collection("memberStats").document(stats.id).setData(
+                    Firestore.Encoder().encode(stats), merge: true
+                )
+            },
+            observeMemberStats: { hid in
+                AsyncStream { continuation in
+                    let listener = households().document(hid).collection("memberStats")
+                        .addSnapshotListener { snapshot, _ in
+                            let stats = snapshot?.documents.compactMap {
+                                try? Firestore.Decoder().decode(MemberStats.self, from: $0.data())
+                            } ?? []
+                            continuation.yield(stats)
+                        }
+                    continuation.onTermination = { _ in listener.remove() }
+                }
+            },
+            rewards: { hid in
+                let snapshot = try await households().document(hid).collection("rewards").getDocuments()
+                return try snapshot.documents.map { try Firestore.Decoder().decode(Reward.self, from: $0.data()) }
+            },
+            saveReward: { hid, reward in
+                try await households().document(hid).collection("rewards").document(reward.id).setData(
+                    Firestore.Encoder().encode(reward), merge: true
+                )
+            },
+            deleteReward: { hid, rewardID in
+                try await households().document(hid).collection("rewards").document(rewardID).delete()
+            },
+            redemptions: { hid in
+                let snapshot = try await households().document(hid).collection("redemptions").getDocuments()
+                return try snapshot.documents.map { try Firestore.Decoder().decode(RewardRedemption.self, from: $0.data()) }
+            },
+            saveRedemption: { hid, redemption in
+                try await households().document(hid).collection("redemptions").document(redemption.id).setData(
+                    Firestore.Encoder().encode(redemption), merge: true
+                )
+            },
+            recipes: { hid in
+                let snapshot = try await households().document(hid).collection("recipes").getDocuments()
+                return try snapshot.documents.map { try Firestore.Decoder().decode(Recipe.self, from: $0.data()) }
+            },
+            saveRecipe: { hid, recipe in
+                try await households().document(hid).collection("recipes").document(recipe.id).setData(
+                    Firestore.Encoder().encode(recipe), merge: true
+                )
+            },
+            deleteRecipe: { hid, recipeID in
+                try await households().document(hid).collection("recipes").document(recipeID).delete()
+            },
+            mealPlan: { hid in
+                let snapshot = try await households().document(hid).collection("mealPlan").getDocuments()
+                return try snapshot.documents.map { try Firestore.Decoder().decode(MealPlanEntry.self, from: $0.data()) }
+            },
+            saveMealPlanEntry: { hid, entry in
+                try await households().document(hid).collection("mealPlan").document(entry.id).setData(
+                    Firestore.Encoder().encode(entry), merge: true
+                )
+            },
+            deleteMealPlanEntry: { hid, entryID in
+                try await households().document(hid).collection("mealPlan").document(entryID).delete()
+            },
+            activity: { hid in
+                let snapshot = try await households().document(hid).collection("activity")
+                    .order(by: "createdAt", descending: true)
+                    .limit(to: 50)
+                    .getDocuments()
+                return try snapshot.documents.map { try Firestore.Decoder().decode(ActivityItem.self, from: $0.data()) }
+            },
+            logActivity: { hid, item in
+                try await households().document(hid).collection("activity").document(item.id).setData(
+                    Firestore.Encoder().encode(item)
+                )
             }
         )
     }()

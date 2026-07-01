@@ -8,14 +8,20 @@
  * so the iOS `TTBColaSource` can map it to an authoritative `WineType`.
  */
 
-const { onCall, HttpsError } = require("firebase-functions/v2/https");
+const { onCall, HttpsError, onRequest } = require("firebase-functions/v2/https");
+const { onDocumentCreated, onDocumentUpdated } = require("firebase-functions/v2/firestore");
 const { setGlobalOptions } = require("firebase-functions/v2");
 const { defineSecret } = require("firebase-functions/params");
 const admin = require("firebase-admin");
 const { lookupColaClassType } = require("./ttbLookup");
 const { identifyWineLabel } = require("./claudeVision");
+const { extractRecipe: runExtractRecipe } = require("./recipeExtract");
+const { extractEventsFromText } = require("./eventExtract");
+const { notifyHousehold } = require("./notifications");
+const { awardChoreXP, reverseChoreXP } = require("./choreXP");
 
 const ANTHROPIC_API_KEY = defineSecret("ANTHROPIC_API_KEY");
+const POSTMARK_WEBHOOK_SECRET = defineSecret("POSTMARK_WEBHOOK_SECRET");
 
 setGlobalOptions({ region: "us-central1", maxInstances: 10 });
 
@@ -109,5 +115,185 @@ exports.identifyLabel = onCall(
     } catch (err) {
       throw new HttpsError("internal", `Label identification failed: ${err.message}`);
     }
+  }
+);
+
+/**
+ * `extractRecipe` is a v2 HTTPS callable (us-central1) that extracts a structured recipe
+ * from a URL (JSON-LD fast path, else Claude) or raw text. Returns
+ * `{ recipe: { title, servings, ingredients:[{name,quantity,unit}], instructions:[], sourceURL }, source }`.
+ * Reuses the existing `ANTHROPIC_API_KEY` secret. No rate limiting (private app).
+ */
+exports.extractRecipe = onCall(
+  { timeoutSeconds: 60, memory: "512MiB", secrets: [ANTHROPIC_API_KEY] },
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError("unauthenticated", "You must be signed in.");
+    }
+    const data = request.data || {};
+    const url = typeof data.url === "string" ? data.url.trim() : "";
+    const text = typeof data.text === "string" ? data.text : "";
+    if (!url && !text) {
+      throw new HttpsError("invalid-argument", "url or text is required.");
+    }
+    try {
+      return await runExtractRecipe({ url, text, apiKey: ANTHROPIC_API_KEY.value() });
+    } catch (err) {
+      throw new HttpsError("internal", `Recipe extraction failed: ${err.message}`);
+    }
+  }
+);
+
+// -----------------------------------------------------------------------------
+// Notify-only FCM triggers (XP + activity are written client-side; these only push).
+// -----------------------------------------------------------------------------
+
+const db = () => admin.firestore();
+
+/** New calendar event → tell the household. */
+exports.onEventCreated = onDocumentCreated(
+  "households/{hid}/events/{eventID}",
+  async (event) => {
+    const data = event.data && event.data.data();
+    if (!data || !data.title) return;
+    await notifyHousehold(db(), event.params.hid, {
+      title: "New event",
+      body: String(data.title),
+    });
+  }
+);
+
+/**
+ * Chore completion toggled. Server-authoritative XP: on completion, award XP (transactional,
+ * idempotent) to the credited member and notify the household; on uncompletion, reverse the
+ * award. Early-returns when `isCompleted` didn't change (e.g. the trigger's own `xpAwarded`
+ * write-back), so it never loops.
+ */
+exports.onChoreToggled = onDocumentUpdated(
+  "households/{hid}/chores/{choreID}",
+  async (event) => {
+    const before = event.data.before.data() || {};
+    const after = event.data.after.data() || {};
+    const wasCompleted = !!before.isCompleted;
+    const isCompleted = !!after.isCompleted;
+    if (wasCompleted === isCompleted) return;
+
+    const hid = event.params.hid;
+    if (isCompleted) {
+      await awardChoreXP(db(), hid, event.params.choreID, after);
+      await notifyHousehold(
+        db(),
+        hid,
+        { title: "Chore done", body: `"${after.title}" was completed` },
+        after.completedByMemberID
+      );
+    } else {
+      await reverseChoreXP(db(), hid, event.params.choreID, before);
+    }
+  }
+);
+
+/** List item checked off (false → true) → tell the household. */
+exports.onListItemChecked = onDocumentUpdated(
+  "households/{hid}/lists/{listID}/items/{itemID}",
+  async (event) => {
+    const before = event.data.before.data() || {};
+    const after = event.data.after.data() || {};
+    if (before.isCompleted || !after.isCompleted) return;
+    await notifyHousehold(db(), event.params.hid, {
+      title: "List updated",
+      body: `"${after.title}" was checked off`,
+    });
+  }
+);
+
+/**
+ * `receiveEmail` is a Postmark inbound webhook (onRequest). A family forwards an email to
+ * `{inviteCode}@inbox.<your-domain>`; we resolve the household by that invite code, run Claude
+ * event extraction over the subject + body, and write the events to the calendar.
+ *
+ * SETUP REQUIRED (see ROADMAP-family.md): a Postmark account with an inbound mail domain, an
+ * MX record pointing at Postmark, the inbound webhook URL configured as this function's URL with
+ * `?secret=<POSTMARK_WEBHOOK_SECRET>`, and the `POSTMARK_WEBHOOK_SECRET` secret set.
+ */
+exports.receiveEmail = onRequest(
+  { timeoutSeconds: 120, memory: "512MiB", secrets: [ANTHROPIC_API_KEY, POSTMARK_WEBHOOK_SECRET] },
+  async (req, res) => {
+    if (req.query.secret !== POSTMARK_WEBHOOK_SECRET.value()) {
+      res.status(401).send("unauthorized");
+      return;
+    }
+    const payload = req.body || {};
+    // Resolve the household by its invite code, taken from the recipient address. Supports both:
+    //   • custom domain:   ABC123@inbox.<your-domain>           (local part = invite code)
+    //   • Postmark default: <serverhash>+ABC123@inbound.postmarkapp.com  (MailboxHash = invite code)
+    // The latter lets us reuse a Postmark account with zero DNS setup.
+    const toAddress =
+      (Array.isArray(payload.ToFull) && payload.ToFull[0] && payload.ToFull[0].Email) ||
+      payload.To ||
+      "";
+    const rawLocal = String(toAddress).split("@")[0];
+    const plusHash = rawLocal.includes("+") ? rawLocal.split("+").pop() : "";
+    const key = String(payload.MailboxHash || plusHash || rawLocal).trim().toUpperCase();
+    if (!key) {
+      res.status(200).send("no recipient");
+      return;
+    }
+
+    const householdSnap = await db()
+      .collection("households")
+      .where("inviteCode", "==", key)
+      .limit(1)
+      .get();
+    if (householdSnap.empty) {
+      res.status(200).send("no household");
+      return;
+    }
+    const hid = householdSnap.docs[0].id;
+
+    const text = `${payload.Subject || ""}\n\n${payload.TextBody || payload.StrippedTextReply || ""}`.trim();
+    if (!text) {
+      res.status(200).send("no content");
+      return;
+    }
+
+    let events = [];
+    try {
+      events = await extractEventsFromText(ANTHROPIC_API_KEY.value(), text, "America/New_York");
+    } catch (err) {
+      res.status(200).send(`extraction failed: ${err.message}`);
+      return;
+    }
+
+    const eventsCol = db().collection("households").doc(hid).collection("events");
+    let written = 0;
+    for (const ev of events) {
+      const start = new Date(ev.startDate);
+      if (isNaN(start.getTime())) continue;
+      const end = ev.endDate ? new Date(ev.endDate) : null;
+      const id = eventsCol.doc().id;
+      await eventsCol.doc(id).set({
+        id,
+        title: String(ev.title || "Untitled"),
+        startDate: admin.firestore.Timestamp.fromDate(start),
+        endDate: end && !isNaN(end.getTime()) ? admin.firestore.Timestamp.fromDate(end) : null,
+        isAllDay: !!ev.isAllDay,
+        location: ev.location || null,
+        notes: ev.notes || null,
+        recurrence: "none",
+        assigneeIDs: [],
+        createdAt: admin.firestore.Timestamp.now(),
+        updatedAt: admin.firestore.Timestamp.now(),
+      });
+      written += 1;
+    }
+
+    if (written > 0) {
+      await notifyHousehold(db(), hid, {
+        title: "Events added from email",
+        body: `${written} event${written === 1 ? "" : "s"} added to your calendar`,
+      });
+    }
+    res.status(200).send(`ok: ${written} events`);
   }
 );

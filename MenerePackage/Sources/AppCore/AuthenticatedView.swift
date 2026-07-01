@@ -34,10 +34,13 @@ public struct AuthenticatedReducer {
                 return .run { _ in
                     @Shared(.user) var user
                     guard let uid = user?.id else { return }
+                    let displayName = user?.displayName ?? ""
                     @Dependency(\.persistence) var persistence
                     do {
                         let hid = try await persistence.ensureHousehold(uid)
                         $user.withLock { $0?.householdId = hid }
+                        // Seed this user's family member profile (idempotent).
+                        _ = try await persistence.ensureMember(hid, uid, displayName)
                     } catch {}   // non-fatal; features guard nil householdId
                 }
             case .mainTab:

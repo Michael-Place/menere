@@ -10,6 +10,7 @@
 		03015C9939EAAEA454A17C63 /* AppCore in Frameworks */ = {isa = PBXBuildFile; productRef = 49A38D276C70CB617ECD07C5 /* AppCore */; };
 		2E47B645BDB7330792826410 /* UserDomain in Frameworks */ = {isa = PBXBuildFile; productRef = 184E235FFA9B598B12C27AEE /* UserDomain */; };
 		648FDE618FE8F611C029E33C /* AuthenticationDomain in Frameworks */ = {isa = PBXBuildFile; productRef = 813A2C97EC3F910E3722B866 /* AuthenticationDomain */; };
+		AB43B47310ECC1A864FBD3AA /* PushClient in Frameworks */ = {isa = PBXBuildFile; productRef = 531FAB6065D639546B0EAF29 /* PushClient */; };
 		CE34E1FC087172DAB3ED779E /* GoogleService-Info.plist in Resources */ = {isa = PBXBuildFile; fileRef = F1455CD003CD8F86A3F1F262 /* GoogleService-Info.plist */; };
 		E896483BAB372C92AEF8B271 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = F1F82D1E332018877AB38374 /* Assets.xcassets */; };
 		F108F2B5785E59930CA0865B /* MenereApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 77D20140378BCD548822314C /* MenereApp.swift */; };
@@ -33,6 +34,7 @@
 				03015C9939EAAEA454A17C63 /* AppCore in Frameworks */,
 				2E47B645BDB7330792826410 /* UserDomain in Frameworks */,
 				648FDE618FE8F611C029E33C /* AuthenticationDomain in Frameworks */,
+				AB43B47310ECC1A864FBD3AA /* PushClient in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -97,6 +99,7 @@
 				49A38D276C70CB617ECD07C5 /* AppCore */,
 				184E235FFA9B598B12C27AEE /* UserDomain */,
 				813A2C97EC3F910E3722B866 /* AuthenticationDomain */,
+				531FAB6065D639546B0EAF29 /* PushClient */,
 			);
 			productName = Menere;
 			productReference = 1C2F6A8682CB53C5580F79D7 /* Menere.app */;
@@ -383,6 +386,10 @@
 		49A38D276C70CB617ECD07C5 /* AppCore */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = AppCore;
+		};
+		531FAB6065D639546B0EAF29 /* PushClient */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = PushClient;
 		};
 		813A2C97EC3F910E3722B866 /* AuthenticationDomain */ = {
 			isa = XCSwiftPackageProductDependency;

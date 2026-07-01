@@ -3,6 +3,7 @@ import ComposableArchitecture
 import FirebaseAuth
 import Firebase
 import FirebaseFirestore
+import PushClient
 import SwiftUI
 import UIKit
 
@@ -53,15 +54,20 @@ class AppDelegate: NSObject, UIApplicationDelegate {
         // and no reCAPTCHA client configured. Never enabled in release builds.
         Auth.auth().settings?.isAppVerificationDisabledForTesting = true
         #endif
+
+        // Register for FCM push (notify-only family alerts). Persists the token to
+        // users/{uid}.fcmToken; the notify-only Cloud Function triggers read it.
+        PushNotifications.shared.start(application: application)
         return true
     }
 
-    // Handle device token registration for phone auth
+    // Handle device token registration for phone auth + FCM
     func application(
         _ application: UIApplication,
         didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data
     ) {
         Auth.auth().setAPNSToken(deviceToken, type: .unknown)
+        PushNotifications.shared.setAPNSToken(deviceToken)
     }
 
     // Handle remote notification for phone auth verification
