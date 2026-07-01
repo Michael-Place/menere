@@ -7,17 +7,19 @@ minimal public-launch hardening).
 
 For the full pivot plan, phase history, and decisions, see **`ROADMAP-family.md`**.
 
+## Repository layout
+Monorepo. **Repo root is here** (git remote `git@github.com:Michael-Place/menere.git`, branch
+`main`); top-level docs (`CLAUDE.md`, `ROADMAP-family.md`) + `.mcp.json` live at root. The iOS app
+is in **`ios/`** (all paths below are relative to it unless prefixed). A future web client would
+sit alongside as `web/`. Run `git` from the root; run Firebase/Xcode tooling from `ios/`.
+
 ## Stack
 - **UI/state:** SwiftUI + TCA (The Composable Architecture) + `swift-dependencies` + `swift-sharing`.
 - **Backend:** Firebase — Auth (Phone/OTP; Sign in with Apple ready), Firestore, Storage,
   Cloud Functions (Node 22, Functions v2, `us-central1`).
 - **Deployment target:** iOS 26+ (iOS 27 multimodal Foundation Models used with fallback).
-- **Project generation:** XcodeGen (`project.yml`) → `Menere.xcodeproj`. Swift package:
-  `MenerePackage`. **After editing `project.yml`, run `xcodegen generate`.**
-
-> Repo root is this `ios/` directory (git remote `Michael-Place/menere`, branch `main`). Sessions
-> may launch from the parent `menere/` folder — if so, `CLAUDE.md` won't auto-load, but the
-> auto-memory (loaded every session) points here.
+- **Project generation:** XcodeGen (`ios/project.yml`) → `ios/Menere.xcodeproj`. Swift package:
+  `ios/MenerePackage`. **After editing `project.yml`, run `xcodegen generate`** (from `ios/`).
 
 ## App shell (tabs)
 `MainTabView` (in `AppCore`) — family features are primary tabs; wine + kitchen fall into the
@@ -38,7 +40,7 @@ button / Cellar empty-state), driven by `showScan` in `MainTabReducer`.
 - **Wine** (`ScanFeature`, `CellarFeature`, `BottleCardFeature`, `JournalFeature`,
   `IdentifyClient`, `EnrichmentClient`, `CatalogClient`) — the original app, preserved intact.
 - **Activity feed** — client-written `ActivityItem`s on chore/event/list actions; shown in Chores.
-- **Push** (`PushClient`) — FCM token registration; wired in `App/MenereApp.swift` `AppDelegate`.
+- **Push** (`PushClient`) — FCM token registration; wired in `ios/App/MenereApp.swift` `AppDelegate`.
 
 Shared models live in **`FamilyDomain`** (HouseholdMember/MemberColor, FamilyList/ListItem,
 FamilyEvent/RecurrenceOption, Chore/MemberStats/Reward/RewardRedemption/XPCalculator, Recipe/
@@ -53,7 +55,7 @@ Ingredient/MealPlanEntry, ActivityItem) and **`WineDomain`** (Wine/Bottle/Tastin
   `rewards`, `redemptions`, `recipes`, `mealPlan`, `activity`.
 
 > Note: the Firestore collection is still named `households` (not `families`) — a deliberate
-> non-churn decision; user-facing copy says "Family". `firestore.rules` gates everything under
+> non-churn decision; user-facing copy says "Family". `ios/firestore.rules` gates everything under
 > `households/{hid}` by the members array.
 
 ## Conventions
@@ -65,7 +67,7 @@ Ingredient/MealPlanEntry, ActivityItem) and **`WineDomain`** (Wine/Bottle/Tastin
   `onChoreToggled` awards/reverses XP transactionally. Never re-add client-side XP math.
 - Recurrence (calendar + chores) is expanded **client-side**; there is no server recurrence job.
 
-## Cloud Functions (`functions/`, all DEPLOYED to project `menere`)
+## Cloud Functions (`ios/functions/`, all DEPLOYED to project `menere`)
 - `ttbColaLookup`, `joinHousehold`, `identifyLabel` — original wine functions.
 - `extractRecipe` — recipe URL scrape (JSON-LD + Claude); reuses `ANTHROPIC_API_KEY`.
 - `onEventCreated`, `onListItemChecked` — notify-only FCM triggers.
@@ -74,11 +76,11 @@ Ingredient/MealPlanEntry, ActivityItem) and **`WineDomain`** (Wine/Bottle/Tastin
   writes calendar events. See ROADMAP for the Postmark setup; times default to `America/New_York`.
 
 Secrets (Secret Manager): `ANTHROPIC_API_KEY`, `POSTMARK_WEBHOOK_SECRET`.
-Admin SDK key (gitignored, local): `menere-firebase-adminsdk-fbsvc-*.json`.
+Admin SDK key (gitignored, local): `ios/menere-firebase-adminsdk-fbsvc-*.json`.
 
 ## Build / run / deploy
 - **iOS:** prefer XcodeBuildMCP. Session defaults are set (scheme `Menere`, iPhone 17 Pro sim);
   `build_sim` / `build_run_sim`. Run `session_show_defaults` before the first build in a session.
-- **Functions:** `cd functions && firebase deploy --only functions:<name> --project menere`.
+- **Functions:** `cd ios/functions && firebase deploy --only functions:<name> --project menere`.
   First-ever Firestore-trigger deploy may need one retry (Eventarc permission propagation).
-- **Not yet a git repo** — no version control initialized.
+- **Git:** monorepo at the repo root (this directory); run `git` from here, not `ios/`.
