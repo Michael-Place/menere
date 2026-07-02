@@ -547,9 +547,12 @@ tools. **Recommended order (Michael to confirm):**
    (aiohubspace / jdeath HA integration, username-password, ~30s polling,
    rate-limited). Killer tie-in: P9 yard-care "water the beds" mark-done actually
    opens the spigot.
-5. **Garage** — OPEN QUESTION: brand? If myQ: vendor killed 3rd-party access;
-   the path is a **ratgdo** board (~$45, local, wires into the opener). If
-   Tailwind/Meross/iSmartGate: direct API.
+5. **Garage — RESOLVED: Refoss (2026-07-02)** = rebadged Meross → **LOCAL LAN
+   control**, no ratgdo needed. Meross-protocol HTTP on LAN (reference:
+   krahabb/meross_lan; HA also has a native `refoss` integration w/ LAN socket
+   discovery). Messages signed with a device key (recoverable from the
+   Refoss/Meross account pairing). Garage = cover device: state + open/close.
+   Slots in as P15-C5.
 These are the "layered signals" Michael predicted (2026-07-02) — real automations
 (shades+lights+thermostat+presence) emerge once several are in.
 
