@@ -260,7 +260,24 @@ stacked cards, each tappable through to its module:
 - Empty day: "Nothing scheduled — a rare quiet day."
 - Pure aggregation over existing observers/fetches; no new backend.
 
-### P7 — Family Brain v1 (documents)
+### P7 — Family Brain v1 (documents)  ✅ done (2026-07-02, commits b661e19…1b2eee7)
+Shipped in three chunks, each build-green + sim-smoke-tested: (C1) `Document` model +
+`DocsFeature` vault — VisionKit scan (device; compile-time sim degradation) /
+PhotosPicker / PDF intake, Storage pages under `households/{hid}/documents/{docId}/`,
+"Family Brain" row pinned under Cellar in Lists; storage.rules deployed — NOTE:
+next-gen bucket can't do cross-service (Firestore) rule reads, so file BYTES are
+auth-gated while doc metadata stays member-gated (revisit-if-public comment in rules).
+(C2) `processDocument` callable (claude-sonnet-5 vision, never-invent prompt, member-name
+matching, title overwritten only if it starts with "Scanned ") DEPLOYED — live extraction
+verified field-by-field; failed states retryable, never stuck pending. (C3) search
+everywhere (toolbar magnifyingglass on all five tabs → ranked local full-text with
+match-context snippets + type chips), document detail (async page rendering via new
+`StorageClient.downloadData`, title/type editing, full-text disclosure), idempotent
+dueDate→"Add to calendar", expiry countdown chips, "Needs attention" card on Today.
+P10 hooks ready: `DocumentType.pet`, `linkedPetIds`, `needsAttention`/`DocumentDateChip`.
+Known gap: upload→auto-process handoff is code-reviewed but first exercised on a real
+device (sim's PhotosPicker is unreachable by automation). Not yet built: email-forward
++ share-extension intake (P7.3 spec) — natural follow-on chunk.
 Upload anything — receipt, doctor paperwork, school form, appliance manual — AI
 breaks it down, tags it, makes it searchable. **The family's second brain.**
 - **Model** (`FamilyDomain`): `Document { id, title, type (receipt/medical/school/

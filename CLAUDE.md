@@ -7,7 +7,10 @@ minimal public-launch hardening).
 
 For the full pivot plan, phase history, and decisions, see **`ROADMAP-family.md`**.
 
-**Act II (in progress — P5 identity ✅ and P6 Today dashboard ✅ shipped):** the app is now **"Bacán"**
+**Act II (in progress — P5 identity ✅, P6 Today dashboard ✅, P7 Family Brain ✅ shipped):**
+**Family Brain** (`DocsFeature`): document vault under Lists ("Family Brain" row), AI
+processing via `processDocument`, search from every tab's toolbar, doc detail with
+due-date→calendar + expiry chips, "Needs attention" card on Today. the app is now **"Bacán"**
 (Chilean slang; user-facing only — bundle ID, Firebase project, repo, and package all stay
 `menere`). Family surfaces wear the new identity (familyCanvas cream, bacanGreen,
 terracotta/marigold/sky, rounded type, playful motion via `.stickerSlap`/`ConfettiBurst`);
@@ -95,6 +98,9 @@ Ingredient/MealPlanEntry, ActivityItem) and **`WineDomain`** (Wine/Bottle/Tastin
 - `generateDailyBriefing` — callable; Claude-written family-voice daily briefing for the Today
   tab (`briefingGenerate.js`), cached per ET day at `households/{hid}/briefings/{YYYY-MM-DD}`,
   `force` regenerates.
+- `processDocument` — callable; Family Brain AI extraction (`docProcess.js`, claude-sonnet-5
+  vision): type/tags/summary/vendor/amount/dates/linked members/extractedText onto
+  `households/{hid}/documents/{id}`.
 
 Secrets (Secret Manager): `ANTHROPIC_API_KEY`, `POSTMARK_WEBHOOK_SECRET`.
 Admin SDK key (gitignored, local): `ios/menere-firebase-adminsdk-fbsvc-*.json`.
