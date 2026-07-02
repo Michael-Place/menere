@@ -18,6 +18,7 @@ const { identifyWineLabel } = require("./claudeVision");
 const { extractRecipe: runExtractRecipe } = require("./recipeExtract");
 const { extractEventsFromText } = require("./eventExtract");
 const { generateDailyBriefing } = require("./briefingGenerate");
+const { processDocument } = require("./docProcess");
 const { notifyHousehold, memberName } = require("./notifications");
 const { awardChoreXP, reverseChoreXP } = require("./choreXP");
 
@@ -175,6 +176,44 @@ exports.generateDailyBriefing = onCall(
       });
     } catch (err) {
       throw new HttpsError("internal", `Briefing failed: ${err.message}`);
+    }
+  }
+);
+
+/**
+ * `processDocument` is a v2 HTTPS callable (us-central1) for the Family Brain document vault. Input
+ * `{ docId }`; the household is derived from the CALLER (`users/{uid}.householdId`) — a client-passed
+ * hid is never trusted. It downloads the document's uploaded pages from Storage, runs Claude vision
+ * (Sonnet 5) over them, and writes back the structured fields (type/tags/summary/vendor/amount/dates/
+ * extractedText) + flips `processingState` to `processed` (or `failed` on any error). Reuses the
+ * existing `ANTHROPIC_API_KEY` secret. No rate limiting (private app).
+ */
+exports.processDocument = onCall(
+  { timeoutSeconds: 120, memory: "1GiB", secrets: [ANTHROPIC_API_KEY] },
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError("unauthenticated", "You must be signed in.");
+    }
+    const uid = request.auth.uid;
+    const docId = String(request.data?.docId || "").trim();
+    if (!docId) {
+      throw new HttpsError("invalid-argument", "docId is required.");
+    }
+
+    const userSnap = await db().collection("users").doc(uid).get();
+    const hid = userSnap.exists ? userSnap.data().householdId : null;
+    if (!hid) {
+      throw new HttpsError("failed-precondition", "No household for this user.");
+    }
+    try {
+      return await processDocument({
+        db: db(),
+        hid,
+        docId,
+        apiKey: ANTHROPIC_API_KEY.value(),
+      });
+    } catch (err) {
+      throw new HttpsError("internal", `Document processing failed: ${err.message}`);
     }
   }
 );

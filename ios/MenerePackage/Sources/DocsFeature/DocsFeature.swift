@@ -55,6 +55,8 @@ public struct DocsReducer {
         case cancelIntake
         case uploadSucceeded(FamilyDomain.Document)
         case uploadFailed(String)
+        // AI processing (P7-C2)
+        case processDocument(String)      // docId — trigger/retry AI enrichment (also the retry action)
         // Library
         case deleteDocuments(IndexSet)
         case dismissAlert
@@ -65,6 +67,7 @@ public struct DocsReducer {
 
     @Dependency(\.persistence) var persistence
     @Dependency(\.storage) var storage
+    @Dependency(\.docs) var docs
     @Dependency(\.uuid) var uuid
     @Dependency(\.date) var date
 
@@ -178,14 +181,13 @@ public struct DocsReducer {
                             processingState: .pending
                         )
                         try await persistence.saveDocument(hid, doc)
-                        // ── SEAM (P7-C2): trigger AI processing here, post-upload. ───────────────
-                        // Call the `processDocument` Cloud Function with (hid, docId); it reads the
+                        await send(.uploadSucceeded(doc))
+                        // ── SEAM (P7-C2): trigger AI processing, post-upload. The callable reads the
                         // uploaded pages, runs Claude vision, and writes back type/tags/summary/
                         // amount/dates/extractedText + flips `processingState` to .processed/.failed.
-                        // The library already re-fetches on `.task`, so no extra plumbing is needed
-                        // here beyond the callable + an optional live listener.
-                        // ────────────────────────────────────────────────────────────────────────
-                        await send(.uploadSucceeded(doc))
+                        // Fire-and-forget resilience: if it fails, the row simply stays pending and
+                        // the "Process again" row action re-invokes it.
+                        await send(.processDocument(docId))
                     } catch {
                         // Best-effort cleanup of any partially-uploaded pages.
                         if !uploaded.isEmpty { try? await storage.deletePaths(uploaded) }
@@ -211,6 +213,17 @@ public struct DocsReducer {
                 state.uploadingTitle = ""
                 state.alertMessage = "That one didn't make it into the vault — the upload failed. Give it another try in a moment."
                 return .none
+
+            case let .processDocument(docId):
+                guard let hid = hid() else { return .none }
+                return .run { send in
+                    // Best-effort: on failure the row stays pending/failed (server marks .failed);
+                    // the user can retry via "Process again". Re-fetch either way so the row reflects
+                    // the server's latest state.
+                    try? await docs.process(docId)
+                    let updated = (try? await persistence.documents(hid)) ?? []
+                    await send(.documentsLoaded(updated))
+                }
 
             case let .deleteDocuments(offsets):
                 guard let hid = hid() else { return .none }

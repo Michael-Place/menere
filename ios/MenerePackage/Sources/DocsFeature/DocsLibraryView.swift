@@ -41,7 +41,9 @@ public struct DocsLibraryView: View {
             } else {
                 Section {
                     ForEach(store.documents) { doc in
-                        DocumentRow(doc: doc)
+                        DocumentRow(doc: doc) {
+                            store.send(.processDocument(doc.id))
+                        }
                     }
                     .onDelete { store.send(.deleteDocuments($0)) }
                 }
@@ -160,13 +162,16 @@ public struct DocsLibraryView: View {
     }
 }
 
-/// A single document row: type symbol in a tinted circle, title, "Type · date" line, and a
-/// pending-processing hourglass badge.
+/// A single document row. Pending: type symbol + title + hourglass. Processed (P7-C2): the row
+/// upgrades to type name, vendor + amount, a 2-line summary, and tiny tag chips. Failed: a subtle
+/// warning + "Tap to retry" wired to the same re-process action (also available via long-press).
 struct DocumentRow: View {
     let doc: FamilyDomain.Document
+    /// Re-invoke `processDocument` for this row (post-upload retry / manual re-run).
+    let onReprocess: () -> Void
 
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(alignment: .top, spacing: 12) {
             ZStack {
                 Circle()
                     .fill(Self.tint(for: doc.type).opacity(0.18))
@@ -176,19 +181,37 @@ struct DocumentRow: View {
                     .foregroundStyle(Self.tint(for: doc.type))
             }
 
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: 3) {
                 Text(doc.title)
                     .foregroundStyle(Color.ink)
-                Text("\(doc.type.displayName) · \(Self.dateText(doc))")
+
+                Text(metaLine)
                     .font(.caption)
                     .foregroundStyle(Color.inkSoft)
+
+                if doc.processingState == .processed, let summary = doc.summary,
+                   !summary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    Text(summary)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                        .accessibilityIdentifier("doc-summary")
+                }
+
+                if doc.processingState == .processed, !doc.tags.isEmpty {
+                    tagChips
+                }
+
+                if doc.processingState == .failed {
+                    Label("Tap to retry", systemImage: "exclamationmark.triangle")
+                        .font(.caption2)
+                        .foregroundStyle(.orange)
+                        .accessibilityIdentifier("doc-failed-badge")
+                }
             }
 
-            Spacer()
+            Spacer(minLength: 0)
 
-            // ── SEAM (P7-C2): provenance-badged extracted fields (amount / vendor / dates) render
-            // here / in a detail screen once `processDocument` fills them, mirroring the wine
-            // enrichment provenance badges. ──────────────────────────────────────────────────────
             if doc.processingState == .pending {
                 Image(systemName: "hourglass")
                     .font(.footnote)
@@ -198,6 +221,67 @@ struct DocumentRow: View {
             }
         }
         .padding(.vertical, 2)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            if doc.processingState == .failed { onReprocess() }
+        }
+        .contextMenu {
+            if doc.processingState != .processed {
+                Button {
+                    onReprocess()
+                } label: {
+                    Label("Process again", systemImage: "arrow.clockwise")
+                }
+                .accessibilityIdentifier("doc-reprocess-button")
+            }
+        }
+    }
+
+    /// The secondary line. Processed docs lead with vendor + amount when present; otherwise (pending,
+    /// failed, or sparse) fall back to the C1 "Type · date" line.
+    private var metaLine: String {
+        if doc.processingState == .processed {
+            var parts: [String] = []
+            if let vendor = doc.vendor?.trimmingCharacters(in: .whitespacesAndNewlines), !vendor.isEmpty {
+                parts.append(vendor)
+            }
+            if let amount = doc.amount {
+                parts.append(Self.amountText(amount))
+            }
+            if !parts.isEmpty {
+                return "\(doc.type.displayName) · " + parts.joined(separator: " · ")
+            }
+        }
+        return "\(doc.type.displayName) · \(Self.dateText(doc))"
+    }
+
+    /// Up to 3 tag chips, then a "+N" overflow chip.
+    private var tagChips: some View {
+        let shown = Array(doc.tags.prefix(3))
+        let overflow = doc.tags.count - shown.count
+        return HStack(spacing: 4) {
+            ForEach(shown, id: \.self) { tag in
+                Text(tag)
+                    .font(.caption2)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 2)
+                    .background(Self.tint(for: doc.type).opacity(0.15), in: Capsule())
+                    .foregroundStyle(Self.tint(for: doc.type))
+            }
+            if overflow > 0 {
+                Text("+\(overflow)")
+                    .font(.caption2)
+                    .foregroundStyle(Color.inkSoft)
+            }
+        }
+        .accessibilityIdentifier("doc-tags")
+    }
+
+    private static func amountText(_ amount: Double) -> String {
+        let fmt = NumberFormatter()
+        fmt.numberStyle = .currency
+        fmt.currencyCode = "USD"
+        return fmt.string(from: NSNumber(value: amount)) ?? String(format: "$%.2f", amount)
     }
 
     private static func dateText(_ doc: FamilyDomain.Document) -> String {
