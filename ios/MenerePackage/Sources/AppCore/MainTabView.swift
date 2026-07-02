@@ -6,14 +6,16 @@ import MenereUI
 import RecipesFeature
 import SettingsFeature
 import SwiftUI
+import TodayFeature
 
 @Reducer
 public struct MainTabReducer {
     @ObservableState
     public struct State: Equatable {
-        var selectedTab: TabItem = .calendar
+        var selectedTab: TabItem = .today
         /// Family/profile is presented as a sheet from the tab-bar toolbar rather than a tab.
         var showSettings = false
+        var today = TodayReducer.State()
         var lists = ListsReducer.State()
         var calendar = CalendarReducer.State()
         var chores = ChoresReducer.State()
@@ -24,6 +26,7 @@ public struct MainTabReducer {
     }
 
     public enum Action: Equatable, BindableAction {
+        case today(TodayReducer.Action)
         case lists(ListsReducer.Action)
         case calendar(CalendarReducer.Action)
         case chores(ChoresReducer.Action)
@@ -38,6 +41,7 @@ public struct MainTabReducer {
     public var body: some ReducerOf<Self> {
         BindingReducer()
 
+        Scope(state: \.today, action: \.today, child: TodayReducer.init)
         Scope(state: \.lists, action: \.lists, child: ListsReducer.init)
         Scope(state: \.calendar, action: \.calendar, child: CalendarReducer.init)
         Scope(state: \.chores, action: \.chores, child: ChoresReducer.init)
@@ -48,8 +52,21 @@ public struct MainTabReducer {
             switch action {
             case .tabSelected(let tab):
                 state.selectedTab = tab
+                // Re-selecting Today re-aggregates its cards (cheap one-shot fetches).
+                return tab == .today ? .send(.today(.task)) : .none
+
+            // Today quick-action deep links → switch to the target tab.
+            case .today(.delegate(.openCalendar)):
+                state.selectedTab = .calendar
                 return .none
-            case .lists, .calendar, .chores, .recipes, .settings, .binding:
+            case .today(.delegate(.openLists)):
+                state.selectedTab = .lists
+                return .none
+            case .today(.delegate(.openKitchen)):
+                state.selectedTab = .recipes
+                return .none
+
+            case .today, .lists, .calendar, .chores, .recipes, .settings, .binding:
                 return .none
             }
         }
@@ -57,6 +74,7 @@ public struct MainTabReducer {
 }
 
 public enum TabItem: Int, CaseIterable, Equatable {
+    case today
     case calendar
     case lists
     case chores
@@ -64,6 +82,7 @@ public enum TabItem: Int, CaseIterable, Equatable {
 
     var title: String {
         switch self {
+        case .today: "Today"
         case .calendar: "Calendar"
         case .lists: "Lists"
         case .chores: "Chores"
@@ -73,6 +92,7 @@ public enum TabItem: Int, CaseIterable, Equatable {
 
     var systemImage: String {
         switch self {
+        case .today: "sun.max"
         case .calendar: "calendar"
         case .lists: "checklist"
         case .chores: "checkmark.seal"
@@ -90,6 +110,13 @@ public struct MainTabView: View {
 
     public var body: some View {
         TabView(selection: $store.selectedTab.sending(\.tabSelected)) {
+            Tab(TabItem.today.title, systemImage: TabItem.today.systemImage, value: TabItem.today) {
+                NavigationStack {
+                    TodayView(store: store.scope(state: \.today, action: \.today))
+                        .toolbar { familyToolbar }
+                }
+            }
+
             Tab(TabItem.calendar.title, systemImage: TabItem.calendar.systemImage, value: TabItem.calendar) {
                 NavigationStack {
                     CalendarView(store: store.scope(state: \.calendar, action: \.calendar))
