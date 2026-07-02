@@ -381,6 +381,30 @@ because the whole house runs on it. One `HueClient` dependency, local-first:
   ecosystems in the house each get their own deliberate integration when wanted —
   same hyper-specific philosophy.
 
+### P13 — Money: expense tracking + budgets (Michael's request, 2026-07-02)
+Ordering flexible (can jump ahead of P11/P12). **Key insight: the Family Brain
+already extracts vendor/amount/docDate from receipts — Phase 1 is a lens, not a
+pipeline.**
+- **Model:** `Expense { amount, vendor, category, date, memberId?, source
+  (receipt-scan/email/statement/manual), documentId? (Brain link), notes }` +
+  `Budget { category, monthlyLimit }` under `households/{hid}`.
+- **Ingestion ladder (build in this order):**
+  1. Promote Brain receipts → expenses (auto-suggest category via the existing
+     extraction; one-tap confirm or silent with review).
+  2. Manual quick-add from Today's quick actions (amount/vendor/category, 3 sec).
+  3. Email receipts via the Postmark pipeline (extend receiveEmail/eventExtract
+     with an expense path — order confirmations, utilities).
+  4. Statement import (CSV/OFX via file/share-sheet; OFX deterministic, messy
+     PDFs via Claude) — the share-extension intake doubles for the Brain.
+  5. (Optional, decide like Hue) automatic bank sync: Plaid vs SimpleFIN Bridge —
+     real cost/setup; hyper-specific integration philosophy applies.
+- **Display:** "This month" card on Today (spent vs typical month, quiet until
+  notable); Money view — category bars vs budgets (family palette), month picker,
+  vendor patterns ("3rd Costco run this month"); briefing may mention spend
+  gently. Budgets = per-category monthly limits, warm copy, no shame mechanics.
+- Category taxonomy: start small (groceries/dining/kids/house/garden/pets/fun),
+  Claude auto-categorizes, family can re-file.
+
 ### Side quest (anytime after P5) — Oliver mode
 Activate the dormant `.child` role: picture-based chore board, huge tap targets,
 maximum celebration. He's 3½ — exactly the age it lands. Additive by design (P0
