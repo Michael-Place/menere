@@ -22,6 +22,7 @@ public struct ChoresView: View {
                         careSuggestionsCard
                     }
                 } else {
+                    HouseHealthBanner(health: CareItem.houseHealth(for: store.careItems))
                     ForEach(store.careItems) { item in
                         CareRow(
                             item: item,
@@ -358,5 +359,79 @@ private struct CareRow: View {
             return "Done \(date) by \(name)"
         }
         return "Done \(date)"
+    }
+}
+
+/// Compact whole-house-health banner at the top of the House-care section: terracotta "overdue",
+/// marigold "due this week", or the bacanGreen caught-up state ("The house is happy.") with a subtle
+/// seal bounce. The math is UI-free (``CareItem/houseHealth(for:now:within:)``); this owns the voice.
+private struct HouseHealthBanner: View {
+    let health: HouseHealth
+
+    var body: some View {
+        HStack(spacing: 12) {
+            seal
+            VStack(alignment: .leading, spacing: 1) {
+                Text(title).font(.subheadline.weight(.semibold)).foregroundStyle(Color.ink)
+                if let detail { Text(detail).font(.caption).foregroundStyle(Color.inkSoft) }
+            }
+            Spacer()
+        }
+        .padding(.vertical, 10)
+        .padding(.horizontal, 12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(accent.opacity(0.14))
+        )
+        .padding(.vertical, 2)
+        .accessibilityIdentifier("house-health-banner")
+    }
+
+    private var isCaughtUp: Bool { if case .caughtUp = health { return true } else { return false } }
+
+    /// The accent glyph — the caught-up seal gets a subtle appear bounce; the alert states don't.
+    @ViewBuilder
+    private var seal: some View {
+        let icon = Image(systemName: symbol).font(.title3).foregroundStyle(accent)
+        if isCaughtUp { icon.appearBounce() } else { icon }
+    }
+
+    private var accent: Color {
+        switch health {
+        case .overdue: .terracotta
+        case .dueThisWeek: .marigold
+        case .caughtUp: .bacanGreen
+        }
+    }
+
+    private var symbol: String {
+        switch health {
+        case .overdue: "exclamationmark.triangle"
+        case .dueThisWeek: "clock"
+        case .caughtUp: "checkmark.seal.fill"
+        }
+    }
+
+    private var title: String {
+        switch health {
+        case let .overdue(count, _, _):
+            "\(count) thing\(count == 1 ? "" : "s") overdue"
+        case let .dueThisWeek(count, _, _):
+            "\(count) due this week"
+        case .caughtUp:
+            HouseHealth.happyLine
+        }
+    }
+
+    private var detail: String? {
+        switch health {
+        case let .overdue(_, worstItem, daysOver):
+            "\(worstItem) — \(daysOver) day\(daysOver == 1 ? "" : "s") over"
+        case let .dueThisWeek(_, soonestItem, days):
+            days == 0 ? "\(soonestItem) — due today" : "\(soonestItem) — due in \(days) day\(days == 1 ? "" : "s")"
+        case .caughtUp:
+            nil
+        }
     }
 }

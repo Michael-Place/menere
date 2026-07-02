@@ -30,6 +30,8 @@ public struct TodayReducer {
         var chores: [Chore] = []
         /// Family-Brain documents — powers the "Needs attention" card (due/expiring soon).
         var documents: [FamilyDomain.Document] = []
+        /// House-care items — powers the "Home care" card (due/overdue care tasks).
+        var careItems: [CareItem] = []
         /// One-shot leaderboard stats (the live stream stays Chores-tab machinery).
         var stats: [MemberStats] = []
         /// The signed-in member's first name (first whitespace token), or nil if unknown.
@@ -54,11 +56,14 @@ public struct TodayReducer {
         case loaded(
             events: [FamilyEvent], members: [HouseholdMember], recipes: [Recipe],
             mealPlan: [MealPlanEntry], chores: [Chore], stats: [MemberStats],
-            documents: [FamilyDomain.Document]
+            documents: [FamilyDomain.Document], careItems: [CareItem]
         )
         /// Complete/uncomplete a chore from the Today "Chores today" card. Behaves identically to
         /// completing it in the Chores tab (shared ``ChoreCompletion`` logic).
         case toggleChore(Chore)
+        /// Mark a care task done from the Today "Home care" card. Behaves identically to the Home
+        /// tab (shared ``CareCompletion`` logic + best-effort activity log).
+        case markCareTaskDone(itemID: String, taskID: String)
         /// Load/refresh the AI briefing. `force` bypasses the per-day server cache (refresh button).
         case loadBriefing(force: Bool)
         case briefingResponse(DailyBriefing?)
@@ -126,6 +131,7 @@ public struct TodayReducer {
                         async let chores = persistence.chores(hid)
                         async let stats = persistence.memberStats(hid)
                         async let documents = persistence.documents(hid)
+                        async let careItems = persistence.careItems(hid)
                         await send(.loaded(
                             events: (try? await events) ?? [],
                             members: (try? await members) ?? [],
@@ -133,13 +139,14 @@ public struct TodayReducer {
                             mealPlan: (try? await plan) ?? [],
                             chores: (try? await chores) ?? [],
                             stats: (try? await stats) ?? [],
-                            documents: (try? await documents) ?? []
+                            documents: (try? await documents) ?? [],
+                            careItems: (try? await careItems) ?? []
                         ))
                     },
                     .send(.loadBriefing(force: false))
                 )
 
-            case let .loaded(events, members, recipes, mealPlan, chores, stats, documents):
+            case let .loaded(events, members, recipes, mealPlan, chores, stats, documents, careItems):
                 state.isLoading = false
                 state.events = events
                 state.members = members
@@ -148,6 +155,7 @@ public struct TodayReducer {
                 state.chores = chores
                 state.stats = stats
                 state.documents = documents
+                state.careItems = careItems
                 state.firstName = firstName(from: members)
                 return .none
 
@@ -163,6 +171,22 @@ public struct TodayReducer {
                 return .run { [outcome] _ in
                     @Dependency(\.persistence) var persistence
                     try await persistence.writeCompletion(hid: hid, outcome)
+                }
+
+            case let .markCareTaskDone(itemID, taskID):
+                guard let (hid, uid) = ctx(),
+                      let i = state.careItems.firstIndex(where: { $0.id == itemID }),
+                      let outcome = CareCompletion.markDone(
+                          item: state.careItems[i], taskID: taskID, byMemberID: uid, members: state.members
+                      )
+                else { return .none }
+                // Same shared care-completion path as the Home tab (stamps who-did-it-last + a
+                // best-effort activity entry). Marking done recomputes the task's due date, so the
+                // row drops off this card immediately.
+                state.careItems[i] = outcome.updated
+                return .run { [outcome] _ in
+                    @Dependency(\.persistence) var persistence
+                    try await persistence.writeCareDone(hid: hid, outcome)
                 }
 
             case let .loadBriefing(force):

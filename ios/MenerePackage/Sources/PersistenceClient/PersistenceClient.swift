@@ -379,6 +379,15 @@ public extension PersistenceClient {
         if let next = outcome.next { try await saveChore(hid, next) }
         if let activity = outcome.activity { try? await logActivity(hid, activity) }
     }
+
+    /// Persist a care-task ``CareCompletion/Outcome``: the updated ``CareItem`` plus a best-effort
+    /// "took care of …" activity entry. Shared by the Home tab and the Today dashboard so marking a
+    /// care task done writes identically from either surface (activity logging is best-effort,
+    /// matching the chore-completion and calendar/list logging conventions).
+    func writeCareDone(hid: String, _ outcome: CareCompletion.Outcome) async throws {
+        try await saveCareItem(hid, outcome.updated)
+        if let activity = outcome.activity { try? await logActivity(hid, activity) }
+    }
 }
 
 public extension DependencyValues {

@@ -168,6 +168,51 @@ public struct CareItem: Codable, Equatable, Identifiable, Sendable {
         "trash.fill", "leaf.fill", "paintbrush.fill", "hammer.fill",
     ]
 
+    // MARK: House-health rollup (UI-free — the same math powers the Home banner and Today card)
+
+    /// A due-or-soon care task paired with the item it belongs to. `days` is the whole-day count
+    /// until due (`< 0` overdue, `0` due today). Sorted overdue-first by the rollup helpers so the
+    /// Home banner and the Today "Home care" card agree on ordering and naming.
+    public struct CareDue: Equatable, Identifiable, Sendable {
+        public let item: CareItem
+        public let task: CareTask
+        public let days: Int
+        public let isOverdue: Bool
+        public var id: String { "\(item.id)/\(task.id)" }
+    }
+
+    /// Every interval task across `items` that is due within `horizonDays` (overdue included),
+    /// sorted soonest-first (most overdue first). Manual/seasonal tasks and comfortably-future tasks
+    /// are excluded. Both the House-care banner and the Today "Home care" card read from this.
+    public static func dueTasks(
+        in items: [CareItem], now: Date = Date(), within horizonDays: Int = 7
+    ) -> [CareDue] {
+        var result: [CareDue] = []
+        for item in items {
+            for task in item.tasks {
+                guard let days = task.daysUntilDue(now: now), days <= horizonDays else { continue }
+                result.append(CareDue(item: item, task: task, days: days, isOverdue: task.isOverdue(now: now)))
+            }
+        }
+        return result.sorted { $0.days < $1.days }
+    }
+
+    /// The house-health summary — overdue / due-this-week / caught-up — derived from the same
+    /// ``dueTasks(in:now:within:)`` set so the Home banner and Today never disagree.
+    public static func houseHealth(
+        for items: [CareItem], now: Date = Date(), within horizonDays: Int = 7
+    ) -> HouseHealth {
+        let due = dueTasks(in: items, now: now, within: horizonDays)
+        let overdue = due.filter(\.isOverdue)
+        if let worst = overdue.first {   // sorted soonest-first ⇒ most overdue is first
+            return .overdue(count: overdue.count, worstItem: worst.item.name, daysOver: -worst.days)
+        }
+        if let soonest = due.first {     // no overdue here ⇒ every entry is upcoming
+            return .dueThisWeek(count: due.count, soonestItem: soonest.item.name, days: soonest.days)
+        }
+        return .caughtUp
+    }
+
     /// The interval choices offered in the task cadence picker (`nil` = seasonal / manual).
     public static let intervalChoices: [Int?] = [7, 14, 30, 60, 90, 180, nil]
 
@@ -184,4 +229,21 @@ public struct CareItem: Codable, Equatable, Identifiable, Sendable {
         case let .some(d): return "Every \(d) days"
         }
     }
+}
+
+/// The whole-house upkeep summary shown at the top of the House-care section and (as a quiet line)
+/// on Today. UI-free by design — views own the color, icon, and voice; this owns the math and the
+/// one reserved caught-up line. Built by ``CareItem/houseHealth(for:now:within:)``.
+public enum HouseHealth: Equatable, Sendable {
+    /// One or more interval tasks are past due. `worstItem` is the most-overdue item's name.
+    case overdue(count: Int, worstItem: String, daysOver: Int)
+    /// Nothing overdue, but `count` interval tasks come due inside the horizon. `soonestItem` is the
+    /// nearest one's name; `days` is `0` for due-today.
+    case dueThisWeek(count: Int, soonestItem: String, days: Int)
+    /// Nothing overdue or due soon — the house is happy.
+    case caughtUp
+
+    /// The single reserved caught-up line, shared by the Home banner and the Today quiet line so it
+    /// only ever lives in one place.
+    public static let happyLine = "The house is happy."
 }

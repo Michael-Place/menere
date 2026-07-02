@@ -204,15 +204,17 @@ public struct ChoresReducer {
             case let .markCareTaskDone(itemID, taskID):
                 guard let (hid, uid) = ctx(),
                       let i = state.careItems.firstIndex(where: { $0.id == itemID }),
-                      let t = state.careItems[i].tasks.firstIndex(where: { $0.id == taskID })
+                      let outcome = CareCompletion.markDone(
+                          item: state.careItems[i], taskID: taskID, byMemberID: uid, members: state.members
+                      )
                 else { return .none }
-                state.careItems[i].tasks[t].lastDoneAt = Date()
-                state.careItems[i].tasks[t].lastDoneBy = uid
-                let item = state.careItems[i]
-                // No XP, no activity log — that's C2. Just record who-did-it-last.
-                return .run { _ in
+                // Shared care-completion logic (see ``CareCompletion``) so Today and Home behave
+                // identically: stamp who-did-it-last + a best-effort "took care of…" activity entry.
+                state.careItems[i] = outcome.updated
+                if let activity = outcome.activity { state.activity.insert(activity, at: 0) }
+                return .run { [outcome] _ in
                     @Dependency(\.persistence) var persistence
-                    try await persistence.saveCareItem(hid, item)
+                    try await persistence.writeCareDone(hid: hid, outcome)
                 }
 
             case let .careSuggestionTapped(suggestion):

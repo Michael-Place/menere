@@ -38,4 +38,12 @@ public struct ActivityItem: Codable, Equatable, Identifiable, Sendable {
     public static func listItemChecked(title: String, list: String, actorID: String?) -> ActivityItem {
         ActivityItem(text: "Checked \"\(title)\" off \(list)", systemImage: "checklist.checked", actorID: actorID)
     }
+
+    /// A House-care task was marked done. `name` is the actor's first-name-friendly name; `item` is
+    /// the care item's name ("HVAC filter"); `symbol` defaults to a house glyph but callers pass the
+    /// item's own icon. Purely additive — no schema change, so existing activity docs still decode.
+    public static func careDone(item: String, by name: String?, actorID: String?, symbol: String = "house.fill") -> ActivityItem {
+        let who = name.map { "\($0) " } ?? ""
+        return ActivityItem(text: "\(who)took care of \"\(item)\"", systemImage: symbol, actorID: actorID)
+    }
 }

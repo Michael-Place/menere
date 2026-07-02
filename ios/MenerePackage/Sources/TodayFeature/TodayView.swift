@@ -24,6 +24,7 @@ public struct TodayView: View {
                 quickActions
 
                 choresCard
+                homeCareCard
                 needsAttentionCard
                 familyCard
             }
@@ -311,6 +312,44 @@ public struct TodayView: View {
         }
     }
 
+    // MARK: Home care (P8-C2)
+
+    /// Care tasks due or overdue within a week, same math as the Home tab's House-care banner.
+    private func careDue() -> [CareItem.CareDue] {
+        CareItem.dueTasks(in: store.careItems)
+    }
+
+    /// Shown only when at least one care item exists. With due/overdue tasks → a card listing up to
+    /// three (item name + due chip). All caught up → a single quiet "The house is happy." line, no
+    /// card chrome. Nothing at all when there are zero care items.
+    @ViewBuilder
+    private var homeCareCard: some View {
+        if !store.careItems.isEmpty {
+            let due = careDue()
+            if due.isEmpty {
+                HStack(spacing: 8) {
+                    Image(systemName: "checkmark.seal.fill").foregroundStyle(Color.bacanGreen)
+                    Text(HouseHealth.happyLine).foregroundStyle(Color.inkSoft)
+                }
+                .font(.system(.subheadline, design: .rounded))
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .accessibilityIdentifier("today-house-happy")
+            } else {
+                card {
+                    cardHeader("Home care", symbol: "house")
+                    VStack(spacing: 12) {
+                        ForEach(Array(due.prefix(3))) { item in
+                            TodayCareRow(due: item) {
+                                store.send(.markCareTaskDone(itemID: item.item.id, taskID: item.task.id))
+                            }
+                        }
+                    }
+                }
+                .accessibilityIdentifier("today-home-care")
+            }
+        }
+    }
+
     // MARK: Needs attention (Family Brain, P7-C3)
 
     /// Documents whose dueDate/expiryDate is past-due or within the next 30 days, soonest first.
@@ -485,5 +524,61 @@ public struct TodayView: View {
         f.timeStyle = .short
         f.dateStyle = .none
         return f.string(from: date)
+    }
+}
+
+/// A single Today "Home care" row: item name + a due chip (terracotta when overdue) and an inline
+/// sticker-slap "Mark done" affordance. Its own `View` so the slap owns a `@State` trigger that
+/// replays on each tap — same affordance as the Home tab's `CareRow`.
+private struct TodayCareRow: View {
+    let due: CareItem.CareDue
+    let onMarkDone: () -> Void
+
+    @State private var slapOn = false
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: due.item.iconSymbol)
+                .font(.subheadline)
+                .foregroundStyle(due.isOverdue ? Color.terracotta : Color.bacanGreen)
+                .frame(width: 22)
+            Text(due.item.name)
+                .foregroundStyle(Color.ink)
+                .lineLimit(1)
+            Spacer()
+            dueChip
+            Button {
+                onMarkDone()
+                slapOn = true
+                Task { try? await Task.sleep(for: .milliseconds(700)); slapOn = false }
+            } label: {
+                Image(systemName: "checkmark.circle.fill")
+                    .font(.title3)
+                    .foregroundStyle(Color.bacanGreen)
+                    .stickerSlap(isOn: slapOn, color: .bacanGreen)
+            }
+            .buttonStyle(.pressable)
+            .accessibilityLabel("Mark done")
+            .accessibilityIdentifier("today-care-mark-done-\(due.item.id)")
+        }
+    }
+
+    /// Overdue → terracotta "Nd over"; due today → bacanGreen "Due today"; upcoming → marigold "in Nd".
+    private var dueChip: some View {
+        let (text, color): (String, Color) = {
+            if due.days < 0 {
+                return ("\(-due.days)d over", .terracotta)
+            } else if due.days == 0 {
+                return ("Due today", .bacanGreen)
+            } else {
+                return ("in \(due.days)d", .marigold)
+            }
+        }()
+        return Text(text)
+            .font(.system(.caption2, design: .rounded).weight(.semibold))
+            .foregroundStyle(color)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+            .background(Capsule().fill(color.opacity(0.14)))
     }
 }
