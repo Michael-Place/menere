@@ -7,6 +7,13 @@ minimal public-launch hardening).
 
 For the full pivot plan, phase history, and decisions, see **`ROADMAP-family.md`**.
 
+**Act II (planned, not started):** a full personal-era roadmap — new visual identity
+(replacing parchment/wine on family surfaces), Today dashboard, Family Brain (AI document
+vault), care hub (house/plants/pets), kids' memory log, smart home. The family: Michael,
+Valentina, Oliver (3), Francis ("**Famfis**" — Oliver's pronunciation, used in copy), dogs
+Fajita & Sprinkle. Copy voice everywhere: **warm + witty, first names**. See the Act II
+section of `ROADMAP-family.md` before building anything new.
+
 ## Repository layout
 Monorepo. **Repo root is here** (git remote `git@github.com:Michael-Place/menere.git`, branch
 `main`); top-level docs (`CLAUDE.md`, `ROADMAP-family.md`) + `.mcp.json` live at root. The iOS app

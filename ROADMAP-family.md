@@ -126,7 +126,184 @@ Remaining (Postmark dashboard, your account):
 3. Families forward mail to `<serverhash>+<THEIR-INVITE-CODE>@inbound.postmarkapp.com`.
 (Attachment/PDF/ICS parsing not included yet — text bodies only.)
 
-## Phases
+---
+
+# Act II — Make it *ours* (the personal era)
+
+Act I built a working family hub. Act II makes it unmistakably the **Place family's**
+app: Michael, Valentina, Oliver (3), Francis — known as **"Famfis"** (Oliver's
+pronunciation; use it in copy) — plus dogs **Fajita & Sprinkle**.
+
+Planned 2026-07-01 with Michael. Direction locked in conversation:
+
+- **Identity: something new entirely.** Do NOT extend "Cellar & Candlelight"
+  (parchment/wine/serif) to family surfaces — it was designed for wine and stays in
+  the Cellar stack. New identity is designed from the family's character: music/vinyl,
+  plants & landscaping, cooking, two small boys.
+- **Motion: playful throughout.** Springy transitions, character everywhere, haptics
+  on everything. Oliver watches chore check-offs — celebrations are for him too.
+- **Voice: warm + witty, first names.** "Valentina checked off milk", "Famfis
+  approves this dinner", "The monstera is thirsty — it's been 3 days."
+- **Priority modules** (Michael's picks): Plants & garden · Home & cleaning ops ·
+  Kids' milestones & memory log · Smart home · **Family Brain** (AI document vault) ·
+  **Pets** (Fajita & Sprinkle). Record collection explicitly parked (the Cellar
+  pattern maps 1:1 onto Discogs whenever wanted).
+
+## Open questions (re-ask Michael before the relevant phase)
+
+1. **Smart-home stack** — HomeKit-centric, Home Assistant, or mixed? Blocks P12
+   design; everything else is stack-agnostic.
+2. **Does "Menere" have an origin story?** Feeds the P5 wordmark/brand meaning.
+   Default: keep the name, give it meaning during identity work.
+
+## Architectural spine (decide once, reuse everywhere)
+
+Three Act I assets carry most of Act II — new phases should *reuse*, not reinvent:
+
+1. **The scan pipeline** (VisionKit capture → Claude/FM vision → structured card
+   with provenance) generalizes from wine labels to **documents** (P7) and
+   **plant ID** (P9).
+2. **The recurrence engine** (client-side `occurrences(from:to:)`) generalizes from
+   events/chores to **care schedules** (P8–P10).
+3. **The Postmark email pipeline** (`receiveEmail` → Claude extraction) generalizes
+   from calendar events to **document intake via forwarded attachments** (P7.3).
+
+One NEW shared primitive, introduced at P8 and reused by P9/P10:
+
+- **`CareItem` / `CareTask`** (in `FamilyDomain`): a *thing that needs recurring
+  care* — a plant, a pet, an HVAC filter, a room. `CareItem { id, kind (plant/pet/
+  house/zone), name, photo, location, schedule: [CareTask] }`;
+  `CareTask { title, interval, lastDoneAt, lastDoneBy, dueAt }`. Distinct from kid
+  chores (no XP by default; an XP bridge is a possible later add-on). "What's due"
+  queries power the Today dashboard. Firestore: `households/{hid}/careItems/{id}`.
+
+And one connective-tissue rule: **Family Brain documents link to entities.** A
+`Document` can reference member(s), pet(s), or care items. A vaccination record
+*is* a document linked to Sprinkle with an `expiryDate` → the reminder falls out
+for free. Doctor paperwork links to Famfis → appears on his timeline (P11).
+
+## IA evolution
+
+- **P6:** add **Today** as the first tab → Today · Calendar · Lists · Chores · Kitchen.
+- **P8:** Chores tab becomes **Home** — sections: Chores & XP (unchanged), House ops,
+  and later Plants (P9) and Pets (P10). Recent Activity stays here.
+- **Family Brain** is not a tab: a **search icon in the top-right toolbar on every
+  tab** (search *is* the product) + a "Documents" library row pinned in Lists,
+  sibling to Cellar.
+- Wine stays where it is (pinned Cellar row under Lists, parchment interior).
+
+## Act II phases
+
+### P5 — Identity: the reskin + voice pass
+The highest-leverage phase; transforms every existing screen before anything new
+is added.
+- **New theme layer** alongside the wine tokens (they stay for Cellar):
+  `FamilyTheme` — warm daylight cream base (not antique parchment), core palette of
+  **botanical green / terracotta / marigold**; code-defined dynamic light/dark
+  `UIColor` tokens, same pattern as today. Concept: *record-sleeve boldness meets
+  sunroom botanicals* — chunky rounded display type for headers (record-label
+  energy), SF Rounded for UI, sticker/patch-styled icons and badges.
+- **Four owned member colors.** Michael, Valentina, Oliver, Famfis each own a fixed
+  color used everywhere (avatars, calendar dots, chore rows, leaderboard, confetti).
+  Implementation: keep the `MemberColor` enum/palette (guests, future members);
+  seed/lock the four members' choices; design the four to be maximally
+  distinguishable and semantically "theirs" (pick with Michael & Valentina in P5).
+- **Voice pass:** a copy sweep of every empty state, notification body (functions:
+  `onEventCreated`/`onChoreToggled`/`onListItemChecked`/`receiveEmail`), alert, and
+  celebration into warm+witty first-name voice. Centralize strings worth reusing.
+- **Signature motion** (playful throughout): sticker-slap chore check-off, member-
+  color confetti level-up, springy tab/nav transitions, generous haptics. Named
+  springs pattern (`.menereSnappy`/`.menereBouncy`) already exists — extend it.
+- **Wordmark/meaning:** resolve open question 2; new app icon.
+- Cellar interior keeps parchment; the seam is the push from the Lists row.
+
+### P6 — Today dashboard (the family's front door)
+New first tab. Time-of-day greeting ("Tuesday morning at the Place house"), then
+stacked cards, each tappable through to its module:
+- **Today's events** (calendar, member color dots) · **Dinner tonight** (meal plan)
+  · **Chores due today** grouped by member · **Care due** (plants/pets/house —
+  appears as P8–P10 land) · **This week glance**.
+- Quick-add row: event / list item / memory (P11) / scan a document (P7).
+- Empty day: "Nothing scheduled — a rare quiet day."
+- Pure aggregation over existing observers/fetches; no new backend.
+
+### P7 — Family Brain v1 (documents)
+Upload anything — receipt, doctor paperwork, school form, appliance manual — AI
+breaks it down, tags it, makes it searchable. **The family's second brain.**
+- **Model** (`FamilyDomain`): `Document { id, title, type (receipt/medical/school/
+  pet/tax/manual/other), tags[], linkedMemberIds[], linkedPetIds[], docDate,
+  dueDate?, expiryDate?, amount?, vendor?, summary, extractedText, storagePath,
+  thumbnailPath, uploadedBy, createdAt }`. Firestore `households/{hid}/documents`;
+  files in Storage under `households/{hid}/documents/` (member-gated rules — extend
+  `storage.rules` the same way Firestore rules gate by the members array).
+- **Intake, in build order:** (1) **VisionKit document scanner** in-app (the
+  kitchen-counter flow — same muscle as the wine label scan) + PhotosPicker/Files
+  picker; (2) **share extension** (PDF/image/screenshot from Mail, Safari, Messages);
+  (3) **email attachments** — extend `receiveEmail` to ingest Postmark attachments.
+- **Processing:** `processDocument` Cloud Function (callable, reuses
+  `ANTHROPIC_API_KEY`): Claude vision over page images / PDF → the structured
+  fields above + a one-line summary + suggested tags. Provenance-badge the AI
+  fields, same as wine enrichment.
+- **Search:** at family scale, no vector DB — load the doc index (title, tags,
+  summary, extractedText) into the client and full-text search locally; filter by
+  type/tag/person/pet/date. Search lives in the toolbar on every tab.
+- **Actions from documents:** detected `dueDate`/appointment → suggest a calendar
+  event (one tap to accept); `expiryDate` → scheduled reminder push (small
+  scheduled function or client-side check on the Today view — start client-side).
+
+### P8 — Home care hub (Chores tab → "Home")
+Michael's cleaning penchant + house maintenance, distinct from kid chores.
+- Introduce the **`CareItem`/`CareTask` primitive** (see spine) with `kind: house/zone`.
+- Seed templates: HVAC filters (90d), gutters (seasonal), deep-clean rotation by
+  room, laundry cycles (Valentina's domain, her color on it).
+- **House health view:** what's overdue / due this week / all caught-up state worth
+  celebrating ("The house is happy.").
+- Tab rename Chores → **Home**; chores/XP/rewards/leaderboard unchanged within it.
+
+### P9 — Plants & garden
+- `CareItem(kind: plant)`: photo, species, indoor location or yard zone, water/feed
+  intervals, "last watered by Michael, Tuesday."
+- **Plant ID via the scan pipeline:** photograph a plant → FM/Claude → species +
+  suggested care schedule, provenance-badged, editable.
+- **Seasonal yard templates** (spring mulch, fall cleanup, pruning windows) via the
+  recurrence engine.
+- Thirsty plants surface on Today; watering gets a leaf-unfurl moment.
+
+### P10 — Pets: Fajita & Sprinkle
+- **Pet profiles** (`CareItem(kind: pet)` + pet-specific fields): photo, birthday,
+  breed, vet contact, weight log.
+- **Care schedules:** meds, heartworm/flea-tick, grooming, nail trims — CareTasks.
+- **Vet & vaccination records = Family Brain documents** linked to the pet:
+  scan the vet paperwork → typed `pet` + linked to Fajita → `expiryDate` on the
+  rabies cert → "Sprinkle's rabies vaccine expires in 30 days" falls out of P7
+  machinery. Pet profile shows its document timeline.
+
+### P11 — Kids' memory log (Oliver & Famfis)
+The module that appreciates every year. "Famfis" itself is the proof: the kind of
+thing that vanishes if nobody writes it down.
+- `Memory { kidIds, kind (quote/milestone/photo/note), text, photoPaths, date }`;
+  Storage + polaroid UI (`PolaroidFrame` exists), timeline per kid, quick-capture
+  from Today. Linked Brain documents (scanned artwork!) appear on the timeline.
+
+### P12 — Smart home  ⛔ blocked on open question 1
+Design behind a `HomeStateClient` dependency either way.
+- **HomeKit path:** HomeKit framework in-app; device/scene states on Today; presence.
+- **Home Assistant path:** HA REST/WebSocket + webhooks into Cloud Functions —
+  richer automations (dishwasher done → chore prompt; sound machine status on Today).
+
+### Side quest (anytime after P5) — Oliver mode
+Activate the dormant `.child` role: picture-based chore board, huge tap targets,
+maximum celebration. He's 3½ — exactly the age it lands. Additive by design (P0
+kept the enum for this).
+
+## Small-wins backlog (dormant bits, slot into any phase)
+List icon/color picker UI · list-item due dates in UI · reward icon picker ·
+redemption history screen · `longestStreak` on leaderboard · ingredient qty/unit
+manual entry · breakfast/lunch meal slots · show `appVersion` in Settings.
+
+---
+
+## Act I phases (complete)
 
 ### P0 — Foundation (member profiles)  ✅ done
 Evolve the thin `Household` (members = bare UIDs) into a real roster.
