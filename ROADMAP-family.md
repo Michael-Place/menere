@@ -275,9 +275,13 @@ match-context snippets + type chips), document detail (async page rendering via 
 `StorageClient.downloadData`, title/type editing, full-text disclosure), idempotent
 dueDate→"Add to calendar", expiry countdown chips, "Needs attention" card on Today.
 P10 hooks ready: `DocumentType.pet`, `linkedPetIds`, `needsAttention`/`DocumentDateChip`.
-Known gap: upload→auto-process handoff is code-reviewed but first exercised on a real
-device (sim's PhotosPicker is unreachable by automation). Not yet built: email-forward
-+ share-extension intake (P7.3 spec) — natural follow-on chunk.
+The upload→auto-process handoff was verified on a REAL device 2026-07-02 (Michael's
+KinderCare scan: processed in 18s, type school, dueDate surfacing on Today).
+**P7.4 (same day, commit b05561e):** the library + detail are now LIVE-listener
+powered (`observeDocuments`, mirrors observeMemberStats; edit-stomp guard on detail;
+delete-elsewhere dismisses gracefully) — direct response to Michael's on-device
+feedback. Search + Today stay one-shot by design. Not yet built: email-forward +
+share-extension intake (P7.3 spec) — natural follow-on chunk.
 Upload anything — receipt, doctor paperwork, school form, appliance manual — AI
 breaks it down, tags it, makes it searchable. **The family's second brain.**
 - **Model** (`FamilyDomain`): `Document { id, title, type (receipt/medical/school/
