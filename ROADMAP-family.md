@@ -390,9 +390,16 @@ thing that vanishes if nobody writes it down.
 
 ### P12 — Smart home: Philips Hue, hyper-specific
 **Design refined with Michael 2026-07-02 (planning session):**
-- **Not another Hue client.** No pairing UI, no device browser, no settings screens.
-  Setup happens once in the dev chat (press link button → key minted → config
-  written); the app only consumes.
+- **Not another Hue client** — no device browser, no per-light controls, no generic
+  settings. BUT (Michael's correction #2, 2026-07-02): **bridge lifecycle DOES belong
+  in the app** — bridges die/get repurposed, and re-pairing must not require a dev
+  session. A minimal flow in the Settings sheet: bridge status, discover → link-button
+  30s countdown → key → config doc written (NowSpinning's pairing state machine ports
+  directly). **Re-pair preserves meaning:** rituals/sensor labels live in Firestore and
+  survive bridge death; scene/sensor IDs are re-bound BY NAME on the new bridge, with
+  a simple per-ritual scene picker for anything unmatched. First pairing happens
+  in-app on Michael's phone (already on the LAN) — the C0 chat-pairing session is
+  obsolete.
 - **Hybrid config/live split (Michael's correction to the original all-hardcoded
   pitch):** the Firestore config doc `households/{hid}/config/hue` holds IDENTITY —
   bridge address, app key, family mappings (room↔member, which scene is "Bedtime"/
