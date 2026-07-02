@@ -6,7 +6,8 @@ import Foundation
 public struct RitualPresentation: Equatable, Sendable, Identifiable {
     public let ritual: HueRitual
     public let isProminent: Bool
-    public var id: String { ritual.key }
+    /// Unique per (bridge, ritual) so two bridges' same-key rituals never collide in a ForEach.
+    public var id: String { ritual.id }
 
     public init(ritual: HueRitual, isProminent: Bool) {
         self.ritual = ritual

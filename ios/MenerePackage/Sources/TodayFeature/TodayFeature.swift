@@ -7,28 +7,46 @@ import MenereUI
 import PersistenceClient
 import UserDomain
 
-/// The live bridge snapshot behind the Today "house" card: the (possibly IP-corrected) config plus
-/// the rooms/lights/scenes/temps read from the bridge. Present only when the bridge was reachable;
-/// its absence *is* the "no card" state (not home, or never paired).
+/// The live snapshot behind the Today "house" card (P12-C3, multi-bridge): the config plus one
+/// `BridgeSnapshot` per **reachable** bridge. Present only when at least one bridge was reachable;
+/// its absence *is* the "no card" state (not home, or never paired). One unreachable bridge among
+/// several does not hide the card — its snapshot is simply missing from `bridges`.
 public struct HouseSnapshot: Equatable, Sendable {
     public var config: HueConfig
-    public var rooms: [HueRoom]
-    public var lights: [HueLight]
-    public var scenes: [HueScene]
-    public var temperatures: [HueTemperature]
+    /// Only the bridges that answered. `bridges.isEmpty` ⇢ no card.
+    public var bridges: [BridgeSnapshot]
 
-    public init(
-        config: HueConfig,
-        rooms: [HueRoom] = [],
-        lights: [HueLight] = [],
-        scenes: [HueScene] = [],
-        temperatures: [HueTemperature] = []
-    ) {
+    public init(config: HueConfig, bridges: [BridgeSnapshot]) {
         self.config = config
-        self.rooms = rooms
-        self.lights = lights
-        self.scenes = scenes
-        self.temperatures = temperatures
+        self.bridges = bridges
+    }
+
+    /// Rooms merged across every reachable bridge.
+    public var rooms: [HueRoom] { bridges.flatMap(\.rooms) }
+    /// Lights merged across every reachable bridge.
+    public var lights: [HueLight] { bridges.flatMap(\.lights) }
+    /// Scenes merged across every reachable bridge.
+    public var scenes: [HueScene] { bridges.flatMap(\.scenes) }
+    /// Which bridges are reachable right now (gates each ritual button on its own bridge).
+    public var reachableBridgeIds: Set<String> { Set(bridges.map(\.bridge.bridgeId)) }
+
+    /// Rituals whose owning bridge is reachable — the only ones that can render / recall.
+    public var recallableRituals: [HueRitual] {
+        let reachable = reachableBridgeIds
+        return config.rituals.filter { reachable.contains($0.bridgeId) }
+    }
+
+    /// (label, °F) for every labeled temperature sensor across bridges, scoped per-bridge so a
+    /// sensor id that recurs on two bridges never crosses labels. Sorted by label.
+    public var labeledTemperatures: [(label: String, tempF: Double)] {
+        bridges.flatMap { snap -> [(label: String, tempF: Double)] in
+            let labels = config.sensorLabels(for: snap.bridge.bridgeId)
+            return snap.temperatures.compactMap { t in
+                guard let label = labels[t.sensorId] else { return nil }
+                return (label, t.tempF)
+            }
+        }
+        .sorted { $0.label < $1.label }
     }
 }
 
@@ -342,39 +360,38 @@ public struct TodayReducer {
                     @Dependency(\.hue) var hue
                     // No config doc → no card (never paired). `hueConfig` already returns an
                     // Optional; `try?` flattens the throwing wrapper, so one unwrap suffices.
-                    guard let loaded = try? await persistence.hueConfig(hid) else {
+                    guard let config = try? await persistence.hueConfig(hid), !config.bridges.isEmpty else {
                         await send(.houseLoaded(nil)); return
                     }
-                    var config = loaded
 
-                    // Local-network-first reachability probe (short timeout). Unreachable → try a
-                    // single cloud rediscover to heal an IP drift, retry once, and persist the fix.
-                    var reachable = (try? await hue.testConnection(config)) ?? false
-                    if !reachable,
-                       let freshIP = try? await hue.rediscover(config.bridgeId),
-                       freshIP != config.bridgeIP {
-                        config.bridgeIP = freshIP
-                        reachable = (try? await hue.testConnection(config)) ?? false
-                        if reachable { try? await persistence.updateHueBridgeIP(hid, freshIP) }
+                    // Fan reads across ALL bridges concurrently, each independently resilient — one
+                    // unreachable bridge never hides another's data.
+                    var snapshots = await hue.readHouse(config.bridges)
+
+                    // For any bridge that DIDN'T answer, try a single cloud rediscover to heal an IP
+                    // drift, re-read, and persist the corrected `bridges` array on success.
+                    let reached = Set(snapshots.map(\.bridge.bridgeId))
+                    var healedBridges = config.bridges
+                    var didHeal = false
+                    for bridge in config.bridges where !reached.contains(bridge.bridgeId) {
+                        guard let freshIP = try? await hue.rediscover(bridge.bridgeId),
+                              freshIP != bridge.bridgeIP else { continue }
+                        var healed = bridge
+                        healed.bridgeIP = freshIP
+                        if let snapshot = try? await hue.readBridge(healed) {
+                            snapshots.append(snapshot)
+                            if let i = healedBridges.firstIndex(where: { $0.bridgeId == bridge.bridgeId }) {
+                                healedBridges[i].bridgeIP = freshIP
+                            }
+                            didHeal = true
+                        }
                     }
-                    // Still unreachable → "not home = no card".
-                    guard reachable else { await send(.houseLoaded(nil)); return }
+                    if didHeal { try? await persistence.updateHueBridges(hid, healedBridges) }
 
-                    // Polite serial batch (one small fan-in, not per-device fan-out). Each read
-                    // degrades to empty on failure — the card shows stale/partial rather than error.
-                    let active = config
-                    async let rooms = hue.rooms(active)
-                    async let lights = hue.lights(active)
-                    async let scenes = hue.scenes(active)
-                    async let temps = hue.temperatures(active)
-                    let snapshot = HouseSnapshot(
-                        config: active,
-                        rooms: (try? await rooms) ?? [],
-                        lights: (try? await lights) ?? [],
-                        scenes: (try? await scenes) ?? [],
-                        temperatures: (try? await temps) ?? []
-                    )
-                    await send(.houseLoaded(snapshot))
+                    // No bridge reachable → "not home = no card".
+                    guard !snapshots.isEmpty else { await send(.houseLoaded(nil)); return }
+                    snapshots.sort { $0.bridge.bridgeId < $1.bridge.bridgeId }
+                    await send(.houseLoaded(HouseSnapshot(config: config, bridges: snapshots)))
                 }
                 .cancellable(id: CancelID.house, cancelInFlight: true)
 
@@ -383,12 +400,14 @@ public struct TodayReducer {
                 return .none
 
             case let .recallRitual(ritual):
-                guard let config = state.house?.config, state.recallingRitual == nil else { return .none }
+                // Route the recall to the ritual's OWN bridge; ignore if that bridge isn't paired.
+                guard let bridge = state.house?.config.bridge(ritual.bridgeId),
+                      state.recallingRitual == nil else { return .none }
                 state.recallingRitual = ritual.key
                 return .run { send in
                     @Dependency(\.hue) var hue
                     // Best-effort: recall failures degrade silently (the card never shows errors).
-                    try? await hue.recallScene(config, ritual.groupId, ritual.sceneId)
+                    try? await hue.recallScene(bridge, ritual.groupId, ritual.sceneId)
                     await send(.ritualRecallFinished(key: ritual.key))
                 }
 

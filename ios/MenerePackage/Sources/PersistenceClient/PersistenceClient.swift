@@ -109,9 +109,9 @@ public struct PersistenceClient: Sendable {
     /// (never paired). Decode-safe: a partial/hand-written doc still resolves. Reading it is the
     /// cheap gate for the Today "house" card — no doc, no card.
     public var hueConfig: @Sendable (_ hid: String) async throws -> HueConfig?
-    /// Merge a corrected bridge IP back into the config doc after cloud rediscovery healed an
-    /// IP drift (leaves every other field untouched).
-    public var updateHueBridgeIP: @Sendable (_ hid: String, _ bridgeIP: String) async throws -> Void
+    /// Merge a corrected `bridges` array back into the config doc after cloud rediscovery healed an
+    /// IP drift on one or more bridges (leaves rituals / sensor maps untouched).
+    public var updateHueBridges: @Sendable (_ hid: String, _ bridges: [HueBridgeConfig]) async throws -> Void
     /// Full-document write of the Hue config (P12-C2 pairing / re-pairing). Not a merge — the whole
     /// `households/{hid}/config/hue` doc is replaced, so fields dropped since a prior write (e.g. a
     /// `mock` flag from the C1 fixture) actually clear.
@@ -393,9 +393,10 @@ extension PersistenceClient: DependencyKey {
                 guard let d = s.data() else { return nil }
                 return try Firestore.Decoder().decode(HueConfig.self, from: d)
             },
-            updateHueBridgeIP: { hid, bridgeIP in
+            updateHueBridges: { hid, bridges in
+                let encoded = try bridges.map { try Firestore.Encoder().encode($0) }
                 try await households().document(hid).collection("config").document("hue").setData(
-                    ["bridgeIP": bridgeIP], merge: true
+                    ["bridges": encoded], merge: true
                 )
             },
             saveHueConfig: { hid, config in

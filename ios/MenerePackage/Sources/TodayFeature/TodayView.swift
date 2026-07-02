@@ -471,14 +471,8 @@ public struct TodayView: View {
     /// "Famfis's room 72° · Oliver's room 71°" from the config's sensor labels, or nil when no
     /// labeled temperature sensor reported. Only labeled sensors show (unlabeled ones are noise).
     private func temperatureLine(_ house: HouseSnapshot) -> String? {
-        let labels = house.config.sensorLabels
-        let parts = house.temperatures
-            .compactMap { t -> (label: String, tempF: Double)? in
-                guard let label = labels[t.sensorId] else { return nil }
-                return (label, t.tempF)
-            }
-            .sorted { $0.label < $1.label }
-            .map { "\($0.label) \(Int($0.tempF.rounded()))°" }
+        // Labels are already merged per-bridge by `HouseSnapshot.labeledTemperatures`.
+        let parts = house.labeledTemperatures.map { "\($0.label) \(Int($0.tempF.rounded()))°" }
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
 
@@ -498,8 +492,9 @@ public struct TodayView: View {
     /// Ordered, prominence-tagged ritual buttons — the pure `HueRitualLayout` rule (Bedtime
     /// evening-first/filled; Dinner filled when tonight is home-cooked).
     private func ritualPresentations(_ house: HouseSnapshot) -> [RitualPresentation] {
+        // Only rituals whose OWN bridge is reachable can render (P12-C3).
         HueRitualLayout.ordered(
-            rituals: house.config.rituals,
+            rituals: house.recallableRituals,
             now: Date(),
             homeCookedDinner: isTonightHomeCooked
         )

@@ -1,8 +1,48 @@
+import FamilyDomain
 import Foundation
 
 // Client-surface value types for the "house" card. These describe *live* bridge state (rooms,
 // lights, scenes, sensor temps) — the identity/mapping half lives in `FamilyDomain.HueConfig`.
 // All are Foundation-clean, Sendable, and Equatable so they flow through TCA state.
+
+/// A freshly-paired bridge's identity + friendly name, read from `/config` during pairing (P12-C3).
+/// The name (e.g. "Downstairs Hub") is stored in `HueBridgeConfig.name` and shown in Settings.
+public struct HueBridgeInfo: Equatable, Sendable {
+    public let id: String
+    public let name: String
+
+    public init(id: String, name: String) {
+        self.id = id
+        self.name = name
+    }
+}
+
+/// One reachable bridge's live state, produced by `HueClient.readBridge`. The Today "house" card
+/// aggregates these across all reachable bridges (P12-C3): temps merge, lights sum, and each
+/// ritual's button renders only when *its* bridge produced a snapshot.
+public struct BridgeSnapshot: Equatable, Sendable, Identifiable {
+    public var bridge: HueBridgeConfig
+    public var rooms: [HueRoom]
+    public var lights: [HueLight]
+    public var scenes: [HueScene]
+    public var temperatures: [HueTemperature]
+
+    public var id: String { bridge.bridgeId }
+
+    public init(
+        bridge: HueBridgeConfig,
+        rooms: [HueRoom] = [],
+        lights: [HueLight] = [],
+        scenes: [HueScene] = [],
+        temperatures: [HueTemperature] = []
+    ) {
+        self.bridge = bridge
+        self.rooms = rooms
+        self.lights = lights
+        self.scenes = scenes
+        self.temperatures = temperatures
+    }
+}
 
 /// A Hue V1 group we treat as a room/zone.
 public struct HueRoom: Equatable, Sendable, Identifiable {

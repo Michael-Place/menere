@@ -19,15 +19,21 @@ public struct HuePairingReducer {
     public struct State: Equatable {
         /// Household id the config is written under.
         public var hid: String
-        /// The current config when re-pairing (nil on first pairing). Supplies ritual labels +
-        /// sensorNames to carry forward, and its `roomOwners` are preserved on save.
+        /// The current config, present whenever the household already has ≥1 paired bridge. Supplies
+        /// the other bridges to preserve, ritual labels + sensorNames to carry forward, and
+        /// `roomOwners`. Nil only on the very first pairing.
         public var existingConfig: HueConfig?
+        /// The bridge being **re-paired** (its old entry + rituals + sensors are replaced on save).
+        /// Nil when *adding* a brand-new bridge (append) or first-pairing.
+        public var repairingBridgeId: String?
 
         var step: Step = .discovering
         var bridges: [DiscoveredBridge] = []
         var selectedBridge: DiscoveredBridge?
         var applicationKey: String?
         var bridgeId: String?
+        /// The freshly-paired bridge's friendly name (from `/config`), stored in the config.
+        var bridgeName: String?
         var countdown: Int = 0
         var errorMessage: String?
 
@@ -38,9 +44,16 @@ public struct HuePairingReducer {
         /// Ritual key whose scene picker is open (nil = closed).
         var pickingSceneFor: String?
 
-        public init(hid: String, existingConfig: HueConfig? = nil) {
+        public init(hid: String, existingConfig: HueConfig? = nil, repairingBridgeId: String? = nil) {
             self.hid = hid
             self.existingConfig = existingConfig
+            self.repairingBridgeId = repairingBridgeId
+        }
+
+        /// Bridge ids the discovery list must hide — every already-paired bridge EXCEPT the one being
+        /// re-paired (you can't pair the same bridge twice, but you can re-pair it).
+        var excludedBridgeIds: Set<String> {
+            Set((existingConfig?.bridges ?? []).map(\.bridgeId)).subtracting(repairingBridgeId.map { [$0] } ?? [])
         }
 
         public enum Step: Equatable {
@@ -81,7 +94,7 @@ public struct HuePairingReducer {
         case pollAuthenticate
         case pollTick
         case keyMinted(String)
-        case bindingDataLoaded(bridgeId: String, scenes: [HueScene], sensors: [HueSensorInfo])
+        case bindingDataLoaded(bridgeId: String, bridgeName: String, scenes: [HueScene], sensors: [HueSensorInfo])
         case pairingFailed(String)
         case retryTapped
         case sceneSelected(ritualKey: String, scene: HueScene)
@@ -122,11 +135,17 @@ public struct HuePairingReducer {
                     }
                 }
 
-            case let .bridgesDiscovered(bridges):
+            case let .bridgesDiscovered(discovered):
+                // Hide bridges already paired (can't pair the same bridge twice); a re-pair keeps its
+                // own bridge visible.
+                let excluded = state.excludedBridgeIds
+                let bridges = discovered.filter { !excluded.contains($0.id) }
                 state.bridges = bridges
                 if bridges.isEmpty {
                     state.step = .failed
-                    state.errorMessage = "No Hue bridge found on this network. Make sure you're home and on the same Wi-Fi."
+                    state.errorMessage = discovered.isEmpty
+                        ? "No Hue bridge found on this network. Make sure you're home and on the same Wi-Fi."
+                        : "Every bridge on this network is already paired."
                     return .none
                 } else if bridges.count == 1 {
                     return .send(.bridgeSelected(bridges[0]))   // auto-advance
@@ -175,12 +194,13 @@ public struct HuePairingReducer {
                 guard let ip = state.selectedBridge?.ip else { return .none }
                 return .run { send in
                     do {
-                        let bridgeId = try await hue.bridgeInfo(ip, key)
-                        let probe = HueConfig(bridgeId: bridgeId, bridgeIP: ip, applicationKey: key)
+                        let info = try await hue.bridgeInfo(ip, key)
+                        let probe = HueBridgeConfig(bridgeId: info.id, bridgeIP: ip, applicationKey: key)
                         async let scenes = hue.scenes(probe)
                         async let sensors = hue.sensors(probe)
                         await send(.bindingDataLoaded(
-                            bridgeId: bridgeId,
+                            bridgeId: info.id,
+                            bridgeName: info.name,
                             scenes: (try? await scenes) ?? [],
                             sensors: (try? await sensors) ?? []
                         ))
@@ -190,10 +210,13 @@ public struct HuePairingReducer {
                 }
                 .cancellable(id: CancelID.pairing, cancelInFlight: true)
 
-            case let .bindingDataLoaded(bridgeId, scenes, sensors):
+            case let .bindingDataLoaded(bridgeId, bridgeName, scenes, sensors):
                 state.bridgeId = bridgeId
+                state.bridgeName = bridgeName
                 state.scenes = scenes
-                state.ritualBindings = Self.initialBindings(existing: state.existingConfig, scenes: scenes)
+                state.ritualBindings = Self.initialBindings(
+                    existing: state.existingConfig, repairingBridgeId: state.repairingBridgeId, scenes: scenes
+                )
                 state.sensorDrafts = Self.initialSensorDrafts(sensors: sensors, existing: state.existingConfig)
                 state.step = .binding
                 return .none
@@ -256,16 +279,27 @@ public struct HuePairingReducer {
 
     // MARK: - Pure binding helpers
 
-    /// The rituals to offer at binding time: the two standards, unioned with any rituals the old
-    /// config already had (old labels win), each auto-matched against the new bridge's scenes. The
-    /// old scene/group IDs are deliberately discarded — only the *label* (meaning) carries over, and
-    /// the ID is re-bound by name on the new bridge.
-    static func initialBindings(existing: HueConfig?, scenes: [HueScene]) -> [RitualBinding] {
-        var rituals: [(key: String, label: String)] = (existing?.rituals ?? []).map { ($0.key, $0.label) }
-        for standard in HueBindingMatch.standardRituals where !rituals.contains(where: { $0.key == standard.key }) {
-            rituals.append(standard)
+    /// The rituals to offer at binding time for the bridge being paired, auto-matched against its
+    /// scenes. Multi-bridge rules (P12-C3):
+    ///  • **Re-pair** carries forward the re-paired bridge's own rituals (label = meaning survives;
+    ///    scene/group IDs are re-bound by name).
+    ///  • A **standard** ritual (bedtime/dinner) is offered only when it isn't already bound on
+    ///    *another* bridge — so adding a second bridge offers the still-unbound standards (exactly
+    ///    Michael's flow: Bedtime, unbound downstairs, gets offered against the upstairs bridge).
+    static func initialBindings(existing: HueConfig?, repairingBridgeId: String?, scenes: [HueScene]) -> [RitualBinding] {
+        let allRituals = existing?.rituals ?? []
+        // Standard rituals owned by a bridge we're NOT re-pairing are off-limits here.
+        let ownedElsewhere = Set(allRituals.filter { $0.bridgeId != repairingBridgeId }.map(\.key))
+
+        var offered: [(key: String, label: String)] = allRituals
+            .filter { repairingBridgeId != nil && $0.bridgeId == repairingBridgeId }
+            .map { ($0.key, $0.label) }
+        for standard in HueBindingMatch.standardRituals
+        where !offered.contains(where: { $0.key == standard.key }) && !ownedElsewhere.contains(standard.key) {
+            offered.append(standard)
         }
-        return rituals.map { ritual in
+
+        return offered.map { ritual in
             let match = HueBindingMatch.matchScene(key: ritual.key, label: ritual.label, in: scenes)
             return RitualBinding(
                 key: ritual.key,
@@ -288,37 +322,52 @@ public struct HuePairingReducer {
         }
     }
 
-    /// Assemble the config doc to write. Only fully-bound rituals become `HueRitual`s (an unbound
-    /// ritual simply won't render on Today). `sensorNames` captures *every* sensor's bridge name for
-    /// future re-matching; `sensorLabels` only the ones the user actually labeled. `roomOwners` is
-    /// preserved from the old config; `mock` is omitted (nil) — this is a real bridge now.
+    /// Assemble the config doc to write — **appending** this bridge to any existing config (or
+    /// replacing it on a re-pair), never clobbering the OTHER bridges' entries. Only fully-bound
+    /// rituals become `HueRitual`s (an unbound ritual simply won't render on Today), each scoped to
+    /// this bridge's id. `sensorNames`/`sensorLabels` are nested under the bridge id. Other bridges'
+    /// rituals + sensor maps + `roomOwners` are preserved verbatim.
     static func buildConfig(_ state: State) -> HueConfig? {
         guard let bridgeId = state.bridgeId,
               let ip = state.selectedBridge?.ip,
               let key = state.applicationKey else { return nil }
 
-        let rituals: [HueRitual] = state.ritualBindings.compactMap { binding in
+        // Ids whose old entries this pairing supersedes: the freshly-paired id (re-pair, same id) and
+        // the explicitly re-paired id (re-pair, new id).
+        let supersededIds: Set<String> = Set([bridgeId, state.repairingBridgeId].compactMap { $0 })
+
+        let newBridge = HueBridgeConfig(bridgeId: bridgeId, bridgeIP: ip, applicationKey: key, name: state.bridgeName, mock: nil)
+        var bridges = (state.existingConfig?.bridges ?? []).filter { !supersededIds.contains($0.bridgeId) }
+        bridges.append(newBridge)
+
+        // Preserve other bridges' rituals; add this bridge's newly-bound ones (scoped to its id).
+        var rituals = (state.existingConfig?.rituals ?? []).filter { !supersededIds.contains($0.bridgeId) }
+        rituals += state.ritualBindings.compactMap { binding in
             guard let sceneId = binding.sceneId, let groupId = binding.groupId else { return nil }
-            return HueRitual(key: binding.key, label: binding.label, sceneId: sceneId, groupId: groupId)
+            return HueRitual(key: binding.key, label: binding.label, sceneId: sceneId, groupId: groupId, bridgeId: bridgeId)
         }
 
-        var sensorLabels: [String: String] = [:]
-        var sensorNames: [String: String] = [:]
+        // Sensor maps: keep other bridges' entries; (re)write this bridge's under its id.
+        var sensorLabels = state.existingConfig?.sensorLabels ?? [:]
+        var sensorNames = state.existingConfig?.sensorNames ?? [:]
+        for id in supersededIds { sensorLabels.removeValue(forKey: id); sensorNames.removeValue(forKey: id) }
+
+        var thisLabels: [String: String] = [:]
+        var thisNames: [String: String] = [:]
         for draft in state.sensorDrafts {
-            sensorNames[draft.id] = draft.bridgeName
+            thisNames[draft.id] = draft.bridgeName
             let trimmed = draft.label.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !trimmed.isEmpty { sensorLabels[draft.id] = trimmed }
+            if !trimmed.isEmpty { thisLabels[draft.id] = trimmed }
         }
+        if !thisLabels.isEmpty { sensorLabels[bridgeId] = thisLabels }
+        if !thisNames.isEmpty { sensorNames[bridgeId] = thisNames }
 
         return HueConfig(
-            bridgeId: bridgeId,
-            bridgeIP: ip,
-            applicationKey: key,
+            bridges: bridges,
             rituals: rituals,
             roomOwners: state.existingConfig?.roomOwners,
             sensorLabels: sensorLabels,
-            sensorNames: sensorNames.isEmpty ? nil : sensorNames,
-            mock: nil
+            sensorNames: sensorNames.isEmpty ? nil : sensorNames
         )
     }
 }

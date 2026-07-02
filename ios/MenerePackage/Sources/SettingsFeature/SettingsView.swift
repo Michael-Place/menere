@@ -23,16 +23,18 @@ public struct SettingsReducer {
         var joinError: String?
         @Presents var profileEdit: ProfileEditReducer.State?
 
-        // MARK: Smart home (Hue, P12-C2)
+        // MARK: Smart home (Hue, P12-C3 — multi-bridge)
         /// The household's Hue config, or nil when never paired (→ the "Set up" row).
         var hueConfig: HueConfig?
-        /// Live reachability of the paired bridge: nil = still probing, true/false = result.
-        var hueReachable: Bool?
-        /// Live scenes from the bridge (for the ritual-row names + the rebind picker). Empty when
-        /// unreachable or not yet loaded.
-        var hueScenes: [HueScene] = []
-        /// The ritual key whose rebind scene-picker is open on the status view (nil = closed).
-        var huePickerRitualKey: String?
+        /// bridgeId → live reachability. A missing entry = still probing that bridge.
+        var hueBridgeReachable: [String: Bool] = [:]
+        /// bridgeId → live scenes (names the ritual bindings + feeds the rebind picker). Empty when
+        /// that bridge is unreachable.
+        var hueScenesByBridge: [String: [HueScene]] = [:]
+        /// The (bound) ritual whose rebind scene-picker is open (nil = closed).
+        var huePickerRitual: HueRitual?
+        /// The bridge pending a Remove confirmation (nil = none).
+        var removingBridge: HueBridgeConfig?
         @Presents var huePairing: HuePairingReducer.State?
 
         public init() {}
@@ -65,13 +67,17 @@ public struct SettingsReducer {
         case profileEdit(PresentationAction<ProfileEditReducer.Action>)
         case binding(BindingAction<State>)
 
-        // Smart home (Hue)
+        // Smart home (Hue, multi-bridge)
         case hueConfigLoaded(HueConfig?)
-        case hueProbeLoaded(reachable: Bool, scenes: [HueScene])
+        case hueBridgeProbed(bridgeId: String, reachable: Bool, scenes: [HueScene])
         case setupHueTapped
-        case rePairTapped
-        case hueRitualTapped(String?)
-        case hueSceneChosen(ritualKey: String, scene: HueScene)
+        case addBridgeTapped
+        case rePairBridgeTapped(String)
+        case removeBridgeTapped(HueBridgeConfig)
+        case confirmRemoveBridge(String)
+        case cancelRemoveBridge
+        case hueRitualTapped(HueRitual?)
+        case hueSceneChosen(ritual: HueRitual, scene: HueScene)
         case hueConfigResaved(HueConfig)
         case huePairing(PresentationAction<HuePairingReducer.Action>)
     }
@@ -131,46 +137,79 @@ public struct SettingsReducer {
 
             case let .hueConfigLoaded(config):
                 state.hueConfig = config
-                guard let config else {
-                    state.hueReachable = nil
-                    state.hueScenes = []
-                    return .none
-                }
-                state.hueReachable = nil   // "probing…"
-                return .run { send in
-                    @Dependency(\.hue) var hue
-                    let reachable = (try? await hue.testConnection(config)) ?? false
-                    let scenes = reachable ? ((try? await hue.scenes(config)) ?? []) : []
-                    await send(.hueProbeLoaded(reachable: reachable, scenes: scenes))
-                }
+                state.hueBridgeReachable = [:]
+                state.hueScenesByBridge = [:]
+                guard let config, !config.bridges.isEmpty else { return .none }
+                // Probe every bridge concurrently — each row's dot resolves independently.
+                return .merge(config.bridges.map { bridge in
+                    .run { send in
+                        @Dependency(\.hue) var hue
+                        let reachable = (try? await hue.testConnection(bridge)) ?? false
+                        let scenes = reachable ? ((try? await hue.scenes(bridge)) ?? []) : []
+                        await send(.hueBridgeProbed(bridgeId: bridge.bridgeId, reachable: reachable, scenes: scenes))
+                    }
+                })
 
-            case let .hueProbeLoaded(reachable, scenes):
-                state.hueReachable = reachable
-                state.hueScenes = scenes
+            case let .hueBridgeProbed(bridgeId, reachable, scenes):
+                state.hueBridgeReachable[bridgeId] = reachable
+                state.hueScenesByBridge[bridgeId] = scenes
                 return .none
 
-            case .setupHueTapped, .rePairTapped:
+            case .setupHueTapped, .addBridgeTapped:
                 @Shared(.user) var user
                 guard let hid = user?.householdId else { return .none }
+                // Append to any existing config; first pairing starts from nil.
                 state.huePairing = HuePairingReducer.State(hid: hid, existingConfig: state.hueConfig)
                 return .none
 
-            case let .hueRitualTapped(key):
-                state.huePickerRitualKey = key
+            case let .rePairBridgeTapped(bridgeId):
+                @Shared(.user) var user
+                guard let hid = user?.householdId else { return .none }
+                state.huePairing = HuePairingReducer.State(
+                    hid: hid, existingConfig: state.hueConfig, repairingBridgeId: bridgeId
+                )
                 return .none
 
-            case let .hueSceneChosen(ritualKey, scene):
-                state.huePickerRitualKey = nil
-                guard var config = state.hueConfig, let groupId = scene.groupId else { return .none }
-                let label = config.rituals.first(where: { $0.key == ritualKey })?.label
-                    ?? HueBindingMatch.standardRituals.first(where: { $0.key == ritualKey })?.label
-                    ?? ritualKey.capitalized
-                let ritual = HueRitual(key: ritualKey, label: label, sceneId: scene.id, groupId: groupId)
-                if let i = config.rituals.firstIndex(where: { $0.key == ritualKey }) {
-                    config.rituals[i] = ritual
-                } else {
-                    config.rituals.append(ritual)
+            case let .removeBridgeTapped(bridge):
+                state.removingBridge = bridge
+                return .none
+
+            case .cancelRemoveBridge:
+                state.removingBridge = nil
+                return .none
+
+            case let .confirmRemoveBridge(bridgeId):
+                state.removingBridge = nil
+                guard var config = state.hueConfig else { return .none }
+                // Drop the bridge AND everything scoped to it: its rituals + sensor maps.
+                config.bridges.removeAll { $0.bridgeId == bridgeId }
+                config.rituals.removeAll { $0.bridgeId == bridgeId }
+                config.sensorLabels.removeValue(forKey: bridgeId)
+                config.sensorNames?.removeValue(forKey: bridgeId)
+                if config.sensorNames?.isEmpty == true { config.sensorNames = nil }
+                state.hueConfig = config
+                state.hueBridgeReachable[bridgeId] = nil
+                state.hueScenesByBridge[bridgeId] = nil
+                @Shared(.user) var user
+                guard let hid = user?.householdId else { return .none }
+                return .run { [config] send in
+                    @Dependency(\.persistence) var persistence
+                    try? await persistence.saveHueConfig(hid, config)
+                    await send(.hueConfigResaved(config))
                 }
+
+            case let .hueRitualTapped(ritual):
+                state.huePickerRitual = ritual
+                return .none
+
+            case let .hueSceneChosen(ritual, scene):
+                state.huePickerRitual = nil
+                guard var config = state.hueConfig, let groupId = scene.groupId,
+                      let i = config.rituals.firstIndex(where: { $0.key == ritual.key && $0.bridgeId == ritual.bridgeId })
+                else { return .none }
+                config.rituals[i] = HueRitual(
+                    key: ritual.key, label: ritual.label, sceneId: scene.id, groupId: groupId, bridgeId: ritual.bridgeId
+                )
                 state.hueConfig = config
                 @Shared(.user) var user
                 guard let hid = user?.householdId else { return .none }
@@ -397,30 +436,48 @@ public struct SettingsView: View {
             HuePairingView(store: pairingStore)
         }
         .sheet(isPresented: Binding(
-            get: { store.huePickerRitualKey != nil },
+            get: { store.huePickerRitual != nil },
             set: { if !$0 { store.send(.hueRitualTapped(nil)) } }
         )) {
             hueScenePicker
         }
+        .confirmationDialog(
+            "Remove this bridge?",
+            isPresented: Binding(
+                get: { store.removingBridge != nil },
+                set: { if !$0 { store.send(.cancelRemoveBridge) } }
+            ),
+            titleVisibility: .visible,
+            presenting: store.removingBridge
+        ) { bridge in
+            Button("Remove \(bridge.displayName)", role: .destructive) {
+                store.send(.confirmRemoveBridge(bridge.bridgeId))
+            }
+            Button("Cancel", role: .cancel) { store.send(.cancelRemoveBridge) }
+        } message: { _ in
+            Text("Its rituals and room thermometers will be forgotten. Your other bridges stay put.")
+        }
         .task { store.send(.task) }
     }
 
-    // MARK: - Smart home (Hue, P12-C2)
+    // MARK: - Smart home (Hue, P12-C3 — multi-bridge)
 
     @ViewBuilder
     private var smartHomeSection: some View {
         Section {
-            if let config = store.hueConfig {
-                hueStatusRow(config)
+            if let config = store.hueConfig, !config.bridges.isEmpty {
+                ForEach(config.bridges) { bridge in
+                    hueBridgeRow(bridge)
+                }
                 Button {
-                    store.send(.rePairTapped)
+                    store.send(.addBridgeTapped)
                 } label: {
-                    Label("Re-pair bridge", systemImage: "arrow.triangle.2.circlepath")
+                    Label("Add a bridge", systemImage: "plus.circle")
                         .foregroundStyle(Color.ink)
                 }
-                .accessibilityIdentifier("hue-repair-row")
-                ForEach(hueRitualStates(config), id: \.key) { ritual in
-                    hueRitualRow(ritual)
+                .accessibilityIdentifier("hue-add-bridge-row")
+                ForEach(hueRitualStates(config), id: \.id) { ritual in
+                    hueRitualRow(ritual, showBridge: config.bridges.count > 1)
                 }
             } else {
                 Button {
@@ -434,29 +491,51 @@ public struct SettingsView: View {
         } header: {
             Text("Smart home")
         } footer: {
-            if store.hueConfig == nil {
+            if store.hueConfig?.bridges.isEmpty ?? true {
                 Text("Pair your Hue bridge to light up the house from Today.")
             }
         }
     }
 
-    private func hueStatusRow(_ config: HueConfig) -> some View {
+    /// One bridge row: name (+ id) + reachability dot, with swipe/context Re-pair + Remove actions.
+    private func hueBridgeRow(_ bridge: HueBridgeConfig) -> some View {
         HStack(spacing: 12) {
             Image(systemName: "wifi.router")
                 .foregroundStyle(Color.bacanGreen)
             VStack(alignment: .leading, spacing: 2) {
-                Text("Hue bridge").foregroundStyle(Color.ink)
-                Text(config.bridgeId).font(.caption).foregroundStyle(Color.inkSoft)
+                Text(bridge.displayName).foregroundStyle(Color.ink)
+                Text(bridge.bridgeId).font(.caption).foregroundStyle(Color.inkSoft)
             }
             Spacer()
-            hueReachabilityDot
+            hueReachabilityDot(bridge.bridgeId)
         }
-        .accessibilityIdentifier("hue-status-row")
+        .accessibilityIdentifier("hue-bridge-row-\(bridge.bridgeId)")
+        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+            Button(role: .destructive) {
+                store.send(.removeBridgeTapped(bridge))
+            } label: {
+                Label("Remove", systemImage: "trash")
+            }
+            Button {
+                store.send(.rePairBridgeTapped(bridge.bridgeId))
+            } label: {
+                Label("Re-pair", systemImage: "arrow.triangle.2.circlepath")
+            }
+            .tint(Color.bacanGreen)
+        }
+        .contextMenu {
+            Button { store.send(.rePairBridgeTapped(bridge.bridgeId)) } label: {
+                Label("Re-pair", systemImage: "arrow.triangle.2.circlepath")
+            }
+            Button(role: .destructive) { store.send(.removeBridgeTapped(bridge)) } label: {
+                Label("Remove", systemImage: "trash")
+            }
+        }
     }
 
     @ViewBuilder
-    private var hueReachabilityDot: some View {
-        switch store.hueReachable {
+    private func hueReachabilityDot(_ bridgeId: String) -> some View {
+        switch store.hueBridgeReachable[bridgeId] {
         case .some(true):
             HStack(spacing: 6) {
                 Circle().fill(Color.bacanGreen).frame(width: 8, height: 8)
@@ -465,43 +544,47 @@ public struct SettingsView: View {
         case .some(false):
             HStack(spacing: 6) {
                 Circle().fill(Color.inkSoft).frame(width: 8, height: 8)
-                Text("Bridge unreachable — are you home?").font(.caption).foregroundStyle(Color.inkSoft)
+                Text("Unreachable").font(.caption).foregroundStyle(Color.inkSoft)
             }
         case .none:
             ProgressView().controlSize(.mini)
         }
     }
 
-    private func hueRitualRow(_ ritual: HueRitualStatus) -> some View {
-        Button {
-            store.send(.hueRitualTapped(ritual.key))
+    private func hueRitualRow(_ ritual: HueRitualStatus, showBridge: Bool) -> some View {
+        let scenes = ritual.bridgeId.map { store.hueScenesByBridge[$0] ?? [] } ?? []
+        return Button {
+            if let bound = ritual.ritual { store.send(.hueRitualTapped(bound)) }
         } label: {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(ritual.label).foregroundStyle(Color.ink)
                     if let sceneName = ritual.sceneName {
-                        Text("→ \(sceneName)").font(.caption).foregroundStyle(Color.inkSoft)
+                        Text(showBridge ? "→ \(sceneName) · \(ritual.bridgeName ?? "")" : "→ \(sceneName)")
+                            .font(.caption).foregroundStyle(Color.inkSoft)
                     } else {
-                        Text("needs a scene").font(.caption).foregroundStyle(Color.terracotta)
+                        Text("needs a scene — pair a bridge").font(.caption).foregroundStyle(Color.terracotta)
                     }
                 }
                 Spacer()
-                if !store.hueScenes.isEmpty {
+                if ritual.ritual != nil, !scenes.isEmpty {
                     Image(systemName: "chevron.right").font(.caption).foregroundStyle(.secondary)
                 }
             }
         }
-        .disabled(store.hueScenes.isEmpty)
+        // Only bound rituals on a reachable bridge (scenes loaded) can be rebound here.
+        .disabled(ritual.ritual == nil || scenes.isEmpty)
+        .accessibilityIdentifier("hue-ritual-row-\(ritual.key)")
     }
 
     private var hueScenePicker: some View {
-        NavigationStack {
+        let ritual = store.huePickerRitual
+        let scenes = ritual.map { store.hueScenesByBridge[$0.bridgeId] ?? [] } ?? []
+        return NavigationStack {
             List {
-                ForEach(store.hueScenes) { scene in
+                ForEach(scenes) { scene in
                     Button {
-                        if let key = store.huePickerRitualKey {
-                            store.send(.hueSceneChosen(ritualKey: key, scene: scene))
-                        }
+                        if let ritual { store.send(.hueSceneChosen(ritual: ritual, scene: scene)) }
                     } label: {
                         VStack(alignment: .leading, spacing: 2) {
                             Text(scene.name).foregroundStyle(Color.ink)
@@ -524,16 +607,23 @@ public struct SettingsView: View {
         }
     }
 
-    /// One ritual's display state on the status view.
+    /// One ritual's display state on the settings list.
     private struct HueRitualStatus: Equatable {
         let key: String
         let label: String
+        /// The bound ritual (nil → unbound / "needs a scene"). Carries its bridgeId for the picker.
+        let ritual: HueRitual?
         /// The live scene name when bound + resolvable; nil → "needs a scene".
         let sceneName: String?
+        /// The owning bridge id (bound rituals only).
+        var bridgeId: String? { ritual?.bridgeId }
+        /// The owning bridge's display name (for the ">1 bridge" annotation).
+        let bridgeName: String?
+        var id: String { ritual?.id ?? key }
     }
 
     /// The rituals to list under a paired config: the two standards, unioned with any extra rituals
-    /// the config already carries, each resolved to its live scene name when bound.
+    /// the config carries, each resolved to its live scene name + owning bridge when bound.
     private func hueRitualStates(_ config: HueConfig) -> [HueRitualStatus] {
         var keys: [(key: String, label: String)] = HueBindingMatch.standardRituals
         for ritual in config.rituals where !keys.contains(where: { $0.key == ritual.key }) {
@@ -541,10 +631,14 @@ public struct SettingsView: View {
         }
         return keys.map { entry in
             if let bound = config.rituals.first(where: { $0.key == entry.key }) {
-                let name = store.hueScenes.first(where: { $0.id == bound.sceneId })?.name
-                return HueRitualStatus(key: entry.key, label: bound.label, sceneName: name ?? "scene set")
+                let name = (store.hueScenesByBridge[bound.bridgeId] ?? []).first(where: { $0.id == bound.sceneId })?.name
+                let bridgeName = config.bridge(bound.bridgeId)?.displayName
+                return HueRitualStatus(
+                    key: entry.key, label: bound.label, ritual: bound,
+                    sceneName: name ?? "scene set", bridgeName: bridgeName
+                )
             } else {
-                return HueRitualStatus(key: entry.key, label: entry.label, sceneName: nil)
+                return HueRitualStatus(key: entry.key, label: entry.label, ritual: nil, sceneName: nil, bridgeName: nil)
             }
         }
     }

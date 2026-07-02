@@ -41,14 +41,19 @@ public enum HueBindingMatch {
     /// else substring either way) and carry its old label forward. Empty string when there's nothing
     /// to carry (first pairing, or a genuinely new sensor).
     public static func prefillSensorLabel(for sensorName: String, from existing: HueConfig?) -> String {
-        guard let existing, let names = existing.sensorNames, !names.isEmpty else { return "" }
+        guard let existing, let byBridge = existing.sensorNames, !byBridge.isEmpty else { return "" }
+        // Multi-bridge (P12-C3): a re-paired/added bridge can carry a label from ANY old bridge's
+        // sensor of the same name — flatten (bridgeId, sensorId) → name across all bridges.
+        let names: [(bridgeId: String, sensorId: String, name: String)] = byBridge.flatMap { bridgeId, map in
+            map.map { (bridgeId, $0.key, $0.value) }
+        }
         let target = sensorName.lowercased()
-        let match = names.first { $0.value.lowercased() == target }
+        let match = names.first { $0.name.lowercased() == target }
             ?? names.first {
-                let old = $0.value.lowercased()
+                let old = $0.name.lowercased()
                 return target.contains(old) || old.contains(target)
             }
-        guard let (oldSensorId, _) = match else { return "" }
-        return existing.sensorLabels[oldSensorId] ?? ""
+        guard let match else { return "" }
+        return existing.sensorLabels[match.bridgeId]?[match.sensorId] ?? ""
     }
 }
