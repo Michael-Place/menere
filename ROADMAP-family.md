@@ -529,6 +529,30 @@ the ANTHROPIC_API_KEY and does single model calls.
   stays app-side (LAN).
 - Roomba/other devices: integrate when wanted; they arrive as tools in C1's registry.
 
+### P15 — The fleet: rest of the smart home (researched 2026-07-02)
+Same hyper-specific philosophy as Hue; each device = a client module + P14 agent
+tools. **Recommended order (Michael to confirm):**
+1. **Lutron shades** — LEAP protocol: LOCAL, button-press pairing (the Hue playbook
+   again); port from pylutron-caseta / lutron-leap-js / HA's integration. Works on
+   standard + Pro Caseta bridges and RadioRA3. Payoff: Bedtime ritual closes the
+   boys' shades + dims lights in one tap. OPEN QUESTION: which Lutron line (Caseta
+   vs RadioRA3)?
+2. **Sonos** — local UPnP (stable, LAN-first) or official cloud Control API.
+   Turntable-room / NowSpinning adjacency; Dinner's-ready gains a soundtrack.
+3. **Nest thermostat (+ camera EVENTS later)** — official Google SDM API, Device
+   Access program ($5 one-time individual), OAuth + Pub/Sub. Thermostat on the
+   house card ("set to 70"); camera streams are out of scope, motion/person/package
+   events are future signals.
+4. **Hubspace / Husky hose spigot** — NO official API; unofficial cloud
+   (aiohubspace / jdeath HA integration, username-password, ~30s polling,
+   rate-limited). Killer tie-in: P9 yard-care "water the beds" mark-done actually
+   opens the spigot.
+5. **Garage** — OPEN QUESTION: brand? If myQ: vendor killed 3rd-party access;
+   the path is a **ratgdo** board (~$45, local, wires into the opener). If
+   Tailwind/Meross/iSmartGate: direct API.
+These are the "layered signals" Michael predicted (2026-07-02) — real automations
+(shades+lights+thermostat+presence) emerge once several are in.
+
 ### Side quest (anytime after P5) — Oliver mode
 Activate the dormant `.child` role: picture-based chore board, huge tap targets,
 maximum celebration. He's 3½ — exactly the age it lands. Additive by design (P0
