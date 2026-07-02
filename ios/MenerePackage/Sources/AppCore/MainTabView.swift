@@ -96,7 +96,8 @@ public enum TabItem: Int, CaseIterable, Equatable {
         case .today: "Today"
         case .calendar: "Calendar"
         case .lists: "Lists"
-        case .chores: "Chores"
+        case .chores: "Home"           // P8: the Chores tab became the Home care hub (enum case
+                                       // kept `chores` to avoid churn — display-only rename).
         case .recipes: "Kitchen"
         }
     }
@@ -106,7 +107,7 @@ public enum TabItem: Int, CaseIterable, Equatable {
         case .today: "sun.max"
         case .calendar: "calendar"
         case .lists: "checklist"
-        case .chores: "checkmark.seal"
+        case .chores: "house"          // auto-fills to house.fill when the tab is selected
         case .recipes: "fork.knife"
         }
     }

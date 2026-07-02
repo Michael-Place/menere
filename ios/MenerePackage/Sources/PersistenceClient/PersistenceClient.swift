@@ -92,6 +92,13 @@ public struct PersistenceClient: Sendable {
     public var saveDocument: @Sendable (_ hid: String, _ doc: Document) async throws -> Void
     public var deleteDocument: @Sendable (_ hid: String, _ docID: String) async throws -> Void
 
+    // MARK: Home care (P8)
+    /// All care items in a household at `households/{hid}/careItems` (order not guaranteed;
+    /// callers sort by soonest-due).
+    public var careItems: @Sendable (_ hid: String) async throws -> [CareItem]
+    public var saveCareItem: @Sendable (_ hid: String, _ item: CareItem) async throws -> Void
+    public var deleteCareItem: @Sendable (_ hid: String, _ itemID: String) async throws -> Void
+
     // MARK: Activity feed
     /// Recent activity, newest first (capped at 50).
     public var activity: @Sendable (_ hid: String) async throws -> [ActivityItem]
@@ -333,6 +340,18 @@ extension PersistenceClient: DependencyKey {
             },
             deleteDocument: { hid, docID in
                 try await households().document(hid).collection("documents").document(docID).delete()
+            },
+            careItems: { hid in
+                let snapshot = try await households().document(hid).collection("careItems").getDocuments()
+                return try snapshot.documents.map { try Firestore.Decoder().decode(CareItem.self, from: $0.data()) }
+            },
+            saveCareItem: { hid, item in
+                try await households().document(hid).collection("careItems").document(item.id).setData(
+                    Firestore.Encoder().encode(item), merge: true
+                )
+            },
+            deleteCareItem: { hid, itemID in
+                try await households().document(hid).collection("careItems").document(itemID).delete()
             },
             activity: { hid in
                 let snapshot = try await households().document(hid).collection("activity")
