@@ -434,7 +434,7 @@ private struct ScanOnboardingView: View {
                         Text("Scan any bottle")
                             .font(.largeTitle.bold())
                             .multilineTextAlignment(.center)
-                        Text("Point at a wine and Menere identifies it from the label, then builds a bottle card you can save or rate.")
+                        Text("Point at a wine and Bacán identifies it from the label, then builds a bottle card you can save or rate.")
                             .font(.body)
                             .foregroundStyle(.secondary)
                             .multilineTextAlignment(.center)

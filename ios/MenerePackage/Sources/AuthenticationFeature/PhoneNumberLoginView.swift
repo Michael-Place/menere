@@ -121,14 +121,14 @@ struct PhoneNumberLoginView: View {
                             .foregroundStyle(.secondary)
                     }
                     .padding()
-                    .background(Color.surfaceMenere)
+                    .background(Color.familySurface)
                     .cornerRadius(10)
                 }
 
                 TextField("Enter your phone number", text: $store.credential.phoneNumber)
                     .keyboardType(.phonePad)
                     .padding()
-                    .background(Color.surfaceMenere)
+                    .background(Color.familySurface)
                     .cornerRadius(10)
 
                 Text("We will text to confirm your number. Standard message and data rates apply.")

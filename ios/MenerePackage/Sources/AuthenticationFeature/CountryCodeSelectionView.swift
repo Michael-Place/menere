@@ -61,6 +61,6 @@ struct CountryCodeSelectionView: View {
             .padding(.horizontal)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
-        .background(Color.parchment.ignoresSafeArea())
+        .background(Color.familyCanvas.ignoresSafeArea())
     }
 }

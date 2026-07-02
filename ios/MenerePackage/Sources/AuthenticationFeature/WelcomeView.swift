@@ -54,30 +54,30 @@ public struct WelcomeView: View {
 
     public var body: some View {
         ZStack {
-            WineMeshBackground()
+            FamilyMeshBackground()
                 .ignoresSafeArea()
 
             VStack(spacing: 0) {
                 Spacer()
 
                 VStack(spacing: 24) {
-                    Image(systemName: "wineglass")
-                        .font(.system(size: 52))
-                        .foregroundStyle(Color.candleGold)
-                        .shadow(color: .black.opacity(0.35), radius: 10, y: 4)
+                    Image(systemName: "house.fill")
+                        .font(.system(size: 48))
+                        .foregroundStyle(Color.marigold)
+                        .shadow(color: .black.opacity(0.15), radius: 8, y: 3)
 
                     VStack(spacing: 14) {
-                        Text("Menere")
-                            .font(.system(size: 44, design: .serif))
-                            .tracking(6)
-                            .foregroundStyle(Color.parchment)
-                            .shadow(color: .black.opacity(0.4), radius: 8, y: 2)
+                        // Hero wordmark — chunky rounded heavy ("record-label energy"),
+                        // scaled up from the `.familyDisplay()` ramp for a landing hero.
+                        Text("Bacán")
+                            .font(.system(size: 64, weight: .heavy, design: .rounded))
+                            .foregroundStyle(Color.bacanGreen)
+                            .shadow(color: .black.opacity(0.12), radius: 6, y: 2)
 
-                        Text("Every bottle, remembered.")
-                            .font(.system(.title3, design: .serif).italic())
-                            .foregroundStyle(Color.parchment.opacity(0.85))
+                        Text("Our house, in your pocket.")
+                            .font(.system(.title3, design: .rounded).weight(.medium))
+                            .foregroundStyle(Color.ink.opacity(0.75))
                             .multilineTextAlignment(.center)
-                            .shadow(color: .black.opacity(0.3), radius: 6, y: 1)
                     }
                 }
                 .opacity(appeared ? 1 : 0)
@@ -93,21 +93,21 @@ public struct WelcomeView: View {
                         VStack(spacing: 4) {
                             Text("Get Started")
                                 .font(.headline)
-                            Text("Create your free account")
+                            Text("Create your family account")
                                 .font(.caption)
-                                .opacity(0.8)
+                                .opacity(0.85)
                         }
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 14)
                     }
                     .buttonStyle(.borderedProminent)
-                    .tint(.candleGold)
+                    .tint(.bacanGreen)
                     .controlSize(.large)
 
                     Button(action: { store.send(.logInTapped) }) {
                         Text("Already have an account? Sign In")
-                            .font(.subheadline)
-                            .foregroundStyle(Color.parchment.opacity(0.75))
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(Color.bacanGreen)
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 12)
                     }
@@ -131,22 +131,24 @@ public struct WelcomeView: View {
     }
 }
 
-/// A slowly drifting 3×3 `MeshGradient` in brand wine tones — the "wine swirling in the glass"
-/// backdrop for the Welcome screen. A `TimelineView(.animation)` recomputes the inner mesh control
-/// points each frame from layered sine waves, so the surface undulates without ever resetting. Kept
-/// in deep oxblood/wine with a single muted gold glow so cream/parchment text stays legible.
-private struct WineMeshBackground: View {
+/// A slowly drifting 3×3 `MeshGradient` in the family identity palette — a warm cream canvas with
+/// soft botanical green / terracotta / marigold / sky "blooms" drifting across it ("sunroom
+/// botanicals"). A `TimelineView(.animation)` recomputes the inner mesh control points each frame
+/// from layered sine waves, so the surface undulates without ever resetting. The blooms sit at low
+/// opacity over `familyCanvas` so the wordmark and buttons stay legible; every token is dynamic, so
+/// the backdrop adapts to light and dark automatically (cream by day, warm near-black glow by night).
+private struct FamilyMeshBackground: View {
     private let colors: [Color] = [
-        .oxblood, .wine, .oxblood,
-        .wine, Color.candleGold.opacity(0.35), .wine,
-        .wine, .oxblood, .wine,
+        .familyCanvas, Color.bacanGreen.opacity(0.32), .familyCanvas,
+        Color.terracotta.opacity(0.28), Color.marigold.opacity(0.26), Color.sky.opacity(0.30),
+        .familyCanvas, Color.bacanGreen.opacity(0.28), .familyCanvas,
     ]
 
     var body: some View {
         TimelineView(.animation) { context in
             let t = context.date.timeIntervalSinceReferenceDate
             MeshGradient(width: 3, height: 3, points: points(t), colors: colors)
-                .background(Color.wine)
+                .background(Color.familyCanvas)
                 .ignoresSafeArea()
         }
     }

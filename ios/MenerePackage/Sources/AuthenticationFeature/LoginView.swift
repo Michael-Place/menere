@@ -119,7 +119,7 @@ public struct LoginView: View {
         .task { store.send(.task) }
         .navigationTitle("Sign In")
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color.parchment.ignoresSafeArea())
+        .background(Color.familyCanvas.ignoresSafeArea())
     }
 }
 

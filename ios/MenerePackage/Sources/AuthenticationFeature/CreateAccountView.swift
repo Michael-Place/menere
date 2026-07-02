@@ -98,6 +98,6 @@ public struct CreateAccountView: View {
             .padding(.horizontal, 16)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color.parchment.ignoresSafeArea())
+        .background(Color.familyCanvas.ignoresSafeArea())
     }
 }
