@@ -25,6 +25,22 @@ public struct HueClient: Sendable {
     public var scenes: @Sendable (_ bridge: HueBridgeConfig) async throws -> [HueScene]
     /// Recall `sceneId` onto `groupId` (PUT group action `{"scene": …}`).
     public var recallScene: @Sendable (_ bridge: HueBridgeConfig, _ groupId: String, _ sceneId: String) async throws -> Void
+
+    // MARK: Granular control (P12-C4)
+    //
+    // SEAM (P14): agent tools wrap these verbs — a natural-language "turn off the kitchen" resolves
+    // to `setGroupState`, "dim Oliver's lamp to 30%" to `setLightState` (with `HueBrightness.bri`).
+    // The verbs are deliberately reducer-independent (plain client calls keyed off a `HueBridgeConfig`)
+    // so the agent harness can call them exactly as the House UI does. Writes use a ~400ms
+    // transitiontime for smooth slider ramps; Hue bridges dislike >10 req/s, so *callers* MUST
+    // debounce slider spam (the House reducer does — see `HouseReducer`).
+
+    /// Set a room/zone group's power and/or brightness (V1 PUT `/groups/<id>/action`). `on == nil`
+    /// leaves power untouched (a pure brightness change); `brightness` is clamped to 1–254.
+    public var setGroupState: @Sendable (_ bridge: HueBridgeConfig, _ groupId: String, _ on: Bool?, _ brightness: Int?) async throws -> Void
+    /// Set a single light's power and/or brightness (V1 PUT `/lights/<id>/state`). Same nil/clamp
+    /// semantics as `setGroupState`.
+    public var setLightState: @Sendable (_ bridge: HueBridgeConfig, _ lightId: String, _ on: Bool?, _ brightness: Int?) async throws -> Void
     /// ZLLTemperature sensors → °F readings.
     public var temperatures: @Sendable (_ bridge: HueBridgeConfig) async throws -> [HueTemperature]
     /// ZLLTemperature sensors → id + bridge name (no reading). Used by the pairing binding step to
@@ -97,21 +113,39 @@ extension HueClient: DependencyKey {
                 return try await session.testConnection(bridge)
             },
             rooms: { bridge in
-                bridge.isMock ? HueFixtures.rooms(for: bridge.bridgeId) : try await session.rooms(bridge)
+                // Mock reads flow through the STATEFUL store so toggles/sliders persist for the
+                // session and a re-read reflects a just-written change.
+                bridge.isMock ? await HueMockStore.shared.rooms(for: bridge.bridgeId) : try await session.rooms(bridge)
             },
             lights: { bridge in
-                bridge.isMock ? HueFixtures.lights(for: bridge.bridgeId) : try await session.lights(bridge)
+                bridge.isMock ? await HueMockStore.shared.lights(for: bridge.bridgeId) : try await session.lights(bridge)
             },
             scenes: { bridge in
                 bridge.isMock ? HueFixtures.scenes(for: bridge.bridgeId) : try await session.scenes(bridge)
             },
             recallScene: { bridge, groupId, sceneId in
                 if bridge.isMock {
-                    // Believable latency, then success — the card shows its checkmark morph.
+                    // Believable latency, then success — the card shows its checkmark morph. The
+                    // stateful store turns the target group on so a re-read agrees with the recall.
                     try? await Task.sleep(for: .milliseconds(300))
+                    await HueMockStore.shared.recallScene(bridgeId: bridge.bridgeId, groupId: groupId)
                     return
                 }
                 try await session.recallScene(bridge, groupId: groupId, sceneId: sceneId)
+            },
+            setGroupState: { bridge, groupId, on, brightness in
+                if bridge.isMock {
+                    await HueMockStore.shared.setGroup(bridgeId: bridge.bridgeId, groupId: groupId, on: on, brightness: brightness)
+                    return
+                }
+                try await session.setGroupState(bridge, groupId: groupId, on: on, brightness: brightness)
+            },
+            setLightState: { bridge, lightId, on, brightness in
+                if bridge.isMock {
+                    await HueMockStore.shared.setLight(bridgeId: bridge.bridgeId, lightId: lightId, on: on, brightness: brightness)
+                    return
+                }
+                try await session.setLightState(bridge, lightId: lightId, on: on, brightness: brightness)
             },
             temperatures: { bridge in
                 bridge.isMock ? HueFixtures.temperatures(for: bridge.bridgeId) : try await session.temperatures(bridge)
@@ -136,6 +170,8 @@ extension HueClient: DependencyKey {
         lights: { _ in HueFixtures.lights(for: "") },
         scenes: { _ in HueFixtures.scenes(for: "") },
         recallScene: { _, _, _ in },
+        setGroupState: { _, _, _, _ in },
+        setLightState: { _, _, _, _ in },
         temperatures: { _ in HueFixtures.temperatures(for: "") },
         sensors: { _ in HueFixtures.sensors(for: "") },
         rediscover: { _ in nil },
@@ -166,22 +202,27 @@ public enum HueFixtures {
     public static let downstairsId = "001788FFFEDOWN01"
     public static let upstairsId = "001788FFFEUP0002"
 
-    // Whole-house fixture (default for any unpartitioned mock bridge).
+    // Whole-house fixture (default for any unpartitioned mock bridge). Group "6" is a Zone (skipped
+    // in the ritual card, surfaced under "Zones" in the House surface); "7" is an Entertainment group
+    // that the House surface omits.
     private static let allRooms: [HueRoom] = [
-        HueRoom(id: "1", name: "Living room", type: "Room", lightIds: ["1", "2"], anyOn: true),
-        HueRoom(id: "2", name: "Kitchen", type: "Room", lightIds: ["3", "4"], anyOn: true),
-        HueRoom(id: "3", name: "Oliver's room", type: "Room", lightIds: ["5"], anyOn: false),
-        HueRoom(id: "4", name: "Famfis's room", type: "Room", lightIds: ["6"], anyOn: false),
-        HueRoom(id: "5", name: "Bedroom", type: "Room", lightIds: ["7"], anyOn: false),
+        HueRoom(id: "1", name: "Living room", type: "Room", lightIds: ["1", "2"], anyOn: true, brightness: 203),
+        HueRoom(id: "2", name: "Kitchen", type: "Room", lightIds: ["3", "4"], anyOn: true, brightness: 230),
+        HueRoom(id: "3", name: "Oliver's room", type: "Room", lightIds: ["5"], anyOn: false, brightness: 120),
+        HueRoom(id: "4", name: "Famfis's room", type: "Room", lightIds: ["6"], anyOn: false, brightness: 90),
+        HueRoom(id: "5", name: "Bedroom", type: "Room", lightIds: ["7"], anyOn: false, brightness: 150),
+        HueRoom(id: "8", name: "Downstairs", type: "Zone", lightIds: ["1", "2", "3", "4"], anyOn: true, brightness: 215),
     ]
     private static let allLights: [HueLight] = [
-        HueLight(id: "1", name: "Living room ceiling", isOn: true),
-        HueLight(id: "2", name: "Living room lamp", isOn: true),
-        HueLight(id: "3", name: "Kitchen counter", isOn: true),
-        HueLight(id: "4", name: "Kitchen sink", isOn: true),
-        HueLight(id: "5", name: "Oliver's lamp", isOn: false),
-        HueLight(id: "6", name: "Famfis's lamp", isOn: false),
-        HueLight(id: "7", name: "Bedroom lamp", isOn: false),
+        HueLight(id: "1", name: "Living room ceiling", isOn: true, brightness: 203),
+        HueLight(id: "2", name: "Living room lamp", isOn: true, brightness: 178),
+        HueLight(id: "3", name: "Kitchen counter", isOn: true, brightness: 254),
+        HueLight(id: "4", name: "Kitchen sink", isOn: true, brightness: 220),
+        HueLight(id: "5", name: "Oliver's lamp", isOn: false, brightness: 120),
+        // Famfis's lamp is powered off at the wall — the bridge can't reach it. Renders ink-soft with
+        // disabled controls in room detail (the P12-C4 unreachable case).
+        HueLight(id: "6", name: "Famfis's lamp", isOn: false, brightness: 90, reachable: false),
+        HueLight(id: "7", name: "Bedroom lamp", isOn: false, brightness: 150),
     ]
     private static let allScenes: [HueScene] = [
         HueScene(id: "bedtime-scene", name: "Bedtime", groupId: "3"),
@@ -198,7 +239,7 @@ public enum HueFixtures {
 
     public static func rooms(for bridgeId: String) -> [HueRoom] {
         switch bridgeId {
-        case downstairsId: return allRooms.filter { ["1", "2"].contains($0.id) }
+        case downstairsId: return allRooms.filter { ["1", "2", "8"].contains($0.id) }   // rooms + the Downstairs zone
         case upstairsId:   return allRooms.filter { ["3", "4"].contains($0.id) }
         default:           return allRooms
         }
@@ -230,6 +271,86 @@ public enum HueFixtures {
         case upstairsId:   return allSensors
         default:           return allSensors
         }
+    }
+}
+
+// MARK: - Stateful mock store (MOCK MODE, P12-C4)
+
+/// In-memory, per-session mutable state for mock bridges. C1–C3 served *static* fixtures — fine for
+/// read-only cards, but the granular House surface writes (toggles/sliders/scene recall) and needs a
+/// re-read to reflect them. This actor is the mock's single source of truth: seeded lazily from
+/// `HueFixtures` per bridge id, then mutated by `setLight`/`setGroup`/`recallScene`. Group `anyOn`
+/// is recomputed from member lights after any write so the House room rows and Today's lights summary
+/// stay consistent. State lives for the process lifetime (a sim session); a fresh launch re-seeds.
+actor HueMockStore {
+    static let shared = HueMockStore()
+
+    private var lightsByBridge: [String: [HueLight]] = [:]
+    private var roomsByBridge: [String: [HueRoom]] = [:]
+    private var seeded: Set<String> = []
+
+    private func seedIfNeeded(_ bridgeId: String) {
+        guard !seeded.contains(bridgeId) else { return }
+        seeded.insert(bridgeId)
+        lightsByBridge[bridgeId] = HueFixtures.lights(for: bridgeId)
+        roomsByBridge[bridgeId] = HueFixtures.rooms(for: bridgeId)
+    }
+
+    func rooms(for bridgeId: String) -> [HueRoom] {
+        seedIfNeeded(bridgeId)
+        return roomsByBridge[bridgeId] ?? []
+    }
+
+    func lights(for bridgeId: String) -> [HueLight] {
+        seedIfNeeded(bridgeId)
+        return lightsByBridge[bridgeId] ?? []
+    }
+
+    func setLight(bridgeId: String, lightId: String, on: Bool?, brightness: Int?) {
+        seedIfNeeded(bridgeId)
+        guard var lights = lightsByBridge[bridgeId], let i = lights.firstIndex(where: { $0.id == lightId }) else { return }
+        if let on { lights[i].isOn = on }
+        if let brightness {
+            lights[i].brightness = max(1, min(254, brightness))
+            if lights[i].isOn == false { lights[i].isOn = true }   // a bri change implies power-on (Hue behavior)
+        }
+        lightsByBridge[bridgeId] = lights
+        recomputeRooms(bridgeId)
+    }
+
+    func setGroup(bridgeId: String, groupId: String, on: Bool?, brightness: Int?) {
+        seedIfNeeded(bridgeId)
+        guard var rooms = roomsByBridge[bridgeId], let ri = rooms.firstIndex(where: { $0.id == groupId }) else { return }
+        let memberIds = Set(rooms[ri].lightIds)
+        if var lights = lightsByBridge[bridgeId] {
+            for i in lights.indices where memberIds.contains(lights[i].id) && lights[i].reachable {
+                if let on { lights[i].isOn = on }
+                if let brightness {
+                    lights[i].brightness = max(1, min(254, brightness))
+                    if let on, on == false {} else { lights[i].isOn = true }
+                }
+            }
+            lightsByBridge[bridgeId] = lights
+        }
+        if let brightness { rooms[ri].brightness = max(1, min(254, brightness)) }
+        roomsByBridge[bridgeId] = rooms
+        recomputeRooms(bridgeId)
+    }
+
+    func recallScene(bridgeId: String, groupId: String) {
+        // A scene recall turns its target group on (brightness left as fixture — scenes carry their
+        // own per-light levels we don't model in mock).
+        setGroup(bridgeId: bridgeId, groupId: groupId, on: true, brightness: nil)
+    }
+
+    /// Recompute every group's `anyOn` from its member lights so rows/summaries agree with writes.
+    private func recomputeRooms(_ bridgeId: String) {
+        guard var rooms = roomsByBridge[bridgeId], let lights = lightsByBridge[bridgeId] else { return }
+        let onIds = Set(lights.filter(\.isOn).map(\.id))
+        for i in rooms.indices {
+            rooms[i].anyOn = rooms[i].lightIds.contains { onIds.contains($0) }
+        }
+        roomsByBridge[bridgeId] = rooms
     }
 }
 
@@ -284,7 +405,7 @@ private final class HueURLSession: NSObject, URLSessionDelegate, @unchecked Send
         return dict
             .filter { $0.value.type == "Room" || $0.value.type == "Zone" }
             .map { id, g in
-                HueRoom(id: id, name: g.name, type: g.type, lightIds: g.lights, anyOn: g.state.any_on)
+                HueRoom(id: id, name: g.name, type: g.type, lightIds: g.lights, anyOn: g.state.any_on, brightness: g.action?.bri)
             }
             .sorted { $0.name < $1.name }
     }
@@ -295,7 +416,7 @@ private final class HueURLSession: NSObject, URLSessionDelegate, @unchecked Send
         let data = try await get("\(base(bridge))/lights")
         let dict = try decode([String: LightResponse].self, data)
         return dict
-            .map { id, l in HueLight(id: id, name: l.name, isOn: l.state.on) }
+            .map { id, l in HueLight(id: id, name: l.name, isOn: l.state.on, brightness: l.state.bri, reachable: l.state.reachable ?? true) }
             .sorted { $0.name < $1.name }
     }
 
@@ -319,6 +440,39 @@ private final class HueURLSession: NSObject, URLSessionDelegate, @unchecked Send
         request.httpMethod = "PUT"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONSerialization.data(withJSONObject: ["scene": sceneId])
+        do {
+            let (data, _) = try await session.data(for: request)
+            try validate(data)
+        } catch let error as HueError {
+            throw error
+        } catch {
+            throw HueError.networkError(error.localizedDescription)
+        }
+    }
+
+    // MARK: State setting (P12-C4) — ported from NowSpinning's setLightState/setGroupState
+
+    func setLightState(_ bridge: HueBridgeConfig, lightId: String, on: Bool?, brightness: Int?) async throws {
+        guard let url = URL(string: "\(base(bridge))/lights/\(lightId)/state") else { throw HueError.invalidResponse }
+        try await putState(url, on: on, brightness: brightness)
+    }
+
+    func setGroupState(_ bridge: HueBridgeConfig, groupId: String, on: Bool?, brightness: Int?) async throws {
+        guard let url = URL(string: "\(base(bridge))/groups/\(groupId)/action") else { throw HueError.invalidResponse }
+        try await putState(url, on: on, brightness: brightness)
+    }
+
+    /// Shared PUT for light `/state` and group `/action`. Omits `on` when nil (a pure brightness
+    /// change), clamps `bri` to Hue's 1–254, and rides a ~400ms transition so slider ramps read
+    /// smoothly rather than snapping.
+    private func putState(_ url: URL, on: Bool?, brightness: Int?) async throws {
+        var request = URLRequest(url: url)
+        request.httpMethod = "PUT"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        var body: [String: Any] = ["transitiontime": 4]
+        if let on { body["on"] = on }
+        if let brightness { body["bri"] = max(1, min(254, brightness)) }
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
         do {
             let (data, _) = try await session.data(for: request)
             try validate(data)
@@ -521,13 +675,20 @@ private struct GroupResponse: Decodable {
     let lights: [String]
     let type: String
     let state: GroupState
+    /// The group's last-applied `action` (V1) — carries the group brightness we surface on the slider.
+    let action: GroupAction?
     struct GroupState: Decodable { let any_on: Bool }
+    struct GroupAction: Decodable { let bri: Int? }
 }
 
 private struct LightResponse: Decodable {
     let name: String
     let state: LightState
-    struct LightState: Decodable { let on: Bool }
+    struct LightState: Decodable {
+        let on: Bool
+        let bri: Int?
+        let reachable: Bool?
+    }
 }
 
 private struct SceneResponse: Decodable {

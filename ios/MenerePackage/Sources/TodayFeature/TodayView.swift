@@ -441,7 +441,7 @@ public struct TodayView: View {
     private var houseCard: some View {
         if let house = store.house {
             card {
-                cardHeader("The house", symbol: "lightbulb.fill")
+                houseCardHeader(house)
                 if let temps = temperatureLine(house) {
                     Label {
                         Text(temps)
@@ -466,6 +466,31 @@ public struct TodayView: View {
             }
             .accessibilityIdentifier("today-house")
         }
+    }
+
+    /// The house-card header, now a tappable **"The house ›"** entry into the granular control
+    /// surface (P12-C4). Pushes `HouseView` seeded with the already-loaded snapshot; the rest of the
+    /// card (temps / lights summary / ritual buttons) is unchanged.
+    private func houseCardHeader(_ house: HouseSnapshot) -> some View {
+        NavigationLink {
+            HouseView(config: house.config, members: store.members, bridges: house.bridges)
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: "lightbulb.fill")
+                    .font(.subheadline)
+                    .foregroundStyle(Color.inkSoft)
+                Text("The house")
+                    .familyTitle(.headline)
+                    .foregroundStyle(Color.ink)
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(Color.inkSoft.opacity(0.6))
+                Spacer(minLength: 0)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("today-house-open")
     }
 
     /// "Famfis's room 72° · Oliver's room 71°" from the config's sensor labels, or nil when no

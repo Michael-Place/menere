@@ -53,28 +53,42 @@ public struct HueRoom: Equatable, Sendable, Identifiable {
     public let type: String
     /// V1 light ids belonging to this group.
     public let lightIds: [String]
-    /// Whether any light in the group is currently on.
-    public let anyOn: Bool
+    /// Whether any light in the group is currently on. `var` so the House surface can flip it
+    /// optimistically before the write lands.
+    public var anyOn: Bool
+    /// Group brightness 1–254 (Hue V1 group `action.bri`) — the last-set group level, used by the
+    /// House room-detail slider. Nil when the bridge reports none.
+    public var brightness: Int?
 
-    public init(id: String, name: String, type: String, lightIds: [String], anyOn: Bool) {
+    public init(id: String, name: String, type: String, lightIds: [String], anyOn: Bool, brightness: Int? = nil) {
         self.id = id
         self.name = name
         self.type = type
         self.lightIds = lightIds
         self.anyOn = anyOn
+        self.brightness = brightness
     }
 }
 
-/// A single Hue light's on/off state (the card only needs on-ness + a name).
+/// A single Hue light's state. The card needs only on-ness + name; the House surface (P12-C4) also
+/// needs brightness (for the per-light slider) and reachability (unreachable lights dim + disable).
 public struct HueLight: Equatable, Sendable, Identifiable {
     public let id: String
     public let name: String
-    public let isOn: Bool
+    /// `var` so House rows flip optimistically ahead of the write.
+    public var isOn: Bool
+    /// Current brightness 1–254 (Hue V1 `state.bri`); nil when the light isn't dimmable / reports none.
+    public var brightness: Int?
+    /// Whether the bridge can currently reach the light (V1 `state.reachable`). Unreachable lights
+    /// render ink-soft with disabled controls.
+    public var reachable: Bool
 
-    public init(id: String, name: String, isOn: Bool) {
+    public init(id: String, name: String, isOn: Bool, brightness: Int? = nil, reachable: Bool = true) {
         self.id = id
         self.name = name
         self.isOn = isOn
+        self.brightness = brightness
+        self.reachable = reachable
     }
 }
 

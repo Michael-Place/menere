@@ -415,6 +415,15 @@ let package = Package(
             ]
         ),
         .testTarget(
+            name: "TodayFeatureTests",
+            dependencies: [
+                .product(name: "ComposableArchitecture", package: "swift-composable-architecture"),
+                "TodayFeature",
+                "HueClient",
+                "FamilyDomain",
+            ]
+        ),
+        .testTarget(
             name: "AppCoreTests",
             dependencies: [
                 .product(name: "ComposableArchitecture", package: "swift-composable-architecture"),
