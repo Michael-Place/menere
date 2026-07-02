@@ -22,7 +22,8 @@ public struct TodayView: View {
                 dinnerCard
                 quickActions
 
-                // ─── SEAM (P6-C2): family member cards + "chores due today" card slot in HERE. ───
+                choresCard
+                familyCard
             }
             .padding(.horizontal)
             .padding(.vertical, 12)
@@ -169,6 +170,156 @@ public struct TodayView: View {
             )
         }
         .buttonStyle(.pressable)
+    }
+
+    // MARK: Chores today
+
+    /// Incomplete chores that are overdue, due today, or undated — the family's actionable board for
+    /// today. Sorted overdue → today → undated; within a bucket, by due date (undated by createdAt).
+    /// Future-dated incomplete chores are excluded.
+    private func choresToday() -> [Chore] {
+        let startOfToday = cal.startOfDay(for: Date())
+        let endOfToday = cal.date(byAdding: .day, value: 1, to: startOfToday)!
+        func bucket(_ c: Chore) -> Int? {
+            guard let due = c.dueDate else { return 2 }   // undated
+            if due < startOfToday { return 0 }            // overdue
+            if due < endOfToday { return 1 }              // today
+            return nil                                    // future — not on today's board
+        }
+        return store.chores
+            .filter { !$0.isCompleted && bucket($0) != nil }
+            .sorted { a, b in
+                let ba = bucket(a)!, bb = bucket(b)!
+                if ba != bb { return ba < bb }
+                return (a.dueDate ?? a.createdAt) < (b.dueDate ?? b.createdAt)
+            }
+    }
+
+    private var choresCard: some View {
+        let all = choresToday()
+        let shown = Array(all.prefix(6))
+        let overflow = all.count - shown.count
+        return card {
+            cardHeader("Chores today", symbol: "checklist")
+            if all.isEmpty {
+                emptyLine("All clear — nothing on the board today.")
+            } else {
+                VStack(spacing: 12) {
+                    ForEach(shown) { chore in choreRow(chore) }
+                    if overflow > 0 {
+                        Text("+\(overflow) more in Chores")
+                            .font(.system(.caption, design: .rounded).weight(.semibold))
+                            .foregroundStyle(Color.inkSoft)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+            }
+        }
+    }
+
+    private func choreRow(_ chore: Chore) -> some View {
+        let assignee = store.members.first { $0.id == chore.assigneeID }
+        let color = assignee.map(memberColor) ?? .bacanGreen
+        return HStack(spacing: 12) {
+            Button { store.send(.toggleChore(chore)) } label: {
+                Image(systemName: chore.isCompleted ? "checkmark.circle.fill" : "circle")
+                    .foregroundStyle(chore.isCompleted ? color : Color.inkSoft)
+                    .stickerSlap(isOn: chore.isCompleted, color: color)
+            }
+            .buttonStyle(.pressable)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(chore.title)
+                    .foregroundStyle(Color.ink)
+                if let assignee {
+                    HStack(spacing: 5) {
+                        Circle().fill(color).frame(width: 8, height: 8)
+                        Text(firstName(assignee.name))
+                            .font(.caption2).foregroundStyle(Color.inkSoft)
+                    }
+                }
+            }
+            Spacer()
+            Text("\(chore.effectiveXP) XP")
+                .font(.system(.caption, design: .rounded).weight(.semibold))
+                .foregroundStyle(color)
+        }
+    }
+
+    // MARK: The family
+
+    private var familyCard: some View {
+        card {
+            cardHeader("The family", symbol: "person.2.fill")
+            if store.members.isEmpty {
+                emptyLine("No one's here yet — invite the crew from Family.")
+            } else {
+                LazyVGrid(
+                    columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)],
+                    spacing: 12
+                ) {
+                    ForEach(store.members) { member in memberTile(member) }
+                }
+            }
+        }
+    }
+
+    private func memberTile(_ member: HouseholdMember) -> some View {
+        let color = memberColor(member)
+        return VStack(spacing: 6) {
+            Image(systemName: member.avatarSystemName)
+                .font(.title2)
+                .foregroundStyle(color)
+            Text(firstName(member.name))
+                .font(.system(.subheadline, design: .rounded).weight(.semibold))
+                .foregroundStyle(Color.ink)
+            Text("Lv \(level(for: member.id))")
+                .font(.caption2)
+                .foregroundStyle(Color.inkSoft)
+            HStack(spacing: 12) {
+                Label("\(eventsToday(for: member.id))", systemImage: "calendar")
+                Label("\(openChores(for: member.id))", systemImage: "checklist")
+            }
+            .font(.caption2)
+            .foregroundStyle(Color.inkSoft)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 12)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(color.opacity(0.12))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(color.opacity(0.35), lineWidth: 1)
+        )
+    }
+
+    // MARK: Member helpers
+
+    private func memberColor(_ member: HouseholdMember) -> Color {
+        let rgb = member.color.rgb
+        return Color(red: rgb.red, green: rgb.green, blue: rgb.blue)
+    }
+
+    /// View-local stats lookup — `store.stats` resolves to the state array, so the state's
+    /// `stats(for:)` method isn't reachable through the store.
+    private func level(for id: String) -> Int {
+        (store.stats.first { $0.memberID == id } ?? MemberStats(id: id, memberID: id)).level
+    }
+
+    /// Today's events assigned to a member — reconciles with the schedule card above.
+    private func eventsToday(for id: String) -> Int {
+        todaysOccurrences().filter { $0.event.assigneeIDs.contains(id) }.count
+    }
+
+    /// Open chores on today's board assigned to a member — reconciles with the chores card above.
+    private func openChores(for id: String) -> Int {
+        choresToday().filter { $0.assigneeID == id }.count
+    }
+
+    private func firstName(_ full: String) -> String {
+        full.split(whereSeparator: { $0.isWhitespace }).first.map(String.init) ?? full
     }
 
     // MARK: Card scaffolding

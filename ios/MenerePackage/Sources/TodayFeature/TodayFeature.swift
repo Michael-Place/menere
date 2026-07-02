@@ -27,16 +27,29 @@ public struct TodayReducer {
         var members: [HouseholdMember] = []
         var recipes: [Recipe] = []
         var mealPlan: [MealPlanEntry] = []
+        var chores: [Chore] = []
+        /// One-shot leaderboard stats (the live stream stays Chores-tab machinery).
+        var stats: [MemberStats] = []
         /// The signed-in member's first name (first whitespace token), or nil if unknown.
         var firstName: String?
         var isLoading = false
 
         public init() {}
+
+        func stats(for memberID: String) -> MemberStats {
+            stats.first { $0.memberID == memberID } ?? MemberStats(id: memberID, memberID: memberID)
+        }
     }
 
     public enum Action: Equatable {
         case task
-        case loaded(events: [FamilyEvent], members: [HouseholdMember], recipes: [Recipe], mealPlan: [MealPlanEntry])
+        case loaded(
+            events: [FamilyEvent], members: [HouseholdMember], recipes: [Recipe],
+            mealPlan: [MealPlanEntry], chores: [Chore], stats: [MemberStats]
+        )
+        /// Complete/uncomplete a chore from the Today "Chores today" card. Behaves identically to
+        /// completing it in the Chores tab (shared ``ChoreCompletion`` logic).
+        case toggleChore(Chore)
         // Quick-action deep links — the parent (MainTabReducer) switches tabs in response.
         case quickAddEventTapped
         case quickAddListTapped
@@ -57,6 +70,12 @@ public struct TodayReducer {
     private func hid() -> String? {
         @Shared(.user) var user
         return user?.householdId
+    }
+
+    private func ctx() -> (hid: String, uid: String)? {
+        @Shared(.user) var user
+        guard let hid = user?.householdId, let uid = user?.id else { return nil }
+        return (hid, uid)
     }
 
     /// First whitespace token of the signed-in member's profile name (falls back to the cached
@@ -87,22 +106,42 @@ public struct TodayReducer {
                     async let members = persistence.members(hid)
                     async let recipes = persistence.recipes(hid)
                     async let plan = persistence.mealPlan(hid)
+                    async let chores = persistence.chores(hid)
+                    async let stats = persistence.memberStats(hid)
                     await send(.loaded(
                         events: (try? await events) ?? [],
                         members: (try? await members) ?? [],
                         recipes: (try? await recipes) ?? [],
-                        mealPlan: (try? await plan) ?? []
+                        mealPlan: (try? await plan) ?? [],
+                        chores: (try? await chores) ?? [],
+                        stats: (try? await stats) ?? []
                     ))
                 }
 
-            case let .loaded(events, members, recipes, mealPlan):
+            case let .loaded(events, members, recipes, mealPlan, chores, stats):
                 state.isLoading = false
                 state.events = events
                 state.members = members
                 state.recipes = recipes
                 state.mealPlan = mealPlan
+                state.chores = chores
+                state.stats = stats
                 state.firstName = firstName(from: members)
                 return .none
+
+            case let .toggleChore(chore):
+                guard let (hid, uid) = ctx(),
+                      let idx = state.chores.firstIndex(where: { $0.id == chore.id }) else { return .none }
+                // Same shared completion path as the Chores tab (server awards/reverses XP).
+                let outcome = chore.isCompleted
+                    ? ChoreCompletion.uncomplete(chore)
+                    : ChoreCompletion.complete(chore, fallbackCreditID: uid, members: state.members)
+                state.chores[idx] = outcome.updated
+                if let next = outcome.next { state.chores.append(next) }        // recurring respawn
+                return .run { [outcome] _ in
+                    @Dependency(\.persistence) var persistence
+                    try await persistence.writeCompletion(hid: hid, outcome)
+                }
 
             case .quickAddEventTapped:
                 return .send(.delegate(.openCalendar))

@@ -332,6 +332,18 @@ extension PersistenceClient: DependencyKey {
     }()
 }
 
+public extension PersistenceClient {
+    /// Persist a chore-completion ``ChoreCompletion/Outcome``: the updated chore, any freshly-spawned
+    /// next occurrence, and the activity-feed entry. Shared by the Chores tab and the Today dashboard
+    /// so completing a chore writes identically from either surface. (Activity logging is best-effort,
+    /// matching the original Chores behavior.)
+    func writeCompletion(hid: String, _ outcome: ChoreCompletion.Outcome) async throws {
+        try await saveChore(hid, outcome.updated)
+        if let next = outcome.next { try await saveChore(hid, next) }
+        if let activity = outcome.activity { try? await logActivity(hid, activity) }
+    }
+}
+
 public extension DependencyValues {
     var persistence: PersistenceClient {
         get { self[PersistenceClient.self] }

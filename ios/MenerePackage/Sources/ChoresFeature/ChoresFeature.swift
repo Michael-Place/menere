@@ -124,23 +124,17 @@ public struct ChoresReducer {
             case let .toggleComplete(chore):
                 guard let (hid, uid) = ctx(),
                       let idx = state.chores.firstIndex(where: { $0.id == chore.id }) else { return .none }
-                if chore.isCompleted {
-                    // Uncomplete. XP is reversed server-side (onChoreToggled reads the prior award).
-                    let updated = markUncompleted(chore)
-                    state.chores[idx] = updated
-                    return persist(hid: hid, chore: updated)
-                } else {
-                    // Complete: record who gets credit; the server awards XP (onChoreToggled).
-                    let creditID = chore.assigneeID ?? uid
-                    let updated = markCompleted(chore, creditID: creditID)
-                    state.chores[idx] = updated
-                    // Recurring chores spawn their next occurrence (fresh, incomplete).
-                    let nextChore = nextOccurrence(of: chore)
-                    if let nextChore { state.chores.append(nextChore) }
-                    let actorName = state.members.first { $0.id == creditID }?.name
-                    let activity = ActivityItem.choreCompleted(title: chore.title, by: actorName, actorID: creditID)
-                    state.activity.insert(activity, at: 0)
-                    return persist(hid: hid, chore: updated, nextChore: nextChore, activity: activity)
+                // Shared completion logic (see ``ChoreCompletion``) so Today and Chores behave
+                // identically. XP is reversed/awarded server-side by onChoreToggled either way.
+                let outcome = chore.isCompleted
+                    ? ChoreCompletion.uncomplete(chore)
+                    : ChoreCompletion.complete(chore, fallbackCreditID: uid, members: state.members)
+                state.chores[idx] = outcome.updated
+                if let next = outcome.next { state.chores.append(next) }        // recurring respawn
+                if let activity = outcome.activity { state.activity.insert(activity, at: 0) }
+                return .run { [outcome] _ in
+                    @Dependency(\.persistence) var persistence
+                    try await persistence.writeCompletion(hid: hid, outcome)
                 }
 
             case .addRewardTapped:
@@ -192,56 +186,10 @@ public struct ChoresReducer {
         }
     }
 
-    // MARK: Completion (XP itself is awarded server-side by the onChoreToggled trigger)
-
-    /// Mark a chore complete and record who gets credit. `xpAwarded`/`streak` are filled in by the
-    /// server trigger, so they're intentionally left untouched here.
-    private func markCompleted(_ chore: Chore, creditID: String) -> Chore {
-        var updated = chore
-        updated.isCompleted = true
-        updated.completedAt = Date()
-        updated.completedByMemberID = creditID
-        return updated
-    }
-
-    /// Mark a chore incomplete. The server reverses the prior award from the pre-update snapshot,
-    /// so clearing these fields here is safe.
-    private func markUncompleted(_ chore: Chore) -> Chore {
-        var updated = chore
-        updated.isCompleted = false
-        updated.completedAt = nil
-        updated.completedByMemberID = nil
-        updated.xpAwarded = nil
-        return updated
-    }
+    // MARK: XP redemption helper (XP awards themselves are server-side, via onChoreToggled)
 
     private func apply(_ stats: MemberStats, to all: inout [MemberStats]) {
         if let i = all.firstIndex(where: { $0.memberID == stats.memberID }) { all[i] = stats }
         else { all.append(stats) }
-    }
-
-    private func persist(hid: String, chore: Chore, nextChore: Chore? = nil, activity: ActivityItem? = nil) -> Effect<Action> {
-        .run { _ in
-            @Dependency(\.persistence) var persistence
-            try await persistence.saveChore(hid, chore)
-            if let nextChore { try await persistence.saveChore(hid, nextChore) }
-            if let activity { try? await persistence.logActivity(hid, activity) }
-        }
-    }
-
-    /// For a recurring chore, a fresh incomplete copy with its due date advanced one interval
-    /// (from the old due date if set, else from today). Returns nil for non-recurring chores.
-    private func nextOccurrence(of chore: Chore) -> Chore? {
-        guard let step = chore.recurrence.step else { return nil }
-        let base = chore.dueDate ?? Date()
-        let nextDue = Calendar.current.date(byAdding: step.component, value: step.value, to: base)
-        return Chore(
-            title: chore.title,
-            assigneeID: chore.assigneeID,
-            dueDate: nextDue,
-            recurrence: chore.recurrence,
-            difficulty: chore.difficulty,
-            streak: chore.streak
-        )
     }
 }
