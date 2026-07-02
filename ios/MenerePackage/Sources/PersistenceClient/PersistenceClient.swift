@@ -86,6 +86,12 @@ public struct PersistenceClient: Sendable {
     public var saveMealPlanEntry: @Sendable (_ hid: String, _ entry: MealPlanEntry) async throws -> Void
     public var deleteMealPlanEntry: @Sendable (_ hid: String, _ entryID: String) async throws -> Void
 
+    // MARK: Family-Brain documents
+    /// All documents in a household (order is not guaranteed; callers sort newest-first).
+    public var documents: @Sendable (_ hid: String) async throws -> [Document]
+    public var saveDocument: @Sendable (_ hid: String, _ doc: Document) async throws -> Void
+    public var deleteDocument: @Sendable (_ hid: String, _ docID: String) async throws -> Void
+
     // MARK: Activity feed
     /// Recent activity, newest first (capped at 50).
     public var activity: @Sendable (_ hid: String) async throws -> [ActivityItem]
@@ -315,6 +321,18 @@ extension PersistenceClient: DependencyKey {
             },
             deleteMealPlanEntry: { hid, entryID in
                 try await households().document(hid).collection("mealPlan").document(entryID).delete()
+            },
+            documents: { hid in
+                let snapshot = try await households().document(hid).collection("documents").getDocuments()
+                return try snapshot.documents.map { try Firestore.Decoder().decode(Document.self, from: $0.data()) }
+            },
+            saveDocument: { hid, doc in
+                try await households().document(hid).collection("documents").document(doc.id).setData(
+                    Firestore.Encoder().encode(doc), merge: true
+                )
+            },
+            deleteDocument: { hid, docID in
+                try await households().document(hid).collection("documents").document(docID).delete()
             },
             activity: { hid in
                 let snapshot = try await households().document(hid).collection("activity")

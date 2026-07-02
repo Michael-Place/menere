@@ -1,5 +1,6 @@
 import CellarFeature
 import ComposableArchitecture
+import DocsFeature
 import FamilyDomain
 import MenereUI
 import PersistenceClient
@@ -24,6 +25,10 @@ public struct ListsReducer {
         var showScan = false
         var scan = ScanReducer.State()
 
+        // Family Brain (document vault) is a sibling pinned row under Cellar; pushing it presents
+        // the DocsFeature library. State lives here, mirroring the Cellar wiring.
+        @Presents var docs: DocsReducer.State?
+
         public init() {}
     }
 
@@ -38,6 +43,8 @@ public struct ListsReducer {
         case detail(PresentationAction<ListDetailReducer.Action>)
         case cellarTapped
         case cellar(PresentationAction<CellarReducer.Action>)
+        case docsTapped
+        case docs(PresentationAction<DocsReducer.Action>)
         case scan(ScanReducer.Action)
         case scanRequested
         case scanDismissed
@@ -120,6 +127,13 @@ public struct ListsReducer {
             case .cellar:
                 return .none
 
+            case .docsTapped:
+                state.docs = DocsReducer.State()
+                return .none
+
+            case .docs:
+                return .none
+
             case .scanDismissed:
                 state.showScan = false
                 // Refresh the cellar so a just-scanned bottle appears.
@@ -137,6 +151,9 @@ public struct ListsReducer {
         }
         .ifLet(\.$cellar, action: \.cellar) {
             CellarReducer()
+        }
+        .ifLet(\.$docs, action: \.docs) {
+            DocsReducer()
         }
     }
 }
@@ -168,8 +185,31 @@ public struct ListsView: View {
                     }
                 }
                 .accessibilityIdentifier("cellar-row")
-                .listRowBackground(Color.familySurface)
+
+                // Sibling pinned row: the Family Brain document vault.
+                Button {
+                    store.send(.docsTapped)
+                } label: {
+                    HStack {
+                        Label {
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text("Family Brain").foregroundStyle(Color.ink)
+                                Text("Documents & paperwork")
+                                    .font(.caption)
+                                    .foregroundStyle(Color.inkSoft)
+                            }
+                        } icon: {
+                            Image(systemName: "brain").foregroundStyle(Color.sky)
+                        }
+                        Spacer()
+                        Image(systemName: "chevron.right")
+                            .font(.footnote.weight(.semibold))
+                            .foregroundStyle(.tertiary)
+                    }
+                }
+                .accessibilityIdentifier("docs-row")
             }
+            .listRowBackground(Color.familySurface)
 
             Section("Lists") {
                 if store.lists.isEmpty {
@@ -230,6 +270,11 @@ public struct ListsView: View {
                     }
                 }
                 .wineChrome()
+        }
+        .navigationDestination(
+            item: $store.scope(state: \.docs, action: \.docs)
+        ) { docsStore in
+            DocsLibraryView(store: docsStore)
         }
         .fullScreenCover(
             isPresented: Binding(

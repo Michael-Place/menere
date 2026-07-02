@@ -18,6 +18,7 @@ let package = Package(
         .library(name: "FamilyDomain", targets: ["FamilyDomain"]),
         .library(name: "TodayFeature", targets: ["TodayFeature"]),
         .library(name: "ListsFeature", targets: ["ListsFeature"]),
+        .library(name: "DocsFeature", targets: ["DocsFeature"]),
         .library(name: "CalendarFeature", targets: ["CalendarFeature"]),
         .library(name: "ChoresFeature", targets: ["ChoresFeature"]),
         .library(name: "RecipesFeature", targets: ["RecipesFeature"]),
@@ -135,6 +136,18 @@ let package = Package(
                 "CellarFeature",
                 "ScanFeature",
                 "WineDomain",
+                "DocsFeature",
+            ]
+        ),
+        .target(
+            name: "DocsFeature",
+            dependencies: [
+                .product(name: "ComposableArchitecture", package: "swift-composable-architecture"),
+                "MenereUI",
+                "FamilyDomain",
+                "PersistenceClient",
+                "StorageClient",
+                "UserDomain",
             ]
         ),
         .target(

@@ -5,5 +5,20 @@ service firebase.storage {
     match /users/{userId}/{allPaths=**} {
       allow read, write: if request.auth != null && request.auth.uid == userId;
     }
+
+    // Shared household media (Family-Brain document pages, etc.): any signed-in family user.
+    //
+    // We WANTED to mirror `firestore.rules` and gate by the household's `members` array via a
+    // cross-service read —
+    //   request.auth.uid in firestore.get(/databases/(default)/documents/households/$(hid)).data.members
+    // — but this project's bucket is a next-gen `*.firebasestorage.app` bucket, where Storage→
+    // Firestore cross-service rule reads are not supported and every such write 403s (verified live).
+    // For this private, four-person family app (see CLAUDE.md: "minimal public-launch hardening")
+    // an authenticated-only gate on the raw file bytes is acceptable: the document *metadata* in
+    // `households/{hid}/documents` is still members-gated by firestore.rules. Revisit if the app
+    // ever goes public (e.g. route uploads through a Cloud Function that checks membership).
+    match /households/{hid}/{allPaths=**} {
+      allow read, write: if request.auth != null;
+    }
   }
 }
