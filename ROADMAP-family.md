@@ -494,6 +494,30 @@ pipeline.**
 - Category taxonomy: start small (groceries/dining/kids/house/garden/pets/fun),
   Claude auto-categorizes, family can re-file.
 
+### P14 — The assistant: an agent harness over the whole app (Michael's request, 2026-07-02)
+Goal: "I just finished watering the monstera, leaving the house, what time is
+Oliver's KinderCare event?" → the app marks the watering done, answers from
+calendar/Brain, and preps the house — one utterance, many tools.
+**Architecture (decided in planning): tools on the phone, model behind a proxy.**
+The phone is the only place Firestore auth, member identity, AND the LAN (Hue)
+coexist — so the agentic loop runs client-side; a dumb `agentTurn` callable holds
+the ANTHROPIC_API_KEY and does single model calls.
+- **C1 — Tool registry:** Swift `AgentTool` protocol + registry wrapping EXISTING
+  verbs (ChoreCompletion, CareCompletion, PersistenceClient CRUD, Brain search,
+  HueClient) with JSON schemas: mark_care_done, complete_chore, query_calendar,
+  add_event, search_brain, get_today_snapshot, check_off_list_item, add_to_list,
+  get_meal_plan, set_room_lights, recall_scene, get_house_status. The registry is
+  the "MCP-type interface" — future devices (Roomba etc.) join as new tools.
+- **C2 — `agentTurn` proxy function:** {messages, tools} → one Claude call →
+  response; client executes tool_use locally and loops. No family logic serverside.
+- **C3 — Assistant UI:** sparkles button on Today → chat sheet, dictation, streaming
+  text, ACTION CHIPS as receipts ("✓ Watered Monstera · 💡 Downstairs dimmed").
+  System prompt = family context + Today snapshot. Family voice.
+- **C4 (later) — true MCP server** over the family Firestore (data/query tools) so
+  Claude.ai / Claude Code can talk to the family brain from anywhere; house control
+  stays app-side (LAN).
+- Roomba/other devices: integrate when wanted; they arrive as tools in C1's registry.
+
 ### Side quest (anytime after P5) — Oliver mode
 Activate the dormant `.child` role: picture-based chore board, huge tap targets,
 maximum celebration. He's 3½ — exactly the age it lands. Additive by design (P0
