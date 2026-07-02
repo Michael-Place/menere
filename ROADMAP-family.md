@@ -388,7 +388,18 @@ thing that vanishes if nobody writes it down.
   Storage + polaroid UI (`PolaroidFrame` exists), timeline per kid, quick-capture
   from Today. Linked Brain documents (scanned artwork!) appear on the timeline.
 
-### P12 — Smart home: Philips Hue, hyper-specific  ✅ done (2026-07-02, commits 04dccd6 + b4b4cad)
+### P12 — Smart home: Philips Hue, hyper-specific  ✅ done (2026-07-02, commits 04dccd6…41667a6)
+**C3 (ad7a3db): multi-bridge** — bridges array w/ lossless legacy migration (Michael's
+live paired doc protected + left legacy, migrates on next save), rituals/sensors
+scoped per-bridge (nested maps), Settings bridge list + Add-a-bridge (appends,
+excludes paired ids, binds standard rituals against the new bridge — Bedtime binds
+upstairs), per-bridge degrade (dead bridge hides only ITS rituals). **C4 (41667a6):
+granular House control surface** (Michael's correction #3) — "The house ›" from the
+Today card: bridge-grouped rooms/zones, owner dots, optimistic toggles, per-room +
+per-light debounced brightness (150ms trailing, unit-tested — the >10req/s bridge
+limit NowSpinning ignored), scene capsules, unreachable lights disabled ink-soft;
+stateful mock store for bridge-less verification; `// SEAM (P14)` on
+setGroupState/setLightState — the agent tools wrap these same verbs.
 Shipped: (C1) `HueClient` target (V1 REST ported/trimmed from NowSpinning + NEW
 scenes/sensors/rediscover; private-IP cert trust; mock mode for bridge-less
 verification) + `HueConfig` contract at `households/{hid}/config/hue` + Today's
