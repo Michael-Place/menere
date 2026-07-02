@@ -134,7 +134,7 @@ public struct ListDetailView: View {
 
             Section {
                 HStack {
-                    TextField("Add item", text: $store.newItemTitle)
+                    TextField("Add an item…", text: $store.newItemTitle)
                         .onSubmit { store.send(.addItem) }
                         .accessibilityIdentifier("new-list-item-field")
                     Button { store.send(.addItem) } label: { Image(systemName: "plus.circle.fill") }

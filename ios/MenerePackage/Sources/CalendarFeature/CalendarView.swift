@@ -110,7 +110,8 @@ public struct CalendarView: View {
             if items.isEmpty {
                 VStack {
                     Spacer()
-                    Text("No events")
+                    Text("Nothing on the books — a rare quiet day.")
+                        .multilineTextAlignment(.center)
                         .foregroundStyle(Color.inkSoft)
                     Spacer()
                 }

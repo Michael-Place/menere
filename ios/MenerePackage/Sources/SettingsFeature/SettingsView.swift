@@ -214,7 +214,7 @@ public struct SettingsView: View {
                 }
             }
 
-            Section("Invite") {
+            Section {
                 if let household = store.household {
                     VStack(alignment: .leading, spacing: 8) {
                         Text("Invite code")
@@ -262,6 +262,10 @@ public struct SettingsView: View {
                     }
                 }
                 .accessibilityIdentifier("join-household-button")
+            } header: {
+                Text("Invite")
+            } footer: {
+                Text("Share this code and someone can join the family from their own phone.")
             }
 
             Section {
@@ -270,7 +274,7 @@ public struct SettingsView: View {
                 } label: {
                     HStack {
                         Image(systemName: "rectangle.portrait.and.arrow.right")
-                        Text("Sign Out")
+                        Text("Sign out")
                     }
                 }
             }
@@ -279,11 +283,11 @@ public struct SettingsView: View {
         .background(Color.familyCanvas)
         .navigationTitle("Profile")
         .navigationBarTitleDisplayMode(.inline)
-        .alert("Sign Out", isPresented: $store.showSignOutConfirmation) {
+        .alert("Sign out", isPresented: $store.showSignOutConfirmation) {
             Button("Cancel", role: .cancel) { store.send(.cancelSignOut) }
-            Button("Sign Out", role: .destructive) { store.send(.confirmSignOut) }
+            Button("Sign out", role: .destructive) { store.send(.confirmSignOut) }
         } message: {
-            Text("Are you sure you want to sign out?")
+            Text("Leaving already? You'll need your phone number to sign back in.")
         }
         .sheet(isPresented: $store.showJoinSheet) {
             joinSheet
@@ -325,7 +329,7 @@ public struct SettingsView: View {
             }
             .scrollContentBackground(.hidden)
             .background(Color.familyCanvas)
-            .navigationTitle("Join a Household")
+            .navigationTitle("Join a family")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {

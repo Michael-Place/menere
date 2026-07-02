@@ -71,7 +71,7 @@ public struct OnboardingReducer {
 public struct OnboardingView: View {
     @Bindable var store: StoreOf<OnboardingReducer>
 
-    /// Bumped when the success ("You're Ready!") step appears so the check can bounce once on entry.
+    /// Bumped when the success ("Welcome to the family") step appears so the check can bounce once on entry.
     @State private var readyAppeared = false
 
     public init(store: StoreOf<OnboardingReducer>) {
@@ -109,16 +109,16 @@ public struct OnboardingView: View {
                 .onAppear { readyAppeared = true }
 
             VStack(spacing: 12) {
-                Text("You're Ready!")
+                Text("Welcome to the family")
                     .font(.largeTitle.bold())
 
-                Text("Set up your profile to get started.")
+                Text("One quick thing — what should we call you?")
                     .font(.body)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
             }
 
-            TextField("Display Name", text: $store.displayName)
+            TextField("Your name", text: $store.displayName)
                 .textFieldStyle(.roundedBorder)
                 .padding(.horizontal, 32)
 

@@ -176,7 +176,7 @@ public struct ListsView: View {
                     if store.isLoading {
                         ProgressView()
                     } else {
-                        Text("No lists yet. Tap + to start a shared family list.")
+                        Text("No lists yet. Groceries, Costco, house projects — tap + and share the load.")
                             .foregroundStyle(.secondary)
                     }
                 } else {
@@ -245,8 +245,8 @@ public struct ListsView: View {
                     }
             }
         }
-        .alert("New List", isPresented: $store.showAddSheet) {
-            TextField("List name", text: $store.newTitle)
+        .alert("New list", isPresented: $store.showAddSheet) {
+            TextField("Groceries, Costco, projects…", text: $store.newTitle)
             Button("Cancel", role: .cancel) { store.showAddSheet = false }
             Button("Create") { store.send(.createList) }
         }

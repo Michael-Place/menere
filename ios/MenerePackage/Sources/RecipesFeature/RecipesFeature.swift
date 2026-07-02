@@ -133,7 +133,7 @@ public struct RecipesReducer {
                     .filter { weekRecipeIDs.contains($0.id) }
                     .flatMap(\.ingredients)
                 guard !ingredients.isEmpty else {
-                    state.generatedMessage = "No ingredients — assign recipes to this week first."
+                    state.generatedMessage = "Nothing to shop for yet — plan a few meals this week first."
                     return .none
                 }
                 let list = FamilyList(title: "Groceries", icon: "cart", color: .sage)
@@ -149,7 +149,7 @@ public struct RecipesReducer {
                 }
 
             case let .groceryListGenerated(count):
-                state.generatedMessage = "Added \(count) item\(count == 1 ? "" : "s") to a new \"Groceries\" list."
+                state.generatedMessage = "Done — \(count) item\(count == 1 ? "" : "s") added to a new Groceries list."
                 return .none
 
             case .dismissGeneratedMessage:

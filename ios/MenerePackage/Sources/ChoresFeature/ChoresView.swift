@@ -38,7 +38,7 @@ public struct ChoresView: View {
                 if store.chores.isEmpty, store.isLoading {
                     ProgressView()
                 } else if store.chores.isEmpty {
-                    Text("No chores yet. Tap + to add one.")
+                    Text("No chores on the board — tap + to add one.")
                         .foregroundStyle(Color.inkSoft)
                 } else {
                     ForEach(store.chores) { chore in
@@ -60,7 +60,7 @@ public struct ChoresView: View {
             } header: {
                 Text("Rewards")
             } footer: {
-                Text("Redeem spends the current member's XP.")
+                Text("Redeeming spends your hard-earned XP. Choose wisely.")
             }
             .listRowBackground(Color.familySurface)
         }
@@ -77,8 +77,8 @@ public struct ChoresView: View {
         .sheet(item: $store.scope(state: \.form, action: \.form)) { formStore in
             ChoreFormView(store: formStore)
         }
-        .alert("New Reward", isPresented: $store.showAddReward) {
-            TextField("Reward", text: $store.newRewardTitle)
+        .alert("New reward", isPresented: $store.showAddReward) {
+            TextField("What's the prize?", text: $store.newRewardTitle)
             TextField("XP cost", value: $store.newRewardCost, format: .number)
                 .keyboardType(.numberPad)
             Button("Cancel", role: .cancel) { store.showAddReward = false }

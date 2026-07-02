@@ -40,7 +40,7 @@ public struct RecipesView: View {
             RecipeFormView(store: formStore)
         }
         .alert(
-            "Grocery List",
+            "Grocery list",
             isPresented: Binding(
                 get: { store.generatedMessage != nil },
                 set: { if !$0 { store.send(.dismissGeneratedMessage) } }
@@ -60,9 +60,9 @@ public struct RecipesView: View {
                 ProgressView().frame(maxHeight: .infinity)
             } else if store.recipes.isEmpty {
                 ContentUnavailableView(
-                    "No recipes",
+                    "No recipes yet",
                     systemImage: "book.closed",
-                    description: Text("Tap + to add a family recipe.")
+                    description: Text("Add one, or import from a URL — future dinner-you says thanks.")
                 )
             } else {
                 List {
@@ -110,7 +110,7 @@ public struct RecipesView: View {
                             if let e = entry(for: day) {
                                 Text(e.recipeTitle).font(.caption).foregroundStyle(Color.bacanGreen)
                             } else {
-                                Text("No meal planned").font(.caption).foregroundStyle(Color.inkSoft)
+                                Text("Nothing planned — cereal night?").font(.caption).foregroundStyle(Color.inkSoft)
                             }
                         }
                         Spacer()
