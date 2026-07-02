@@ -21,8 +21,8 @@ targets:
         INFOPLIST_FILE: App/Info.plist
         CODE_SIGN_ENTITLEMENTS: App/Menere.entitlements
         PRODUCT_BUNDLE_IDENTIFIER: com.copoche.menere
-        MARKETING_VERSION: "1.4.0"
-        CURRENT_PROJECT_VERSION: "7"
+        MARKETING_VERSION: "1.5.0"
+        CURRENT_PROJECT_VERSION: "8"
         SWIFT_VERSION: "5.0"
         TARGETED_DEVICE_FAMILY: "1,2"
         DEVELOPMENT_TEAM: Z2FNFL3X73
