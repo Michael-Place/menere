@@ -29,6 +29,11 @@ public struct HueConfig: Codable, Equatable, Sendable {
     /// sensorId → human label for the ZLLTemperature sensors we treat as room thermometers
     /// (e.g. the boys' nursery motion sensors). Only labeled sensors appear on the card.
     public var sensorLabels: [String: String]
+    /// sensorId → the sensor's *bridge name* at pairing time. Captured for **every** temperature
+    /// sensor (labeled or not) so a future re-pair against a fresh bridge can re-match sensors by
+    /// name and carry the old labels forward — the bridge-died scenario where meanings survive but
+    /// sensor IDs change. Nil on hand-written / pre-P12-C2 docs (decode-safe).
+    public var sensorNames: [String: String]?
     /// When true, the live `HueClient` returns fixtures instead of hitting the bridge. Exists only
     /// while C0 hasn't run; a real config leaves this nil/false.
     public var mock: Bool?
@@ -40,6 +45,7 @@ public struct HueConfig: Codable, Equatable, Sendable {
         rituals: [HueRitual] = [],
         roomOwners: [String: String]? = nil,
         sensorLabels: [String: String] = [:],
+        sensorNames: [String: String]? = nil,
         mock: Bool? = nil
     ) {
         self.bridgeId = bridgeId
@@ -48,11 +54,12 @@ public struct HueConfig: Codable, Equatable, Sendable {
         self.rituals = rituals
         self.roomOwners = roomOwners
         self.sensorLabels = sensorLabels
+        self.sensorNames = sensorNames
         self.mock = mock
     }
 
     private enum CodingKeys: String, CodingKey {
-        case bridgeId, bridgeIP, applicationKey, rituals, roomOwners, sensorLabels, mock
+        case bridgeId, bridgeIP, applicationKey, rituals, roomOwners, sensorLabels, sensorNames, mock
     }
 
     /// Decode-safe: a hand-written or partial config doc tolerates missing collections (they
@@ -65,6 +72,7 @@ public struct HueConfig: Codable, Equatable, Sendable {
         rituals = try c.decodeIfPresent([HueRitual].self, forKey: .rituals) ?? []
         roomOwners = try c.decodeIfPresent([String: String].self, forKey: .roomOwners)
         sensorLabels = try c.decodeIfPresent([String: String].self, forKey: .sensorLabels) ?? [:]
+        sensorNames = try c.decodeIfPresent([String: String].self, forKey: .sensorNames)
         mock = try c.decodeIfPresent(Bool.self, forKey: .mock)
     }
 

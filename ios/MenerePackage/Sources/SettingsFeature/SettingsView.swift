@@ -2,6 +2,7 @@ import AuthenticationDomain
 import ComposableArchitecture
 import FamilyDomain
 import HouseholdClient
+import HueClient
 import MenereUI
 import PersistenceClient
 import SwiftUI
@@ -21,6 +22,18 @@ public struct SettingsReducer {
         var isJoining = false
         var joinError: String?
         @Presents var profileEdit: ProfileEditReducer.State?
+
+        // MARK: Smart home (Hue, P12-C2)
+        /// The household's Hue config, or nil when never paired (→ the "Set up" row).
+        var hueConfig: HueConfig?
+        /// Live reachability of the paired bridge: nil = still probing, true/false = result.
+        var hueReachable: Bool?
+        /// Live scenes from the bridge (for the ritual-row names + the rebind picker). Empty when
+        /// unreachable or not yet loaded.
+        var hueScenes: [HueScene] = []
+        /// The ritual key whose rebind scene-picker is open on the status view (nil = closed).
+        var huePickerRitualKey: String?
+        @Presents var huePairing: HuePairingReducer.State?
 
         public init() {}
 
@@ -51,6 +64,16 @@ public struct SettingsReducer {
         case editProfileTapped
         case profileEdit(PresentationAction<ProfileEditReducer.Action>)
         case binding(BindingAction<State>)
+
+        // Smart home (Hue)
+        case hueConfigLoaded(HueConfig?)
+        case hueProbeLoaded(reachable: Bool, scenes: [HueScene])
+        case setupHueTapped
+        case rePairTapped
+        case hueRitualTapped(String?)
+        case hueSceneChosen(ritualKey: String, scene: HueScene)
+        case hueConfigResaved(HueConfig)
+        case huePairing(PresentationAction<HuePairingReducer.Action>)
     }
 
     public init() {}
@@ -100,7 +123,77 @@ public struct SettingsReducer {
                     await send(.householdLoaded(h))
                     let members = (try? await persistence.members(hid)) ?? []
                     await send(.membersLoaded(members))
+                    // Smart home: load the config, then (if present) probe the bridge for the
+                    // reachability dot + scenes that name the ritual bindings.
+                    let config = try? await persistence.hueConfig(hid)
+                    await send(.hueConfigLoaded(config ?? nil))
                 }
+
+            case let .hueConfigLoaded(config):
+                state.hueConfig = config
+                guard let config else {
+                    state.hueReachable = nil
+                    state.hueScenes = []
+                    return .none
+                }
+                state.hueReachable = nil   // "probing…"
+                return .run { send in
+                    @Dependency(\.hue) var hue
+                    let reachable = (try? await hue.testConnection(config)) ?? false
+                    let scenes = reachable ? ((try? await hue.scenes(config)) ?? []) : []
+                    await send(.hueProbeLoaded(reachable: reachable, scenes: scenes))
+                }
+
+            case let .hueProbeLoaded(reachable, scenes):
+                state.hueReachable = reachable
+                state.hueScenes = scenes
+                return .none
+
+            case .setupHueTapped, .rePairTapped:
+                @Shared(.user) var user
+                guard let hid = user?.householdId else { return .none }
+                state.huePairing = HuePairingReducer.State(hid: hid, existingConfig: state.hueConfig)
+                return .none
+
+            case let .hueRitualTapped(key):
+                state.huePickerRitualKey = key
+                return .none
+
+            case let .hueSceneChosen(ritualKey, scene):
+                state.huePickerRitualKey = nil
+                guard var config = state.hueConfig, let groupId = scene.groupId else { return .none }
+                let label = config.rituals.first(where: { $0.key == ritualKey })?.label
+                    ?? HueBindingMatch.standardRituals.first(where: { $0.key == ritualKey })?.label
+                    ?? ritualKey.capitalized
+                let ritual = HueRitual(key: ritualKey, label: label, sceneId: scene.id, groupId: groupId)
+                if let i = config.rituals.firstIndex(where: { $0.key == ritualKey }) {
+                    config.rituals[i] = ritual
+                } else {
+                    config.rituals.append(ritual)
+                }
+                state.hueConfig = config
+                @Shared(.user) var user
+                guard let hid = user?.householdId else { return .none }
+                return .run { [config] send in
+                    @Dependency(\.persistence) var persistence
+                    try? await persistence.saveHueConfig(hid, config)
+                    await send(.hueConfigResaved(config))
+                }
+
+            case let .hueConfigResaved(config):
+                state.hueConfig = config
+                return .none
+
+            case let .huePairing(.presented(.delegate(.finished(config)))):
+                state.huePairing = nil
+                return .send(.hueConfigLoaded(config))
+
+            case .huePairing(.presented(.delegate(.cancelled))):
+                state.huePairing = nil
+                return .none
+
+            case .huePairing:
+                return .none
 
             case let .householdLoaded(h):
                 state.isLoadingHousehold = false
@@ -163,6 +256,9 @@ public struct SettingsReducer {
         }
         .ifLet(\.$profileEdit, action: \.profileEdit) {
             ProfileEditReducer()
+        }
+        .ifLet(\.$huePairing, action: \.huePairing) {
+            HuePairingReducer()
         }
     }
 }
@@ -268,6 +364,8 @@ public struct SettingsView: View {
                 Text("Share this code and someone can join the family from their own phone.")
             }
 
+            smartHomeSection
+
             Section {
                 Button(role: .destructive) {
                     store.send(.signOutTapped)
@@ -295,7 +393,160 @@ public struct SettingsView: View {
         .sheet(item: $store.scope(state: \.profileEdit, action: \.profileEdit)) { editStore in
             ProfileEditView(store: editStore)
         }
+        .sheet(item: $store.scope(state: \.huePairing, action: \.huePairing)) { pairingStore in
+            HuePairingView(store: pairingStore)
+        }
+        .sheet(isPresented: Binding(
+            get: { store.huePickerRitualKey != nil },
+            set: { if !$0 { store.send(.hueRitualTapped(nil)) } }
+        )) {
+            hueScenePicker
+        }
         .task { store.send(.task) }
+    }
+
+    // MARK: - Smart home (Hue, P12-C2)
+
+    @ViewBuilder
+    private var smartHomeSection: some View {
+        Section {
+            if let config = store.hueConfig {
+                hueStatusRow(config)
+                Button {
+                    store.send(.rePairTapped)
+                } label: {
+                    Label("Re-pair bridge", systemImage: "arrow.triangle.2.circlepath")
+                        .foregroundStyle(Color.ink)
+                }
+                .accessibilityIdentifier("hue-repair-row")
+                ForEach(hueRitualStates(config), id: \.key) { ritual in
+                    hueRitualRow(ritual)
+                }
+            } else {
+                Button {
+                    store.send(.setupHueTapped)
+                } label: {
+                    Label("Set up Philips Hue", systemImage: "lightbulb")
+                        .foregroundStyle(Color.ink)
+                }
+                .accessibilityIdentifier("hue-setup-row")
+            }
+        } header: {
+            Text("Smart home")
+        } footer: {
+            if store.hueConfig == nil {
+                Text("Pair your Hue bridge to light up the house from Today.")
+            }
+        }
+    }
+
+    private func hueStatusRow(_ config: HueConfig) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: "wifi.router")
+                .foregroundStyle(Color.bacanGreen)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Hue bridge").foregroundStyle(Color.ink)
+                Text(config.bridgeId).font(.caption).foregroundStyle(Color.inkSoft)
+            }
+            Spacer()
+            hueReachabilityDot
+        }
+        .accessibilityIdentifier("hue-status-row")
+    }
+
+    @ViewBuilder
+    private var hueReachabilityDot: some View {
+        switch store.hueReachable {
+        case .some(true):
+            HStack(spacing: 6) {
+                Circle().fill(Color.bacanGreen).frame(width: 8, height: 8)
+                Text("Reachable").font(.caption).foregroundStyle(Color.inkSoft)
+            }
+        case .some(false):
+            HStack(spacing: 6) {
+                Circle().fill(Color.inkSoft).frame(width: 8, height: 8)
+                Text("Bridge unreachable — are you home?").font(.caption).foregroundStyle(Color.inkSoft)
+            }
+        case .none:
+            ProgressView().controlSize(.mini)
+        }
+    }
+
+    private func hueRitualRow(_ ritual: HueRitualStatus) -> some View {
+        Button {
+            store.send(.hueRitualTapped(ritual.key))
+        } label: {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(ritual.label).foregroundStyle(Color.ink)
+                    if let sceneName = ritual.sceneName {
+                        Text("→ \(sceneName)").font(.caption).foregroundStyle(Color.inkSoft)
+                    } else {
+                        Text("needs a scene").font(.caption).foregroundStyle(Color.terracotta)
+                    }
+                }
+                Spacer()
+                if !store.hueScenes.isEmpty {
+                    Image(systemName: "chevron.right").font(.caption).foregroundStyle(.secondary)
+                }
+            }
+        }
+        .disabled(store.hueScenes.isEmpty)
+    }
+
+    private var hueScenePicker: some View {
+        NavigationStack {
+            List {
+                ForEach(store.hueScenes) { scene in
+                    Button {
+                        if let key = store.huePickerRitualKey {
+                            store.send(.hueSceneChosen(ritualKey: key, scene: scene))
+                        }
+                    } label: {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(scene.name).foregroundStyle(Color.ink)
+                            if let groupId = scene.groupId {
+                                Text("Room \(groupId)").font(.caption).foregroundStyle(Color.inkSoft)
+                            }
+                        }
+                    }
+                }
+            }
+            .scrollContentBackground(.hidden)
+            .background(Color.familyCanvas)
+            .navigationTitle("Choose a scene")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { store.send(.hueRitualTapped(nil)) }
+                }
+            }
+        }
+    }
+
+    /// One ritual's display state on the status view.
+    private struct HueRitualStatus: Equatable {
+        let key: String
+        let label: String
+        /// The live scene name when bound + resolvable; nil → "needs a scene".
+        let sceneName: String?
+    }
+
+    /// The rituals to list under a paired config: the two standards, unioned with any extra rituals
+    /// the config already carries, each resolved to its live scene name when bound.
+    private func hueRitualStates(_ config: HueConfig) -> [HueRitualStatus] {
+        var keys: [(key: String, label: String)] = HueBindingMatch.standardRituals
+        for ritual in config.rituals where !keys.contains(where: { $0.key == ritual.key }) {
+            keys.append((ritual.key, ritual.label))
+        }
+        return keys.map { entry in
+            if let bound = config.rituals.first(where: { $0.key == entry.key }) {
+                let name = store.hueScenes.first(where: { $0.id == bound.sceneId })?.name
+                return HueRitualStatus(key: entry.key, label: bound.label, sceneName: name ?? "scene set")
+            } else {
+                return HueRitualStatus(key: entry.key, label: entry.label, sceneName: nil)
+            }
+        }
     }
 
     private var joinSheet: some View {

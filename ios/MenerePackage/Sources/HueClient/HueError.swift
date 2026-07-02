@@ -17,4 +17,8 @@ public enum HueError: Error, Equatable, Sendable {
     case networkError(String)
     /// The bridge returned a V1 `{"error": {...}}` payload.
     case apiError(Int, String)
+    /// Pairing: the bridge returned error type 101 — the link button hasn't been pressed yet. The
+    /// pairing flow treats this as "keep waiting", not a hard failure (unlike the P12-C1 read paths,
+    /// P12-C2 pairing surfaces this case to drive the 30-second link-button countdown/retry).
+    case linkButtonNotPressed
 }

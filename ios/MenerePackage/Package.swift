@@ -115,6 +115,7 @@ let package = Package(
                 "FamilyDomain",
                 "PersistenceClient",
                 "HouseholdClient",
+                "HueClient",
             ]
         ),
         .target(
@@ -390,6 +391,8 @@ let package = Package(
                 "PersistenceClient",
                 "HouseholdClient",
                 "UserDomain",
+                "HueClient",
+                "FamilyDomain",
             ]
         ),
         .testTarget(

@@ -112,6 +112,10 @@ public struct PersistenceClient: Sendable {
     /// Merge a corrected bridge IP back into the config doc after cloud rediscovery healed an
     /// IP drift (leaves every other field untouched).
     public var updateHueBridgeIP: @Sendable (_ hid: String, _ bridgeIP: String) async throws -> Void
+    /// Full-document write of the Hue config (P12-C2 pairing / re-pairing). Not a merge — the whole
+    /// `households/{hid}/config/hue` doc is replaced, so fields dropped since a prior write (e.g. a
+    /// `mock` flag from the C1 fixture) actually clear.
+    public var saveHueConfig: @Sendable (_ hid: String, _ config: HueConfig) async throws -> Void
 
     // MARK: Activity feed
     /// Recent activity, newest first (capped at 50).
@@ -392,6 +396,12 @@ extension PersistenceClient: DependencyKey {
             updateHueBridgeIP: { hid, bridgeIP in
                 try await households().document(hid).collection("config").document("hue").setData(
                     ["bridgeIP": bridgeIP], merge: true
+                )
+            },
+            saveHueConfig: { hid, config in
+                // Full-doc replace (merge: false) so a removed `mock` flag is cleared, not retained.
+                try await households().document(hid).collection("config").document("hue").setData(
+                    Firestore.Encoder().encode(config)
                 )
             },
             activity: { hid in

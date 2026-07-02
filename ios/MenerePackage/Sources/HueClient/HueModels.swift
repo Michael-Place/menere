@@ -52,6 +52,35 @@ public struct HueScene: Equatable, Sendable, Identifiable {
     }
 }
 
+/// A bridge found via cloud discovery (`discovery.meethue.com`) during pairing (P12-C2). Just an
+/// identity + LAN address — the pairing flow mints an app key against `ip` and confirms `id` via
+/// `/config`.
+public struct DiscoveredBridge: Equatable, Sendable, Identifiable {
+    /// Bridge id (MAC-derived), as reported by cloud discovery.
+    public let id: String
+    /// The bridge's current LAN IP.
+    public let ip: String
+
+    public init(id: String, ip: String) {
+        self.id = id
+        self.ip = ip
+    }
+}
+
+/// A ZLLTemperature sensor's identity + bridge name, used by the pairing binding step (P12-C2) to
+/// label sensors and capture `sensorNames` for future re-matching. (Distinct from `HueTemperature`,
+/// which carries the live reading but not the name.)
+public struct HueSensorInfo: Equatable, Sendable, Identifiable {
+    public let id: String
+    /// The sensor's `name` as reported by the bridge (e.g. "Hue motion sensor 1").
+    public let name: String
+
+    public init(id: String, name: String) {
+        self.id = id
+        self.name = name
+    }
+}
+
 /// A ZLLTemperature reading, already converted to °F (the family is US).
 public struct HueTemperature: Equatable, Sendable, Identifiable {
     public let sensorId: String

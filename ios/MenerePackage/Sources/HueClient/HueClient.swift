@@ -25,9 +25,23 @@ public struct HueClient: Sendable {
     public var recallScene: @Sendable (_ config: HueConfig, _ groupId: String, _ sceneId: String) async throws -> Void
     /// ZLLTemperature sensors → °F readings.
     public var temperatures: @Sendable (_ config: HueConfig) async throws -> [HueTemperature]
+    /// ZLLTemperature sensors → id + bridge name (no reading). Used by the pairing binding step to
+    /// list/label sensors and capture `sensorNames`.
+    public var sensors: @Sendable (_ config: HueConfig) async throws -> [HueSensorInfo]
     /// Re-find the bridge's current LAN IP via cloud discovery, matched on `bridgeId`. Nil when the
     /// bridge isn't listed (offline / different network). Powers IP-drift self-healing.
     public var rediscover: @Sendable (_ bridgeId: String) async throws -> String?
+
+    // MARK: Pairing (P12-C2) — LIVE-only (a mock config never pairs; these have no mock branch).
+
+    /// Cloud-discover bridges on the LAN (`discovery.meethue.com`). Usually returns exactly one.
+    public var discoverBridges: @Sendable () async throws -> [DiscoveredBridge]
+    /// Mint an application key against the bridge at `bridgeIP` (POST `/api`, devicetype
+    /// `"bacan#iphone"`). Throws `HueError.linkButtonNotPressed` (error type 101) until the physical
+    /// link button has been pressed within the last ~30s.
+    public var authenticate: @Sendable (_ bridgeIP: String) async throws -> String
+    /// Read the bridge id from `/api/<key>/config` after a fresh key is minted (confirms identity).
+    public var bridgeInfo: @Sendable (_ bridgeIP: String, _ applicationKey: String) async throws -> String
 }
 
 // MARK: - Live
@@ -61,11 +75,17 @@ extension HueClient: DependencyKey {
             temperatures: { config in
                 config.isMock ? HueFixtures.temperatures : try await session.temperatures(config)
             },
+            sensors: { config in
+                config.isMock ? HueFixtures.sensors : try await session.sensors(config)
+            },
             rediscover: { bridgeId in
                 // Discovery is a public cloud endpoint — same in mock and live (mock never needs it
                 // because `testConnection` already returns true).
                 try await session.rediscover(bridgeId: bridgeId)
-            }
+            },
+            discoverBridges: { try await session.discoverBridges() },
+            authenticate: { bridgeIP in try await session.authenticate(bridgeIP: bridgeIP) },
+            bridgeInfo: { bridgeIP, key in try await session.bridgeInfo(bridgeIP: bridgeIP, applicationKey: key) }
         )
     }
 
@@ -76,7 +96,11 @@ extension HueClient: DependencyKey {
         scenes: { _ in HueFixtures.scenes },
         recallScene: { _, _, _ in },
         temperatures: { _ in HueFixtures.temperatures },
-        rediscover: { _ in nil }
+        sensors: { _ in HueFixtures.sensors },
+        rediscover: { _ in nil },
+        discoverBridges: { [DiscoveredBridge(id: "001788FFFE000001", ip: "192.168.1.42")] },
+        authenticate: { _ in "preview-app-key" },
+        bridgeInfo: { _, _ in "001788FFFE000001" }
     )
 }
 
@@ -123,6 +147,12 @@ public enum HueFixtures {
     public static let temperatures: [HueTemperature] = [
         HueTemperature(sensorId: "sensor-famfis", tempF: 72.1, lastUpdated: "2026-07-02T14:00:00"),
         HueTemperature(sensorId: "sensor-oliver", tempF: 71.4, lastUpdated: "2026-07-02T14:00:00"),
+    ]
+
+    /// Same sensor ids as `temperatures`, with their bridge names (for the pairing labeling step).
+    public static let sensors: [HueSensorInfo] = [
+        HueSensorInfo(id: "sensor-famfis", name: "Famfis room sensor"),
+        HueSensorInfo(id: "sensor-oliver", name: "Oliver room sensor"),
     ]
 }
 
@@ -239,6 +269,82 @@ private final class HueURLSession: NSObject, URLSessionDelegate, @unchecked Send
             .sorted { $0.sensorId < $1.sensorId }
     }
 
+    func sensors(_ config: HueConfig) async throws -> [HueSensorInfo] {
+        let data = try await get("\(base(config))/sensors")
+        let dict = try decode([String: SensorResponse].self, data)
+        return dict
+            .filter { $0.value.type == "ZLLTemperature" }
+            .map { id, s in HueSensorInfo(id: id, name: s.name ?? id) }
+            .sorted { $0.id < $1.id }
+    }
+
+    // MARK: Pairing (P12-C2)
+
+    /// Cloud discovery — same endpoint as `rediscover`, but returns *all* bridges (no id filter).
+    func discoverBridges() async throws -> [DiscoveredBridge] {
+        guard let url = URL(string: "https://discovery.meethue.com") else {
+            throw HueError.discoveryFailed
+        }
+        do {
+            let (data, response) = try await session.data(from: url)
+            guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+                throw HueError.discoveryFailed
+            }
+            let entries = try decoder.decode([DiscoveryEntry].self, from: data)
+            return entries.map { DiscoveredBridge(id: $0.id, ip: $0.internalipaddress) }
+        } catch let error as HueError {
+            throw error
+        } catch is DecodingError {
+            throw HueError.invalidResponse
+        } catch {
+            throw HueError.networkError(error.localizedDescription)
+        }
+    }
+
+    /// Mint an app key. POST `/api` `{"devicetype":"bacan#iphone"}`; error type 101 → not-pressed.
+    func authenticate(bridgeIP: String) async throws -> String {
+        guard let url = URL(string: "https://\(bridgeIP)/api") else { throw HueError.bridgeUnreachable }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONSerialization.data(withJSONObject: ["devicetype": "bacan#iphone"])
+        do {
+            let (data, _) = try await session.data(for: request)
+            return try parseAuthResponse(data)
+        } catch let error as HueError {
+            throw error
+        } catch {
+            throw HueError.networkError(error.localizedDescription)
+        }
+    }
+
+    private func parseAuthResponse(_ data: Data) throws -> String {
+        guard let responses = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]],
+              let first = responses.first else {
+            throw HueError.invalidResponse
+        }
+        if let success = first["success"] as? [String: Any],
+           let username = success["username"] as? String {
+            return username
+        }
+        if let error = first["error"] as? [String: Any], let type = error["type"] as? Int {
+            if type == 101 { throw HueError.linkButtonNotPressed }
+            throw HueError.apiError(type, error["description"] as? String ?? "Unknown error")
+        }
+        throw HueError.invalidResponse
+    }
+
+    /// GET `/api/<key>/config` → the bridge id (confirms identity of the freshly-paired bridge).
+    func bridgeInfo(bridgeIP: String, applicationKey: String) async throws -> String {
+        let data = try await get("https://\(bridgeIP)/api/\(applicationKey)/config")
+        struct ConfigResponse: Decodable { let bridgeid: String }
+        do {
+            return try decoder.decode(ConfigResponse.self, from: data).bridgeid
+        } catch {
+            throw HueError.invalidResponse
+        }
+    }
+
     // MARK: Rediscovery
 
     func rediscover(bridgeId: String) async throws -> String? {
@@ -352,6 +458,7 @@ private struct SceneResponse: Decodable {
 }
 
 private struct SensorResponse: Decodable {
+    let name: String?
     let type: String
     let state: SensorState
     struct SensorState: Decodable {
