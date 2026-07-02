@@ -29,11 +29,19 @@
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>Bacán uses your location to estimate drive times to dinner.</string>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>Bacán finds your family's Lutron shade bridge on your home Wi-Fi so you can open and close the shades.</string>
+	<string>Bacán talks to your family's home devices — shades, speakers, and bridges — on your home Wi-Fi.</string>
 	<key>NSBonjourServices</key>
 	<array>
 		<string>_lutron._tcp</string>
+		<string>_sonos._tcp</string>
 	</array>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<!-- Sonos control is plain-HTTP UPnP on the LAN (port 1400); allow local-network loads
+		     without disabling ATS for internet traffic. -->
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>

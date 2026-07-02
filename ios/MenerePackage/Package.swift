@@ -27,6 +27,7 @@ let package = Package(
         .library(name: "LocationClient", targets: ["LocationClient"]),
         .library(name: "HueClient", targets: ["HueClient"]),
         .library(name: "LutronClient", targets: ["LutronClient"]),
+        .library(name: "SonosClient", targets: ["SonosClient"]),
         .library(name: "IdentifyClient", targets: ["IdentifyClient"]),
         .library(name: "EnrichmentClient", targets: ["EnrichmentClient"]),
         .library(name: "CatalogClient", targets: ["CatalogClient"]),
@@ -133,6 +134,7 @@ let package = Package(
                 "LocationClient",
                 "HueClient",
                 "LutronClient",
+                "SonosClient",
             ]
         ),
         .target(
@@ -262,6 +264,14 @@ let package = Package(
         ),
         .target(
             name: "LutronClient",
+            dependencies: [
+                .product(name: "Dependencies", package: "swift-dependencies"),
+                .product(name: "DependenciesMacros", package: "swift-dependencies"),
+                "FamilyDomain",
+            ]
+        ),
+        .target(
+            name: "SonosClient",
             dependencies: [
                 .product(name: "Dependencies", package: "swift-dependencies"),
                 .product(name: "DependenciesMacros", package: "swift-dependencies"),
@@ -434,12 +444,20 @@ let package = Package(
             ]
         ),
         .testTarget(
+            name: "SonosClientTests",
+            dependencies: [
+                "SonosClient",
+                "FamilyDomain",
+            ]
+        ),
+        .testTarget(
             name: "TodayFeatureTests",
             dependencies: [
                 .product(name: "ComposableArchitecture", package: "swift-composable-architecture"),
                 "TodayFeature",
                 "HueClient",
                 "LutronClient",
+                "SonosClient",
                 "FamilyDomain",
             ]
         ),

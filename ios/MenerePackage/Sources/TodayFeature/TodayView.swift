@@ -475,7 +475,7 @@ public struct TodayView: View {
         NavigationLink {
             HouseView(
                 config: house.config, members: store.members, bridges: house.bridges,
-                lutronConfig: store.lutronConfig
+                lutronConfig: store.lutronConfig, sonosConfig: store.sonosConfig
             )
         } label: {
             HStack(spacing: 8) {

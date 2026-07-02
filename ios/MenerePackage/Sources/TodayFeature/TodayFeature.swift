@@ -103,6 +103,10 @@ public struct TodayReducer {
         /// Passed into `HouseView` (which loads live shade levels on appear) and consulted when a
         /// ritual carries `shadeActions`. Nil = no shades paired.
         var lutronConfig: LutronConfig?
+        /// The household's OPTIONAL Sonos config (P15-C2). Unlike Lutron, nil does NOT hide speakers —
+        /// Sonos discovers live off the LAN with no pairing; the doc only forces the mock or carries a
+        /// cosmetic room order. Passed into `HouseView`, which discovers speakers on appear.
+        var sonosConfig: SonosConfig?
         /// The ritual key whose scene recall is in flight (drives the button's pending state).
         var recallingRitual: String?
         /// The ritual key that just succeeded — drives the checkmark morph + success haptic until
@@ -159,6 +163,9 @@ public struct TodayReducer {
         /// Load the Lutron shade config (independent, non-blocking).
         case loadLutronConfig
         case lutronConfigLoaded(LutronConfig?)
+        /// Load the optional Sonos config (independent, non-blocking). Absent → still live-discovers.
+        case loadSonosConfig
+        case sonosConfigLoaded(SonosConfig?)
         /// Recall a ritual's scene (Bedtime / Dinner's ready).
         case recallRitual(HueRitual)
         case ritualRecallFinished(key: String)
@@ -247,6 +254,8 @@ public struct TodayReducer {
                     .send(.loadHouse),
                     // Lutron shade config (P15) — for HouseView + ritual shadeActions.
                     .send(.loadLutronConfig),
+                    // Sonos config (P15-C2) — optional; HouseView discovers speakers regardless.
+                    .send(.loadSonosConfig),
                     // Ask once so tonight's drive time can resolve (idempotent; no-op if determined).
                     .run { _ in
                         @Dependency(\.location) var location
@@ -419,6 +428,18 @@ public struct TodayReducer {
 
             case let .lutronConfigLoaded(config):
                 state.lutronConfig = config
+                return .none
+
+            case .loadSonosConfig:
+                guard let hid = hid() else { return .none }
+                return .run { send in
+                    @Dependency(\.persistence) var persistence
+                    let config = try? await persistence.sonosConfig(hid)
+                    await send(.sonosConfigLoaded(config ?? nil))
+                }
+
+            case let .sonosConfigLoaded(config):
+                state.sonosConfig = config
                 return .none
 
             case let .recallRitual(ritual):

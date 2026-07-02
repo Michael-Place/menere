@@ -126,6 +126,13 @@ public struct PersistenceClient: Sendable {
     /// `households/{hid}/config/lutron` doc is replaced, so a dropped `mock` flag actually clears.
     public var saveLutronConfig: @Sendable (_ hid: String, _ config: LutronConfig) async throws -> Void
 
+    // MARK: Smart home (Sonos) config (P15-C2)
+    /// The household's optional Sonos config at `households/{hid}/config/sonos`, or nil when absent.
+    /// Unlike Hue/Lutron, an absent doc does NOT hide the feature — Sonos discovers live off the LAN
+    /// with no pairing; the doc exists only to force the mock (`mock: true`) or carry `roomOrder`.
+    /// Decode-safe (an empty `{}` doc still resolves).
+    public var sonosConfig: @Sendable (_ hid: String) async throws -> SonosConfig?
+
     // MARK: Activity feed
     /// Recent activity, newest first (capped at 50).
     public var activity: @Sendable (_ hid: String) async throws -> [ActivityItem]
@@ -424,6 +431,11 @@ extension PersistenceClient: DependencyKey {
                 try await households().document(hid).collection("config").document("lutron").setData(
                     Firestore.Encoder().encode(config)
                 )
+            },
+            sonosConfig: { hid in
+                let s = try await households().document(hid).collection("config").document("sonos").getDocument()
+                guard let d = s.data() else { return nil }
+                return try Firestore.Decoder().decode(SonosConfig.self, from: d)
             },
             activity: { hid in
                 let snapshot = try await households().document(hid).collection("activity")

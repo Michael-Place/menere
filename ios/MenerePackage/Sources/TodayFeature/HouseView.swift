@@ -3,6 +3,7 @@ import FamilyDomain
 import HueClient
 import LutronClient
 import MenereUI
+import SonosClient
 import SwiftUI
 
 /// The granular House control surface (P12-C4), pushed from Today's "The house ›" card. A utility
@@ -16,13 +17,15 @@ public struct HouseView: View {
     /// shades load on appear from `lutronConfig` (P15-C1) — no need to pre-fetch them on Today.
     public init(
         config: HueConfig, members: [HouseholdMember], bridges: [BridgeSnapshot],
-        lutronConfig: LutronConfig? = nil, shades: [LutronShade] = []
+        lutronConfig: LutronConfig? = nil, shades: [LutronShade] = [],
+        sonosConfig: SonosConfig? = nil
     ) {
         _store = Bindable(
             wrappedValue: Store(
                 initialState: HouseReducer.State(
                     config: config, members: members, bridges: bridges,
-                    lutronConfig: lutronConfig, shades: shades
+                    lutronConfig: lutronConfig, shades: shades,
+                    sonosConfig: sonosConfig
                 )
             ) { HouseReducer() }
         )
@@ -44,6 +47,11 @@ public struct HouseView: View {
                 // is future polish).
                 ForEach(store.shadesByArea, id: \.area) { group in
                     shadesSection(area: group.area, shades: group.shades)
+                }
+                // Speakers section (P15-C2) — one row per Sonos group (coordinator), below the shades.
+                // Renders nothing when discovery found no speakers (not home / no Sonos) — silent degrade.
+                if !store.sonosGroups.isEmpty {
+                    speakersSection(store.sonosGroups)
                 }
             }
             .padding(.horizontal)
@@ -185,6 +193,113 @@ public struct HouseView: View {
         }
         .buttonStyle(.pressable)
         .accessibilityIdentifier(id)
+    }
+
+    // MARK: Speakers section (P15-C2)
+
+    private func speakersSection(_ groups: [SonosGroup]) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text("Speakers".uppercased())
+                .font(.system(.caption, design: .rounded).weight(.semibold))
+                .foregroundStyle(Color.inkSoft)
+                .padding(.bottom, 6)
+            VStack(spacing: 0) {
+                ForEach(Array(groups.enumerated()), id: \.element.id) { idx, group in
+                    speakerRow(group)
+                    if idx < groups.count - 1 {
+                        Divider().overlay(Color.inkSoft.opacity(0.15)).padding(.leading, 16)
+                    }
+                }
+            }
+            .background(
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .fill(Color.familySurface)
+            )
+        }
+        .accessibilityIdentifier("house-speakers")
+    }
+
+    private func speakerRow(_ group: SonosGroup) -> some View {
+        VStack(spacing: 8) {
+            HStack(spacing: 12) {
+                albumArt(group.nowPlaying)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(group.roomName)
+                        .font(.system(.body, design: .rounded).weight(.medium))
+                        .foregroundStyle(Color.ink)
+                        .lineLimit(1)
+                    Text(group.nowPlaying.line)
+                        .font(.system(.caption, design: .rounded))
+                        .foregroundStyle(Color.inkSoft)
+                        .lineLimit(1)
+                        .accessibilityIdentifier("house-speaker-nowplaying-\(group.id)")
+                }
+                Spacer(minLength: 0)
+                Button {
+                    store.send(.toggleSonosPlayback(groupId: group.id))
+                } label: {
+                    Image(systemName: group.nowPlaying.isPlaying ? "pause.fill" : "play.fill")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(Color.bacanGreen)
+                        .frame(width: 38, height: 32)
+                        .background(Capsule(style: .continuous).fill(Color.bacanGreen.opacity(0.14)))
+                }
+                .buttonStyle(.pressable)
+                .accessibilityIdentifier("house-speaker-playpause-\(group.id)")
+            }
+            HStack(spacing: 10) {
+                Image(systemName: "speaker.fill")
+                    .font(.caption2)
+                    .foregroundStyle(Color.inkSoft)
+                Slider(
+                    value: Binding(
+                        get: { Double(group.volume) },
+                        set: { store.send(.sonosVolumeChanged(groupId: group.id, volume: Int($0.rounded()))) }
+                    ),
+                    in: 0...100
+                )
+                .tint(Color.bacanGreen)
+                .accessibilityIdentifier("house-speaker-slider-\(group.id)")
+                Image(systemName: "speaker.wave.3.fill")
+                    .font(.caption2)
+                    .foregroundStyle(Color.inkSoft)
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .accessibilityIdentifier("house-speaker-\(group.id)")
+    }
+
+    /// A small album-art thumbnail: the real art when a URL is present (async, URLCache-backed), a warm
+    /// color block for a playing group with no art (a record has no cover), and an ink-soft music note
+    /// when idle. Always 44×44 rounded.
+    @ViewBuilder
+    private func albumArt(_ nowPlaying: SonosNowPlaying) -> some View {
+        let side: CGFloat = 44
+        RoundedRectangle(cornerRadius: 9, style: .continuous)
+            .fill(nowPlaying.isPlaying ? Color.bacanGreen.opacity(0.18) : Color.inkSoft.opacity(0.12))
+            .frame(width: side, height: side)
+            .overlay {
+                if let url = nowPlaying.albumArtURL {
+                    AsyncImage(url: url) { phase in
+                        if let image = phase.image {
+                            image.resizable().scaledToFill()
+                        } else {
+                            musicNote(playing: nowPlaying.isPlaying)
+                        }
+                    }
+                } else {
+                    musicNote(playing: nowPlaying.isPlaying)
+                }
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+            .accessibilityHidden(true)
+    }
+
+    private func musicNote(playing: Bool) -> some View {
+        Image(systemName: "music.note")
+            .font(.system(size: 18, weight: .semibold))
+            .foregroundStyle(playing ? Color.bacanGreen : Color.inkSoft)
     }
 
     // MARK: Room row

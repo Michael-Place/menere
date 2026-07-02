@@ -3,6 +3,7 @@ import FamilyDomain
 import Foundation
 import HueClient
 import LutronClient
+import SonosClient
 
 /// The granular House control surface (P12-C4) — the SUBSTRATE future family experiences (and the
 /// planned P14 agent tools) compose on. Where the Today "house" card is a read-only summary + ritual
@@ -39,15 +40,26 @@ public struct HouseReducer {
         /// Live shade state, mutated optimistically and re-synced on refresh. Loaded on `.task`.
         public var shades: [LutronShade] = []
 
+        // MARK: Sonos speakers (P15-C2)
+        /// The household's OPTIONAL Sonos config (nil still discovers live — Sonos needs no pairing).
+        /// Stable for the screen's lifetime; only forces the mock or carries a cosmetic room order.
+        public var sonosConfig: SonosConfig?
+        /// Live Sonos state, one row per group (coordinator), with now-playing + volume. Mutated
+        /// optimistically and re-synced on refresh. Discovered on `.task`; empty = no speakers / not home.
+        public var sonosGroups: [SonosGroup] = []
+
         public init(
             config: HueConfig, members: [HouseholdMember] = [], bridges: [BridgeSnapshot] = [],
-            lutronConfig: LutronConfig? = nil, shades: [LutronShade] = []
+            lutronConfig: LutronConfig? = nil, shades: [LutronShade] = [],
+            sonosConfig: SonosConfig? = nil, sonosGroups: [SonosGroup] = []
         ) {
             self.config = config
             self.members = members
             self.bridges = bridges
             self.lutronConfig = lutronConfig
             self.shades = shades
+            self.sonosConfig = sonosConfig
+            self.sonosGroups = sonosGroups
         }
 
         /// Shades grouped by area/room name, each group's shades sorted by name — the House "Shades"
@@ -116,12 +128,21 @@ public struct HouseReducer {
         case raiseShade(zoneId: String)
         case lowerShade(zoneId: String)
         case stopShade(zoneId: String)
+
+        // Sonos speakers (P15-C2)
+        case sonosReloaded([SonosGroup])
+        /// Play/pause the group's coordinator (optimistic).
+        case toggleSonosPlayback(groupId: String)
+        /// Volume slider moved (0–100). Optimistic + debounced commit (same ≥150ms floor as sliders).
+        case sonosVolumeChanged(groupId: String, volume: Int)
+        case commitSonosVolume(groupId: String, volume: Int)
     }
 
     public init() {}
 
     @Dependency(\.hue) var hue
     @Dependency(\.lutron) var lutron
+    @Dependency(\.sonos) var sonos
     @Dependency(\.continuousClock) var clock
 
     /// ≥150ms between slider PUTs (the required floor). One quiescent tick, then one write.
@@ -133,6 +154,8 @@ public struct HouseReducer {
         case roomBrightness(String)
         case lightBrightness(String)
         case shadeLevel(String)
+        case sonosRefresh
+        case sonosVolume(String)
     }
 
     public var body: some ReducerOf<Self> {
@@ -142,6 +165,7 @@ public struct HouseReducer {
                 state.isRefreshing = true
                 let bridges = state.config.bridges
                 let lutronConfig = state.lutronConfig
+                let sonosConfig = state.sonosConfig
                 return .merge(
                     .run { send in
                         let snapshots = await hue.readHouse(bridges)
@@ -153,7 +177,21 @@ public struct HouseReducer {
                         guard let lutronConfig else { return }
                         let shades = (try? await lutron.shades(lutronConfig)) ?? []
                         await send(.shadesReloaded(shades))
+                    },
+                    // Speakers discover independently (Sonos needs no config — nil still discovers).
+                    // One topology read + a now-playing/volume read per group; empty = silent degrade.
+                    .run { send in
+                        let speakers = (try? await sonos.discover(sonosConfig)) ?? []
+                        guard !speakers.isEmpty else { return }
+                        var groups: [SonosGroup] = []
+                        for row in SonosGroup.assemble(from: speakers, order: sonosConfig?.roomOrder) {
+                            let np = (try? await sonos.nowPlaying(sonosConfig, row.coordinator)) ?? SonosNowPlaying(state: .stopped)
+                            let vol = (try? await sonos.volume(sonosConfig, row.coordinator)) ?? 0
+                            groups.append(SonosGroup(coordinator: row.coordinator, members: row.members, nowPlaying: np, volume: vol))
+                        }
+                        await send(.sonosReloaded(groups))
                     }
+                    .cancellable(id: CancelID.sonosRefresh, cancelInFlight: true)
                 )
 
             case let .houseReloaded(snapshots):
@@ -202,6 +240,42 @@ public struct HouseReducer {
                     let shades = (try? await lutron.shades(config)) ?? []
                     await send(.shadesReloaded(shades))
                 }
+
+            // MARK: Sonos speakers (P15-C2)
+
+            case let .sonosReloaded(groups):
+                state.sonosGroups = groups
+                return .none
+
+            case let .toggleSonosPlayback(groupId):
+                guard let gi = state.sonosGroups.firstIndex(where: { $0.id == groupId }) else { return .none }
+                let coordinator = state.sonosGroups[gi].coordinator
+                let wasPlaying = state.sonosGroups[gi].nowPlaying.state == .playing
+                state.sonosGroups[gi].nowPlaying.state = wasPlaying ? .paused : .playing   // optimistic
+                let config = state.sonosConfig
+                return .run { _ in
+                    // Control the group coordinator (SoCo pattern). Best-effort — the section never
+                    // surfaces an error; a failed write just leaves the optimistic state to be corrected
+                    // on the next refresh.
+                    if wasPlaying { try? await sonos.pause(config, coordinator) }
+                    else { try? await sonos.play(config, coordinator) }
+                }
+
+            case let .sonosVolumeChanged(groupId, volume):
+                guard let gi = state.sonosGroups.firstIndex(where: { $0.id == groupId }) else { return .none }
+                let clamped = SonosVolume.clamp(volume)
+                state.sonosGroups[gi].volume = clamped   // optimistic
+                return .run { send in
+                    try await clock.sleep(for: Self.sliderDebounce)
+                    await send(.commitSonosVolume(groupId: groupId, volume: clamped))
+                }
+                .cancellable(id: CancelID.sonosVolume(groupId), cancelInFlight: true)
+
+            case let .commitSonosVolume(groupId, volume):
+                guard let group = state.sonosGroups.first(where: { $0.id == groupId }) else { return .none }
+                let coordinator = group.coordinator
+                let config = state.sonosConfig
+                return .run { _ in try? await sonos.setVolume(config, coordinator, volume) }
 
             case let .toggleRoom(bridgeId, roomId):
                 guard let bi = state.bridges.firstIndex(where: { $0.bridge.bridgeId == bridgeId }),
