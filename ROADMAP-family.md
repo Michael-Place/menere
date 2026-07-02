@@ -335,7 +335,21 @@ Michael's cleaning penchant + house maintenance, distinct from kid chores.
   celebrating ("The house is happy.").
 - Tab rename Chores → **Home**; chores/XP/rewards/leaderboard unchanged within it.
 
-### P9 — Plants & garden
+### P9 — Plants & garden  ✅ done (2026-07-02, commits 1b81222…d662662)
+Shipped in three chunks: (C1) plant roster in Home — CareItem gains photoPath/species/
+speciesLatin/careNotes + `CareTask.firstDueAt` anchor (due-math handles future/past
+anchors); photo-thumb rows, plant form (photo → Storage `care/{itemId}/photo.jpg`),
+**LeafUnfurl** motion for watering (plants' own signature, not the sticker slap),
+verb-aware activity ("Migueluh watered \"Monstera\""), Today card retitled **"Care
+due"** with per-kind icons. (C2) **`identifyPlant` callable DEPLOYED** (claude-sonnet-5
+vision → common/latin name, confidence, water interval, light, care notes; "Identify
+from photo" fills form provenance-captioned; won't stomp customized intervals; low
+confidence = warm no-fill). (C3) **Yard & garden section** — zone icon/interval sets,
+seasonal starters anchored via firstDueAt to next month occurrence (mulch Mar 15,
+prune Feb 15, aerate Sep 15, fall cleanup Oct 15, leaves Nov 15; yearly repeat),
+"Due Sep 15" wording for future anchors, persistent-filtered starters card
+(multi-add). Rollup surfaces needed ZERO changes for zones — confirmed the same will
+hold for P10 pets (form is kind-parametrized; add pet option sets + a Pets section).
 - `CareItem(kind: plant)`: photo, species, indoor location or yard zone, water/feed
   intervals, "last watered by Michael, Tuesday."
 - **Plant ID via the scan pipeline:** photograph a plant → FM/Claude → species +

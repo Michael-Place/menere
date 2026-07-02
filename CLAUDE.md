@@ -7,7 +7,9 @@ minimal public-launch hardening).
 
 For the full pivot plan, phase history, and decisions, see **`ROADMAP-family.md`**.
 
-**Act II (in progress — P5 identity ✅, P6 Today ✅, P7 Family Brain ✅, P8 home care ✅):**
+**Act II (in progress — P5 identity ✅, P6 Today ✅, P7 Family Brain ✅, P8 home care ✅, P9 plants & garden ✅):**
+Home tab sections: House care → Plants (photo roster, `identifyPlant` AI species ID,
+LeafUnfurl watering) → Yard & garden (seasonal firstDueAt anchors) → activity/chores/XP.
 The Chores tab is now **Home**: House care section (CareItem/CareTask in FamilyDomain,
 kind-agnostic — plants/pets reuse it), HouseHealth banner, care card on Today; chores/XP
 unchanged within it.
