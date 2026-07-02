@@ -7,7 +7,10 @@ minimal public-launch hardening).
 
 For the full pivot plan, phase history, and decisions, see **`ROADMAP-family.md`**.
 
-**Act II (in progress — P5 identity ✅, P6 Today dashboard ✅, P7 Family Brain ✅ shipped):**
+**Act II (in progress — P5 identity ✅, P6 Today ✅, P7 Family Brain ✅, P8 home care ✅):**
+The Chores tab is now **Home**: House care section (CareItem/CareTask in FamilyDomain,
+kind-agnostic — plants/pets reuse it), HouseHealth banner, care card on Today; chores/XP
+unchanged within it.
 **Family Brain** (`DocsFeature`): document vault under Lists ("Family Brain" row), AI
 processing via `processDocument`, search from every tab's toolbar, doc detail with
 due-date→calendar + expiry chips, "Needs attention" card on Today. the app is now **"Bacán"**

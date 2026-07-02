@@ -301,7 +301,19 @@ breaks it down, tags it, makes it searchable. **The family's second brain.**
   event (one tap to accept); `expiryDate` → scheduled reminder push (small
   scheduled function or client-side check on the Today view — start client-side).
 
-### P8 — Home care hub (Chores tab → "Home")
+### P8 — Home care hub (Chores tab → "Home")  ✅ done (2026-07-02, commits 7a9173d…7b6603a)
+Shipped in two chunks: (C1) `CareItem`/`CareTask` primitive in FamilyDomain (kinds
+house/zone active, plant/pet dormant for P9/P10; computed dueAt = lastDoneAt +
+intervalDays; never-done = due today), persistence at `households/{hid}/careItems`,
+Chores tab renamed **Home** (display-only, `house` icon), House care section with
+sticker-slap mark-done (lastDoneBy tracked, NO XP/confetti — care is the adults'
+ledger), add/edit form, one-tap starter suggestions (HVAC 90d, gutters, deep-clean
+rotations, bedding 14d, water heater). (C2) `HouseHealth` rollup banner
+(overdue-terracotta / due-this-week-marigold / **"The house is happy."** bacanGreen),
+`careDone` activity items, "Home care" card on Today with inline mark-done (shared
+`CareCompletion` helper, mirrors ChoreCompletion). Rollup + card are kind-agnostic —
+P9 plants and P10 pets flow in automatically; revisit the "Home care" card label +
+house-flavored icon/interval option sets when they land.
 Michael's cleaning penchant + house maintenance, distinct from kid chores.
 - Introduce the **`CareItem`/`CareTask` primitive** (see spine) with `kind: house/zone`.
 - Seed templates: HVAC filters (90d), gutters (seasonal), deep-clean rotation by
