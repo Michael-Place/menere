@@ -104,6 +104,15 @@ public struct PersistenceClient: Sendable {
     public var saveCareItem: @Sendable (_ hid: String, _ item: CareItem) async throws -> Void
     public var deleteCareItem: @Sendable (_ hid: String, _ itemID: String) async throws -> Void
 
+    // MARK: Smart home (Hue) config (P12)
+    /// The household's Hue config at `households/{hid}/config/hue`, or nil when the doc is absent
+    /// (never paired). Decode-safe: a partial/hand-written doc still resolves. Reading it is the
+    /// cheap gate for the Today "house" card — no doc, no card.
+    public var hueConfig: @Sendable (_ hid: String) async throws -> HueConfig?
+    /// Merge a corrected bridge IP back into the config doc after cloud rediscovery healed an
+    /// IP drift (leaves every other field untouched).
+    public var updateHueBridgeIP: @Sendable (_ hid: String, _ bridgeIP: String) async throws -> Void
+
     // MARK: Activity feed
     /// Recent activity, newest first (capped at 50).
     public var activity: @Sendable (_ hid: String) async throws -> [ActivityItem]
@@ -374,6 +383,16 @@ extension PersistenceClient: DependencyKey {
             },
             deleteCareItem: { hid, itemID in
                 try await households().document(hid).collection("careItems").document(itemID).delete()
+            },
+            hueConfig: { hid in
+                let s = try await households().document(hid).collection("config").document("hue").getDocument()
+                guard let d = s.data() else { return nil }
+                return try Firestore.Decoder().decode(HueConfig.self, from: d)
+            },
+            updateHueBridgeIP: { hid, bridgeIP in
+                try await households().document(hid).collection("config").document("hue").setData(
+                    ["bridgeIP": bridgeIP], merge: true
+                )
             },
             activity: { hid in
                 let snapshot = try await households().document(hid).collection("activity")

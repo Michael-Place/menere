@@ -1,6 +1,7 @@
 import ComposableArchitecture
 import DocsFeature
 import FamilyDomain
+import HueClient
 import MenereUI
 import SwiftUI
 
@@ -25,6 +26,7 @@ public struct TodayView: View {
 
                 choresCard
                 homeCareCard
+                houseCard
                 needsAttentionCard
                 familyCard
             }
@@ -429,6 +431,123 @@ public struct TodayView: View {
                 .accessibilityIdentifier("today-home-care")
             }
         }
+    }
+
+    // MARK: The house (Philips Hue, P12-C1)
+
+    /// Present only when the bridge is reachable (`store.house != nil`). Not paired / not home →
+    /// no card at all. This card NEVER surfaces an error — problems mean it hides or goes stale.
+    @ViewBuilder
+    private var houseCard: some View {
+        if let house = store.house {
+            card {
+                cardHeader("The house", symbol: "lightbulb.fill")
+                if let temps = temperatureLine(house) {
+                    Label {
+                        Text(temps)
+                    } icon: {
+                        Image(systemName: "thermometer.medium")
+                    }
+                    .font(.system(.subheadline, design: .rounded))
+                    .foregroundStyle(Color.inkSoft)
+                    .accessibilityIdentifier("today-house-temps")
+                }
+                Text(lightsSummary(house))
+                    .foregroundStyle(Color.ink)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("today-house-lights")
+                let presentations = ritualPresentations(house)
+                if !presentations.isEmpty {
+                    HStack(spacing: 10) {
+                        ForEach(presentations) { p in ritualButton(p) }
+                        Spacer(minLength: 0)
+                    }
+                }
+            }
+            .accessibilityIdentifier("today-house")
+        }
+    }
+
+    /// "Famfis's room 72° · Oliver's room 71°" from the config's sensor labels, or nil when no
+    /// labeled temperature sensor reported. Only labeled sensors show (unlabeled ones are noise).
+    private func temperatureLine(_ house: HouseSnapshot) -> String? {
+        let labels = house.config.sensorLabels
+        let parts = house.temperatures
+            .compactMap { t -> (label: String, tempF: Double)? in
+                guard let label = labels[t.sensorId] else { return nil }
+                return (label, t.tempF)
+            }
+            .sorted { $0.label < $1.label }
+            .map { "\($0.label) \(Int($0.tempF.rounded()))°" }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    }
+
+    /// "4 lights on — Living room, Kitchen" (count of on-lights + up to two rooms with any light
+    /// on), or "All lights off" when nothing's lit.
+    private func lightsSummary(_ house: HouseSnapshot) -> String {
+        let onCount = house.lights.filter(\.isOn).count
+        guard onCount > 0 else { return "All lights off" }
+        let rooms = house.rooms.filter(\.anyOn).map(\.name)
+        let noun = onCount == 1 ? "light" : "lights"
+        guard !rooms.isEmpty else { return "\(onCount) \(noun) on" }
+        let shown = rooms.prefix(2).joined(separator: ", ")
+        let more = rooms.count > 2 ? " +\(rooms.count - 2)" : ""
+        return "\(onCount) \(noun) on — \(shown)\(more)"
+    }
+
+    /// Ordered, prominence-tagged ritual buttons — the pure `HueRitualLayout` rule (Bedtime
+    /// evening-first/filled; Dinner filled when tonight is home-cooked).
+    private func ritualPresentations(_ house: HouseSnapshot) -> [RitualPresentation] {
+        HueRitualLayout.ordered(
+            rituals: house.config.rituals,
+            now: Date(),
+            homeCookedDinner: isTonightHomeCooked
+        )
+    }
+
+    /// A capsule ritual button. Prominent → filled bacanGreen; subdued → tinted. On success it
+    /// morphs to a checkmark with a success haptic; while recalling it dims.
+    private func ritualButton(_ p: RitualPresentation) -> some View {
+        let succeeded = store.succeededRitual == p.ritual.key
+        let recalling = store.recallingRitual == p.ritual.key
+        return Button {
+            store.send(.recallRitual(p.ritual))
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: succeeded ? "checkmark" : ritualSymbol(p.ritual))
+                    .contentTransition(.symbolEffect(.replace))
+                Text(succeeded ? "Done" : p.ritual.label)
+            }
+            .font(.system(.subheadline, design: .rounded).weight(.semibold))
+            .foregroundStyle(p.isProminent || succeeded ? Color.white : Color.bacanGreen)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 9)
+            .background(
+                Capsule(style: .continuous)
+                    .fill(p.isProminent || succeeded ? Color.bacanGreen : Color.bacanGreen.opacity(0.14))
+            )
+            .opacity(recalling ? 0.6 : 1)
+        }
+        .buttonStyle(.pressable)
+        .disabled(recalling)
+        .successHaptic(succeeded)
+        .accessibilityIdentifier("today-house-ritual-\(p.ritual.key)")
+    }
+
+    /// Bedtime → moon, Dinner → fork.knife; anything else falls back to a generic bulb.
+    private func ritualSymbol(_ ritual: HueRitual) -> String {
+        switch ritual.key {
+        case HueRitualLayout.bedtimeKey: return "moon.fill"
+        case HueRitualLayout.dinnerKey:  return "fork.knife"
+        default:                          return "lightbulb"
+        }
+    }
+
+    /// Tonight's meal plan is a home-cooked recipe (not eating out) — makes "Dinner's ready"
+    /// prominent.
+    private var isTonightHomeCooked: Bool {
+        guard let entry = tonightsEntry, !entry.isEatingOut else { return false }
+        return !entry.recipeID.isEmpty || !entry.recipeTitle.isEmpty
     }
 
     // MARK: Needs attention (Family Brain, P7-C3)

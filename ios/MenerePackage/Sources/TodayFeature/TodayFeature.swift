@@ -1,10 +1,36 @@
 import ComposableArchitecture
 import FamilyDomain
 import Foundation
+import HueClient
 import LocationClient
 import MenereUI
 import PersistenceClient
 import UserDomain
+
+/// The live bridge snapshot behind the Today "house" card: the (possibly IP-corrected) config plus
+/// the rooms/lights/scenes/temps read from the bridge. Present only when the bridge was reachable;
+/// its absence *is* the "no card" state (not home, or never paired).
+public struct HouseSnapshot: Equatable, Sendable {
+    public var config: HueConfig
+    public var rooms: [HueRoom]
+    public var lights: [HueLight]
+    public var scenes: [HueScene]
+    public var temperatures: [HueTemperature]
+
+    public init(
+        config: HueConfig,
+        rooms: [HueRoom] = [],
+        lights: [HueLight] = [],
+        scenes: [HueScene] = [],
+        temperatures: [HueTemperature] = []
+    ) {
+        self.config = config
+        self.rooms = rooms
+        self.lights = lights
+        self.scenes = scenes
+        self.temperatures = temperatures
+    }
+}
 
 /// A single materialized event occurrence on today (recurring events yield many).
 /// Mirrors `CalendarFeature.EventOccurrence` — Today reuses the same client-side expansion.
@@ -50,6 +76,16 @@ public struct TodayReducer {
         /// dashboard never waits on MapKit.
         var driveMinutes: Int?
 
+        /// Live Hue snapshot behind the "house" card (P12). Loaded by an INDEPENDENT effect: nil
+        /// whenever there's no config doc OR the bridge is unreachable (even after a rediscover) —
+        /// in both cases the card simply hides. This card NEVER surfaces an error.
+        var house: HouseSnapshot?
+        /// The ritual key whose scene recall is in flight (drives the button's pending state).
+        var recallingRitual: String?
+        /// The ritual key that just succeeded — drives the checkmark morph + success haptic until
+        /// `clearRitualSuccess` fires.
+        var succeededRitual: String?
+
         public init() {}
 
         func stats(for memberID: String) -> MemberStats {
@@ -94,6 +130,13 @@ public struct TodayReducer {
         /// Kick the traffic-aware ETA to tonight's restaurant (independent, non-blocking).
         case computeDrive
         case driveResult(Int?)
+        /// Load/refresh the Hue "house" card (independent, non-blocking; hides itself on any issue).
+        case loadHouse
+        case houseLoaded(HouseSnapshot?)
+        /// Recall a ritual's scene (Bedtime / Dinner's ready).
+        case recallRitual(HueRitual)
+        case ritualRecallFinished(key: String)
+        case clearRitualSuccess(key: String)
         /// Drop tonight's reservation on the shared calendar as a "Dinner at {name}" event.
         case addDinnerToCalendarTapped
         case dinnerEventAdded(FamilyEvent)
@@ -114,7 +157,7 @@ public struct TodayReducer {
 
     public init() {}
 
-    private enum CancelID { case briefing, drive }
+    private enum CancelID { case briefing, drive, house }
 
     private func hid() -> String? {
         @Shared(.user) var user
@@ -174,6 +217,8 @@ public struct TodayReducer {
                         ))
                     },
                     .send(.loadBriefing(force: false)),
+                    // The "house" card loads independently too — never blocks/breaks the dashboard.
+                    .send(.loadHouse),
                     // Ask once so tonight's drive time can resolve (idempotent; no-op if determined).
                     .run { _ in
                         @Dependency(\.location) var location
@@ -287,6 +332,80 @@ public struct TodayReducer {
                 state.briefingLoading = false
                 // Keep the last good briefing if a refresh failed, so the card doesn't vanish.
                 if let result { state.briefing = result }
+                return .none
+
+            case .loadHouse:
+                // No household → no card, zero cost.
+                guard let hid = hid() else { return .none }
+                return .run { send in
+                    @Dependency(\.persistence) var persistence
+                    @Dependency(\.hue) var hue
+                    // No config doc → no card (never paired). `hueConfig` already returns an
+                    // Optional; `try?` flattens the throwing wrapper, so one unwrap suffices.
+                    guard let loaded = try? await persistence.hueConfig(hid) else {
+                        await send(.houseLoaded(nil)); return
+                    }
+                    var config = loaded
+
+                    // Local-network-first reachability probe (short timeout). Unreachable → try a
+                    // single cloud rediscover to heal an IP drift, retry once, and persist the fix.
+                    var reachable = (try? await hue.testConnection(config)) ?? false
+                    if !reachable,
+                       let freshIP = try? await hue.rediscover(config.bridgeId),
+                       freshIP != config.bridgeIP {
+                        config.bridgeIP = freshIP
+                        reachable = (try? await hue.testConnection(config)) ?? false
+                        if reachable { try? await persistence.updateHueBridgeIP(hid, freshIP) }
+                    }
+                    // Still unreachable → "not home = no card".
+                    guard reachable else { await send(.houseLoaded(nil)); return }
+
+                    // Polite serial batch (one small fan-in, not per-device fan-out). Each read
+                    // degrades to empty on failure — the card shows stale/partial rather than error.
+                    let active = config
+                    async let rooms = hue.rooms(active)
+                    async let lights = hue.lights(active)
+                    async let scenes = hue.scenes(active)
+                    async let temps = hue.temperatures(active)
+                    let snapshot = HouseSnapshot(
+                        config: active,
+                        rooms: (try? await rooms) ?? [],
+                        lights: (try? await lights) ?? [],
+                        scenes: (try? await scenes) ?? [],
+                        temperatures: (try? await temps) ?? []
+                    )
+                    await send(.houseLoaded(snapshot))
+                }
+                .cancellable(id: CancelID.house, cancelInFlight: true)
+
+            case let .houseLoaded(snapshot):
+                state.house = snapshot
+                return .none
+
+            case let .recallRitual(ritual):
+                guard let config = state.house?.config, state.recallingRitual == nil else { return .none }
+                state.recallingRitual = ritual.key
+                return .run { send in
+                    @Dependency(\.hue) var hue
+                    // Best-effort: recall failures degrade silently (the card never shows errors).
+                    try? await hue.recallScene(config, ritual.groupId, ritual.sceneId)
+                    await send(.ritualRecallFinished(key: ritual.key))
+                }
+
+            case let .ritualRecallFinished(key):
+                state.recallingRitual = nil
+                state.succeededRitual = key
+                // Refresh the lights summary, then clear the success state after a brief beat.
+                return .merge(
+                    .send(.loadHouse),
+                    .run { send in
+                        try? await Task.sleep(for: .seconds(1.6))
+                        await send(.clearRitualSuccess(key: key))
+                    }
+                )
+
+            case let .clearRitualSuccess(key):
+                if state.succeededRitual == key { state.succeededRitual = nil }
                 return .none
 
             case .quickAddEventTapped:

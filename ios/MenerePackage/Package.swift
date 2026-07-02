@@ -25,6 +25,7 @@ let package = Package(
         .library(name: "PersistenceClient", targets: ["PersistenceClient"]),
         .library(name: "StorageClient", targets: ["StorageClient"]),
         .library(name: "LocationClient", targets: ["LocationClient"]),
+        .library(name: "HueClient", targets: ["HueClient"]),
         .library(name: "IdentifyClient", targets: ["IdentifyClient"]),
         .library(name: "EnrichmentClient", targets: ["EnrichmentClient"]),
         .library(name: "CatalogClient", targets: ["CatalogClient"]),
@@ -127,6 +128,7 @@ let package = Package(
                 "UserDomain",
                 "DocsFeature",
                 "LocationClient",
+                "HueClient",
             ]
         ),
         .target(
@@ -244,6 +246,14 @@ let package = Package(
             dependencies: [
                 .product(name: "Dependencies", package: "swift-dependencies"),
                 .product(name: "DependenciesMacros", package: "swift-dependencies"),
+            ]
+        ),
+        .target(
+            name: "HueClient",
+            dependencies: [
+                .product(name: "Dependencies", package: "swift-dependencies"),
+                .product(name: "DependenciesMacros", package: "swift-dependencies"),
+                "FamilyDomain",
             ]
         ),
         .target(
@@ -392,6 +402,13 @@ let package = Package(
                 "UserDomain",
                 "BottleCardFeature",
                 "JournalFeature",
+            ]
+        ),
+        .testTarget(
+            name: "HueClientTests",
+            dependencies: [
+                "HueClient",
+                "FamilyDomain",
             ]
         ),
         .testTarget(
