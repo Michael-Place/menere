@@ -149,12 +149,16 @@ Planned 2026-07-01 with Michael. Direction locked in conversation:
   **Pets** (Fajita & Sprinkle). Record collection explicitly parked (the Cellar
   pattern maps 1:1 onto Discogs whenever wanted).
 
-## Open questions (re-ask Michael before the relevant phase)
+## Resolved questions (answered by Michael, 2026-07-01)
 
-1. **Smart-home stack** — HomeKit-centric, Home Assistant, or mixed? Blocks P12
-   design; everything else is stack-agnostic.
-2. **Does "Menere" have an origin story?** Feeds the P5 wordmark/brand meaning.
-   Default: keep the name, give it meaning during identity work.
+1. **Smart home = hyper-specific per-product integrations**, not a generic
+   abstraction layer — take full advantage of each product. **Philips Hue is the
+   main ecosystem the whole house relies on** → P12 is designed Hue-first.
+2. **The app is renamed "Bacán"** (Chilean slang ≈ "cool/awesome"); "Menere" was a
+   wine holdover. User-facing rename at P5 (display name, wordmark, app icon).
+   **Internal identifiers stay `menere`** (bundle ID, Firebase project, repo,
+   Swift package) — zero-churn, same policy as the `households` collection name.
+   The Chilean thread is an identity ingredient for P5 (voice accents, warmth).
 
 ## Architectural spine (decide once, reuse everywhere)
 
@@ -214,7 +218,11 @@ is added.
 - **Signature motion** (playful throughout): sticker-slap chore check-off, member-
   color confetti level-up, springy tab/nav transitions, generous haptics. Named
   springs pattern (`.menereSnappy`/`.menereBouncy`) already exists — extend it.
-- **Wordmark/meaning:** resolve open question 2; new app icon.
+- **Rename to "Bacán":** new wordmark (mind the accent — test rendering in the
+  chosen display face), new app icon, `CFBundleDisplayName` in `project.yml`
+  (then `xcodegen generate`). Internals stay `menere`. The Chilean thread can
+  flavor the voice pass — occasional Spanish warmth where it lands naturally
+  ("¡Bacán!" as a celebration exclamation is free brand equity).
 - Cellar interior keeps parchment; the seam is the push from the Lists row.
 
 ### P6 — Today dashboard (the family's front door)
@@ -285,11 +293,26 @@ thing that vanishes if nobody writes it down.
   Storage + polaroid UI (`PolaroidFrame` exists), timeline per kid, quick-capture
   from Today. Linked Brain documents (scanned artwork!) appear on the timeline.
 
-### P12 — Smart home  ⛔ blocked on open question 1
-Design behind a `HomeStateClient` dependency either way.
-- **HomeKit path:** HomeKit framework in-app; device/scene states on Today; presence.
-- **Home Assistant path:** HA REST/WebSocket + webhooks into Cloud Functions —
-  richer automations (dishwasher done → chore prompt; sound machine status on Today).
+### P12 — Smart home: Philips Hue, hyper-specific
+Decision: per-product deep integrations (no generic abstraction); **Hue first**
+because the whole house runs on it. One `HueClient` dependency, local-first:
+- **Bridge pairing:** mDNS/Bonjour discovery → link-button press → app key,
+  stored per-device (Keychain). Local **CLIP v2 API** (HTTPS REST) for control.
+- **Live state:** CLIP v2 **Server-Sent Events** stream → rooms/zones, light and
+  scene state, and crucially the **sensor data Hue gives for free**: motion
+  sensors report presence, *temperature*, and light level → per-room temperature
+  on the Today dashboard costs nothing.
+- **Family-flavored automations** (the reason to go deep rather than generic):
+  - Chore completed → a light blinks once in *that member's color* (Oliver will
+    complete chores just to see it).
+  - Bedtime scene for the boys' rooms, one tap from Today.
+  - Dinner scene tied to the meal plan ("Dinner's ready" moment).
+  - Plant grow-lights on schedules driven by P9 care items.
+- **Away-from-home control** via the Hue cloud Remote API (OAuth) — later
+  sub-phase; local-first ships the value.
+- Later Hue-adjacent products (buttons, dials, smart plugs) and any other
+  ecosystems in the house each get their own deliberate integration when wanted —
+  same hyper-specific philosophy.
 
 ### Side quest (anytime after P5) — Oliver mode
 Activate the dormant `.child` role: picture-based chore board, huge tap targets,
