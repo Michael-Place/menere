@@ -396,8 +396,20 @@ pipeline.**
      with an expense path — order confirmations, utilities).
   4. Statement import (CSV/OFX via file/share-sheet; OFX deterministic, messy
      PDFs via Claude) — the share-extension intake doubles for the Brain.
-  5. (Optional, decide like Hue) automatic bank sync: Plaid vs SimpleFIN Bridge —
-     real cost/setup; hyper-specific integration philosophy applies.
+  5. Automatic bank sync — researched 2026-07-02, three viable single-family paths:
+     - **Plaid free Trial plan** (teams created ≥2026-04-15): real production data,
+       up to 10 Items (institution connections) at $0, INCLUDING Chase/BofA/Wells
+       OAuth. 10 institutions is plenty for one family → likely winner. Pay-as-you-go
+       (~$0.30–0.60/Transactions call) only if we ever outgrow it. Has a
+       recurring-transactions endpoint (repeat-expense detection for free).
+     - **SimpleFIN Bridge**: $15/yr read-only, daily refresh, purpose-built for
+       personal tools (Actual Budget ecosystem) — the simple fallback.
+     - **Apple FinanceKit**: Apple Card/Cash/Savings transactions ON-DEVICE,
+       real-time, free — needs a per-bundle-ID entitlement request to Apple
+       (case-by-case approval). Perfect complement if the family runs Apple Card.
+     Recurring-expense detection: Plaid's recurring endpoint when synced; otherwise
+     cluster vendor+amount+cadence over normalized transactions (Claude does this
+     well over a few months of data).
 - **Display:** "This month" card on Today (spent vs typical month, quiet until
   notable); Money view — category bars vs budgets (family palette), month picker,
   vendor patterns ("3rd Costco run this month"); briefing may mention spend
