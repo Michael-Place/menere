@@ -147,6 +147,14 @@ public struct CareItem: Codable, Equatable, Identifiable, Sendable {
     public var speciesLatin: String?
     /// Free-text care notes ("bright indirect light, let the top inch dry out").
     public var careNotes: String?
+    /// Pet-only (P10): breed, e.g. "Chihuahua mix". Decode-safe additive field.
+    public var breed: String?
+    /// Pet-only (P10): birthday, for age. Decode-safe additive field.
+    public var birthday: Date?
+    /// Pet-only (P10): vet contact name. Decode-safe additive field.
+    public var vetName: String?
+    /// Pet-only (P10): vet contact phone. Decode-safe additive field.
+    public var vetPhone: String?
 
     public init(
         id: String = UUID().uuidString,
@@ -159,7 +167,11 @@ public struct CareItem: Codable, Equatable, Identifiable, Sendable {
         photoPath: String? = nil,
         species: String? = nil,
         speciesLatin: String? = nil,
-        careNotes: String? = nil
+        careNotes: String? = nil,
+        breed: String? = nil,
+        birthday: Date? = nil,
+        vetName: String? = nil,
+        vetPhone: String? = nil
     ) {
         self.id = id
         self.kind = kind
@@ -172,6 +184,10 @@ public struct CareItem: Codable, Equatable, Identifiable, Sendable {
         self.species = species
         self.speciesLatin = speciesLatin
         self.careNotes = careNotes
+        self.breed = breed
+        self.birthday = birthday
+        self.vetName = vetName
+        self.vetPhone = vetPhone
     }
 
     public init(from decoder: Decoder) throws {
@@ -187,6 +203,10 @@ public struct CareItem: Codable, Equatable, Identifiable, Sendable {
         species = try c.decodeIfPresent(String.self, forKey: .species)
         speciesLatin = try c.decodeIfPresent(String.self, forKey: .speciesLatin)
         careNotes = try c.decodeIfPresent(String.self, forKey: .careNotes)
+        breed = try c.decodeIfPresent(String.self, forKey: .breed)
+        birthday = try c.decodeIfPresent(Date.self, forKey: .birthday)
+        vetName = try c.decodeIfPresent(String.self, forKey: .vetName)
+        vetPhone = try c.decodeIfPresent(String.self, forKey: .vetPhone)
     }
 
     /// The task that drives the collapsed row: the soonest-due one. Interval tasks sort by days
@@ -220,12 +240,20 @@ public struct CareItem: Codable, Equatable, Identifiable, Sendable {
         "drop.fill", "cloud.rain.fill", "sparkles", "wind", "flame.fill", "trash.fill", "hammer.fill",
     ]
 
+    /// Pet-flavored icon grid (P10) — pawprint/dog/grooming/vet glyphs for Fajita & Sprinkle.
+    public static let petIconOptions: [String] = [
+        "pawprint.fill", "dog.fill", "cat.fill", "bone.fill", "pills.fill", "cross.case.fill",
+        "scissors", "shower.fill", "figure.walk", "heart.fill", "teddybear.fill", "fish.fill",
+    ]
+
     /// The icon set for a given care kind. Plants get leaf/drop/sun flavor; yard zones get
-    /// tree/pruning/sprinkler flavor; house keeps the upkeep glyphs (no change for existing call sites).
+    /// tree/pruning/sprinkler flavor; pets get pawprint/dog/grooming glyphs; house keeps the upkeep
+    /// glyphs (no change for existing call sites).
     public static func iconOptions(for kind: CareKind) -> [String] {
         switch kind {
         case .plant: return plantIconOptions
         case .zone: return zoneIconOptions
+        case .pet: return petIconOptions
         default: return iconOptions
         }
     }
@@ -286,12 +314,18 @@ public struct CareItem: Codable, Equatable, Identifiable, Sendable {
     /// for one-off jobs you only mark when you do them.
     public static let zoneIntervalChoices: [Int?] = [30, 60, 90, 180, 365, nil]
 
+    /// Pet cadences (P10) — meds/flea-tick (monthly), grooming, nail trims, up through yearly (shots),
+    /// plus a `nil` "seasonal / manual" for one-off care.
+    public static let petIntervalChoices: [Int?] = [7, 14, 30, 60, 90, 180, 365, nil]
+
     /// The cadence choices for a given care kind. Plants get short watering intervals; yard zones get
-    /// month-scale seasonal windows; house keeps its set (no behavior change for existing call sites).
+    /// month-scale seasonal windows; pets get med/grooming cadences; house keeps its set (no behavior
+    /// change for existing call sites).
     public static func intervalChoices(for kind: CareKind) -> [Int?] {
         switch kind {
         case .plant: return plantIntervalChoices
         case .zone: return zoneIntervalChoices
+        case .pet: return petIntervalChoices
         default: return intervalChoices
         }
     }

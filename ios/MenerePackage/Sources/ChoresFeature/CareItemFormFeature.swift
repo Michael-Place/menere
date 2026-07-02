@@ -83,6 +83,36 @@ public struct YardSuggestion: Equatable, Identifiable, Sendable {
     ]
 }
 
+/// The Place family's real dogs (P10). A one-tap add for the Pets empty state — "The pack" —
+/// pre-filling the standard dog-care schedule. Persistent-filtered like the yard starters (adding
+/// Fajita leaves Sprinkle on offer).
+public struct PetSuggestion: Equatable, Identifiable, Sendable {
+    public let id: String
+    let name: String
+    let icon: String
+
+    /// The standard dog-care tasks, all never-done ⇒ due today (the first real completion anchors each
+    /// to its cadence). Shared by the named starters and the blank "Someone else…" pet.
+    static func defaultTasks() -> [CareTask] {
+        [
+            CareTask(title: "Heartworm pill", intervalDays: 30),
+            CareTask(title: "Flea & tick", intervalDays: 30),
+            CareTask(title: "Grooming", intervalDays: 60),
+            CareTask(title: "Nail trim", intervalDays: 30),
+        ]
+    }
+
+    func makeItem() -> CareItem {
+        CareItem(kind: .pet, name: name, iconSymbol: "pawprint.fill", tasks: PetSuggestion.defaultTasks())
+    }
+
+    /// Fajita & Sprinkle — family canon.
+    static let starters: [PetSuggestion] = [
+        .init(id: "fajita", name: "Fajita", icon: "pawprint.fill"),
+        .init(id: "sprinkle", name: "Sprinkle", icon: "pawprint.fill"),
+    ]
+}
+
 @Reducer
 public struct CareItemFormReducer {
     @ObservableState
@@ -111,6 +141,9 @@ public struct CareItemFormReducer {
         /// This form is editing a plant — drives plant-flavored copy, option sets, and the photo /
         /// species / notes fields.
         var isPlant: Bool { item.kind == .plant }
+        /// This form is editing a pet (P10) — drives the photo (shared with plants), breed, birthday,
+        /// and vet sections. No species / AI-identify (that stays plant-only).
+        var isPet: Bool { item.kind == .pet }
     }
 
     public enum Action: Equatable, BindableAction {
@@ -236,6 +269,9 @@ public struct CareItemFormReducer {
                 item.location = item.location?.blankToNil
                 item.species = item.species?.blankToNil
                 item.careNotes = item.careNotes?.blankToNil
+                item.breed = item.breed?.blankToNil
+                item.vetName = item.vetName?.blankToNil
+                item.vetPhone = item.vetPhone?.blankToNil
                 let base = item
                 let pending = state.pendingPhoto
                 return .run { send in
@@ -319,14 +355,22 @@ public struct CareItemFormView: View {
     public var body: some View {
         NavigationStack {
             Form {
-                Section(store.isPlant ? "Plant" : "Name") {
-                    TextField(store.isPlant ? "What's it called?" : "What needs care?", text: $store.item.name)
+                Section(nameHeader) {
+                    TextField(namePlaceholder, text: $store.item.name)
                         .accessibilityIdentifier("care-name-field")
                 }
 
-                if store.isPlant {
+                // Photo is shared plant↔pet; species/notes stay plant-only; breed/birthday/vet pet-only.
+                if store.isPlant || store.isPet {
                     photoSection
+                }
+                if store.isPlant {
                     speciesSection
+                }
+                if store.isPet {
+                    breedSection
+                    birthdaySection
+                    vetSection
                 }
 
                 Section("Icon") {
@@ -384,7 +428,7 @@ public struct CareItemFormView: View {
 
                 if store.isEditing {
                     Section {
-                        Button(store.isPlant ? "Delete plant" : "Delete", role: .destructive) {
+                        Button(deleteLabel, role: .destructive) {
                             store.send(.deleteTapped)
                         }
                         .accessibilityIdentifier("delete-care-button")
@@ -423,8 +467,27 @@ public struct CareItemFormView: View {
 
     private var navTitle: String {
         if store.isPlant { return store.isEditing ? "Edit plant" : "New plant" }
+        if store.isPet { return store.isEditing ? "Edit pet" : "New pet" }
         if store.item.kind == .zone { return store.isEditing ? "Edit yard zone" : "New yard zone" }
         return store.isEditing ? "Edit care item" : "New care item"
+    }
+
+    private var nameHeader: String {
+        if store.isPlant { return "Plant" }
+        if store.isPet { return "Pet" }
+        return "Name"
+    }
+
+    private var namePlaceholder: String {
+        if store.isPlant { return "What's it called?" }
+        if store.isPet { return "Who's the pet?" }
+        return "What needs care?"
+    }
+
+    private var deleteLabel: String {
+        if store.isPlant { return "Delete plant" }
+        if store.isPet { return "Delete pet" }
+        return "Delete"
     }
 
     // MARK: Plant photo
@@ -455,43 +518,48 @@ public struct CareItemFormView: View {
             }
             // P9-C2 — AI plant identify: runs the `identifyPlant` Claude-vision callable on the
             // compressed photo → fills species / speciesLatin / careNotes and (don't-stomp) the Water
-            // cadence. Enabled only when a photo is present.
-            Button {
-                store.send(.identifyTapped)
-            } label: {
-                HStack(spacing: 8) {
-                    if store.isIdentifying {
-                        ProgressView().controlSize(.small)
-                        Text("Identifying…")
-                    } else {
-                        Label("Identify from photo", systemImage: "sparkles")
+            // cadence. Plant-only — pets share the photo picker but have no AI-identify.
+            if store.isPlant {
+                Button {
+                    store.send(.identifyTapped)
+                } label: {
+                    HStack(spacing: 8) {
+                        if store.isIdentifying {
+                            ProgressView().controlSize(.small)
+                            Text("Identifying…")
+                        } else {
+                            Label("Identify from photo", systemImage: "sparkles")
+                        }
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.pressable)
-            .disabled(store.displayPhoto == nil || store.isIdentifying)
-            .accessibilityIdentifier("plant-identify-button")
+                .buttonStyle(.pressable)
+                .disabled(store.displayPhoto == nil || store.isIdentifying)
+                .accessibilityIdentifier("plant-identify-button")
 
-            if let note = store.identifyNote {
-                Text(note)
-                    .font(.caption)
-                    .foregroundStyle(Color.inkSoft)
-                    .accessibilityIdentifier("plant-identify-note")
+                if let note = store.identifyNote {
+                    Text(note)
+                        .font(.caption)
+                        .foregroundStyle(Color.inkSoft)
+                        .accessibilityIdentifier("plant-identify-note")
+                }
             }
         }
     }
 
     @ViewBuilder
     private var photoThumbnail: some View {
+        // Pets get a sky-tinted pawprint fallback; plants a green leaf.
+        let tint = store.isPet ? Color.sky : Color.bacanGreen
+        let fallback = store.isPet ? "pawprint.fill" : "leaf.fill"
         Group {
             if let data = store.displayPhoto, let image = UIImage(data: data) {
                 Image(uiImage: image).resizable().scaledToFill()
             } else {
                 ZStack {
-                    Circle().fill(Color.bacanGreen.opacity(0.15))
-                    Image(systemName: "leaf.fill").font(.title2).foregroundStyle(Color.bacanGreen)
+                    Circle().fill(tint.opacity(0.15))
+                    Image(systemName: fallback).font(.title2).foregroundStyle(tint)
                 }
             }
         }
@@ -523,6 +591,57 @@ public struct CareItemFormView: View {
                     .foregroundStyle(Color.inkSoft)
                     .accessibilityIdentifier("plant-ai-suggestion-caption")
             }
+        }
+    }
+
+    // MARK: Pet (P10)
+
+    @ViewBuilder
+    private var breedSection: some View {
+        Section("Breed") {
+            TextField("e.g. Chihuahua mix", text: Binding(
+                get: { store.item.breed ?? "" },
+                set: { store.item.breed = $0 }
+            ))
+            .accessibilityIdentifier("pet-breed-field")
+        }
+    }
+
+    @ViewBuilder
+    private var birthdaySection: some View {
+        Section("Birthday") {
+            Toggle("Set a birthday", isOn: Binding(
+                get: { store.item.birthday != nil },
+                set: { store.item.birthday = $0 ? (store.item.birthday ?? Date()) : nil }
+            ))
+            .accessibilityIdentifier("pet-birthday-toggle")
+
+            if let birthday = store.item.birthday {
+                DatePicker(
+                    "Birthday",
+                    selection: Binding(get: { birthday }, set: { store.item.birthday = $0 }),
+                    displayedComponents: .date
+                )
+                .accessibilityIdentifier("pet-birthday-picker")
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var vetSection: some View {
+        Section("Vet") {
+            TextField("Vet name (optional)", text: Binding(
+                get: { store.item.vetName ?? "" },
+                set: { store.item.vetName = $0 }
+            ))
+            .accessibilityIdentifier("pet-vet-name-field")
+
+            TextField("Vet phone (optional)", text: Binding(
+                get: { store.item.vetPhone ?? "" },
+                set: { store.item.vetPhone = $0 }
+            ))
+            .keyboardType(.phonePad)
+            .accessibilityIdentifier("pet-vet-phone-field")
         }
     }
 }

@@ -26,6 +26,8 @@ public struct ChoresReducer {
         var careSuggestionsDismissed = false
         /// Same, for the Yard & garden seasonal-starters card (P9-C3).
         var yardSuggestionsDismissed = false
+        /// Same, for the Pets "The pack" starter card (P10).
+        var petSuggestionsDismissed = false
         var isLoading = false
         @Presents var form: ChoreFormReducer.State?
         @Presents var careForm: CareItemFormReducer.State?
@@ -67,6 +69,10 @@ public struct ChoresReducer {
         case dismissYardSuggestions
         // P9 — Plants
         case addPlantTapped
+        // P10 — Pets (kind == .pet)
+        case addPetTapped
+        case petSuggestionTapped(PetSuggestion)
+        case dismissPetSuggestions
         case carePhotosLoaded([String: Data])
         case form(PresentationAction<ChoreFormReducer.Action>)
         case careForm(PresentationAction<CareItemFormReducer.Action>)
@@ -293,6 +299,31 @@ public struct ChoresReducer {
 
             case .dismissYardSuggestions:
                 state.yardSuggestionsDismissed = true
+                return .none
+
+            case .addPetTapped:
+                // A new pet pre-fills the standard dog-care schedule and pet-flavored icon/interval
+                // sets, plus the shared photo picker and breed/birthday/vet fields (kind == .pet).
+                state.careForm = CareItemFormReducer.State(
+                    item: CareItem(
+                        kind: .pet, name: "", iconSymbol: "pawprint.fill",
+                        tasks: PetSuggestion.defaultTasks()
+                    ),
+                    isEditing: false
+                )
+                return .none
+
+            case let .petSuggestionTapped(suggestion):
+                guard let (hid, _) = ctx() else { return .none }
+                let item = suggestion.makeItem()
+                state.careItems = Self.sortedCare(state.careItems + [item])
+                return .run { _ in
+                    @Dependency(\.persistence) var persistence
+                    try await persistence.saveCareItem(hid, item)
+                }
+
+            case .dismissPetSuggestions:
+                state.petSuggestionsDismissed = true
                 return .none
 
             case .careForm(.presented(.delegate(.didChange))):

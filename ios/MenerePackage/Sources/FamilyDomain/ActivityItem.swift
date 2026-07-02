@@ -60,6 +60,14 @@ public struct ActivityItem: Codable, Equatable, Identifiable, Sendable {
         if t.contains("water") { return "watered" }
         if t.contains("feed") || t.contains("fertil") { return "fed" }
         if t.contains("mist") { return "misted" }
+        // Pet care (P10). The composed line is "{name} {verb} \"{pet}\"", so "trimmed nails for"
+        // reads "Migueluh trimmed nails for \"Fajita\"". Clinical med verbs are deliberately skipped
+        // (heartworm/flea-tick fall to the warm "took care of"). "bath" only — "wash" would misfire on
+        // the house "Wash bedding" starter.
+        if t.contains("groom") { return "groomed" }
+        if t.contains("nail") { return "trimmed nails for" }
+        if t.contains("walk") { return "walked" }
+        if t.contains("bath") { return "bathed" }
         return "took care of"
     }
 }

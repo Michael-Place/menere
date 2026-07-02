@@ -18,6 +18,8 @@ public struct ChoresView: View {
     private var plantItems: [CareItem] { store.careItems.filter { $0.kind == .plant } }
     /// Yard & garden zones — the seasonal-landscaping section's rows (P9-C3).
     private var zoneItems: [CareItem] { store.careItems.filter { $0.kind == .zone } }
+    /// Pets — Fajita, Sprinkle, and friends (P10).
+    private var petItems: [CareItem] { store.careItems.filter { $0.kind == .pet } }
 
     public var body: some View {
         List {
@@ -100,6 +102,30 @@ public struct ChoresView: View {
                         .foregroundStyle(Color.inkSoft)
                 }
                 addYardZoneButton
+            }
+            .listRowBackground(Color.familySurface)
+
+            Section("Pets") {
+                ForEach(petItems) { item in
+                    PetRow(
+                        item: item,
+                        members: store.members,
+                        photo: item.photoPath.flatMap { store.carePhotos[$0] },
+                        onEdit: { store.send(.editCareItemTapped(item)) },
+                        onMarkDone: { taskID in
+                            store.send(.markCareTaskDone(itemID: item.id, taskID: taskID))
+                        }
+                    )
+                }
+                // "The pack" persists (filtered to the not-yet-added dogs) so Fajita and Sprinkle can
+                // both be added in one sitting. Dismissable.
+                if !remainingPackStarters.isEmpty, !store.petSuggestionsDismissed {
+                    packStarterCard
+                } else if petItems.isEmpty {
+                    Text("No pets yet — add one of the crew.")
+                        .foregroundStyle(Color.inkSoft)
+                }
+                addPetButton
             }
             .listRowBackground(Color.familySurface)
 
@@ -417,6 +443,85 @@ public struct ChoresView: View {
         .buttonStyle(.pressable)
         .accessibilityIdentifier("add-yard-zone-button")
     }
+
+    // MARK: Pets (P10)
+
+    /// Dogs not already on the board, matched by name — lets "The pack" card persist for multi-add
+    /// (adding Fajita still offers Sprinkle).
+    private var remainingPackStarters: [PetSuggestion] {
+        let existing = Set(petItems.map(\.name))
+        return PetSuggestion.starters.filter { !existing.contains($0.name) }
+    }
+
+    /// The hyper-personal Pets starter — "The pack": one-tap adds for Fajita and Sprinkle (each
+    /// pre-filled with the dog-care schedule), plus a blank pet and the dismiss line. Sky-accented,
+    /// mirroring the yard seasonal-starters card.
+    private var packStarterCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                Image(systemName: "pawprint.fill").foregroundStyle(Color.sky)
+                Text("The pack")
+                    .font(.headline).foregroundStyle(Color.ink)
+            }
+            Text("Add the dogs with their usual care schedule. Edit anytime.")
+                .font(.caption).foregroundStyle(Color.inkSoft)
+            ForEach(remainingPackStarters) { suggestion in
+                Button {
+                    store.send(.petSuggestionTapped(suggestion))
+                } label: {
+                    HStack(spacing: 10) {
+                        Image(systemName: suggestion.icon)
+                            .foregroundStyle(Color.sky)
+                            .frame(width: 24)
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text("Add \(suggestion.name)").foregroundStyle(Color.ink)
+                            Text("Heartworm · flea & tick · grooming · nails")
+                                .font(.caption2).foregroundStyle(Color.inkSoft)
+                        }
+                        Spacer()
+                        Image(systemName: "plus.circle.fill").foregroundStyle(Color.sky)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("pet-suggestion-\(suggestion.id)")
+            }
+            Button {
+                store.send(.addPetTapped)
+            } label: {
+                HStack(spacing: 10) {
+                    Image(systemName: "pawprint")
+                        .foregroundStyle(Color.inkSoft)
+                        .frame(width: 24)
+                    Text("Someone else…").foregroundStyle(Color.ink)
+                    Spacer()
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("pet-suggestion-other")
+
+            Button("No thanks, I'll add my own") {
+                store.send(.dismissPetSuggestions)
+            }
+            .font(.caption).foregroundStyle(Color.inkSoft)
+            .accessibilityIdentifier("dismiss-pet-suggestions")
+        }
+        .padding(.vertical, 4)
+    }
+
+    private var addPetButton: some View {
+        Button {
+            store.send(.addPetTapped)
+        } label: {
+            Label("Add a pet", systemImage: "plus")
+                .appearBounce()
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.pressable)
+        .accessibilityIdentifier("add-pet-button")
+    }
 }
 
 /// A single Plants row: circular photo thumbnail (or a leaf fallback), name, species, the soonest
@@ -543,6 +648,115 @@ private extension String {
     var capitalizedFirst: String {
         guard let first else { return self }
         return first.uppercased() + dropFirst()
+    }
+}
+
+/// A single Pets row (P10): circular photo thumbnail (or a sky-tinted pawprint fallback — sky reads
+/// as the pets' accent), name, breed (ink-soft), the soonest task's due line, and a **sticker-slap**
+/// mark-done affordance in sky. Routes through the same `markCareTaskDone` → ``CareCompletion``/
+/// `writeCareDone` path as the rest of the care system.
+private struct PetRow: View {
+    let item: CareItem
+    let members: [HouseholdMember]
+    /// Cached photo bytes for `item.photoPath`, if loaded. `nil` ⇒ pawprint fallback.
+    let photo: Data?
+    let onEdit: () -> Void
+    let onMarkDone: (_ taskID: String) -> Void
+
+    @State private var slapOn = false
+
+    private var soonest: CareTask? { item.soonestDueTask() }
+
+    var body: some View {
+        HStack(spacing: 12) {
+            thumbnail
+                .frame(width: 44, height: 44)
+                .clipShape(Circle())
+
+            Button(action: onEdit) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(item.name).foregroundStyle(Color.ink)
+                    if let breed = item.breed, !breed.isEmpty {
+                        Text(breed).font(.caption2).foregroundStyle(Color.inkSoft)
+                    }
+                    dueLine
+                }
+            }
+            .buttonStyle(.plain)
+
+            Spacer()
+
+            if let task = soonest {
+                Button {
+                    onMarkDone(task.id)
+                    slapOn = true
+                    Task { try? await Task.sleep(for: .milliseconds(700)); slapOn = false }
+                } label: {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.title3)
+                        .foregroundStyle(Color.sky)
+                        .stickerSlap(isOn: slapOn, color: .sky)
+                }
+                .buttonStyle(.pressable)
+                .accessibilityLabel("Mark done")
+                .accessibilityIdentifier("pet-mark-done-\(item.id)")
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var thumbnail: some View {
+        if let photo, let image = UIImage(data: photo) {
+            Image(uiImage: image)
+                .resizable()
+                .scaledToFill()
+        } else {
+            ZStack {
+                Circle().fill(Color.sky.opacity(0.15))
+                Image(systemName: "pawprint.fill").foregroundStyle(Color.sky)
+            }
+        }
+    }
+
+    /// Due line copy + color. Domain gives the day math; the view owns thresholds & voice. The done
+    /// line uses the neutral "Done …" phrasing (a med/nail verb would read awkwardly here).
+    @ViewBuilder
+    private var dueLine: some View {
+        if let task = soonest {
+            let days = task.daysUntilDue()
+            if days == nil {
+                if task.lastDoneAt != nil {
+                    Text(doneText(task)).font(.caption).foregroundStyle(Color.inkSoft)
+                } else {
+                    Text("Mark it when you do it").font(.caption).foregroundStyle(Color.inkSoft)
+                }
+            } else if let d = days, d < 0 {
+                Text("\(task.title) overdue by \(-d) day\(-d == 1 ? "" : "s")")
+                    .font(.caption).fontWeight(.semibold).foregroundStyle(Color.terracotta)
+            } else if days == 0 {
+                Text("\(task.title) due today")
+                    .font(.caption).fontWeight(.semibold).foregroundStyle(Color.sky)
+            } else if let d = days {
+                if task.lastDoneAt != nil {
+                    Text(doneText(task)).font(.caption).foregroundStyle(Color.inkSoft)
+                } else {
+                    Text("\(task.title) due in \(d) day\(d == 1 ? "" : "s")")
+                        .font(.caption).foregroundStyle(Color.inkSoft)
+                }
+            }
+        } else {
+            Text("No tasks yet — tap to add one").font(.caption).foregroundStyle(Color.inkSoft)
+        }
+    }
+
+    /// "Done Jul 2 by Migueluh" — neutral, matching the House-care convention.
+    private func doneText(_ task: CareTask) -> String {
+        guard let last = task.lastDoneAt else { return "" }
+        let date = last.formatted(.dateTime.month(.abbreviated).day())
+        if let by = task.lastDoneBy, let name = members.first(where: { $0.id == by })?.name {
+            return "Done \(date) by \(name)"
+        }
+        return "Done \(date)"
     }
 }
 
