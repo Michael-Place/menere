@@ -1,4 +1,5 @@
 import ComposableArchitecture
+import DocsFeature
 import FamilyDomain
 import MenereUI
 import SwiftUI
@@ -111,6 +112,7 @@ public struct ChoresView: View {
                         item: item,
                         members: store.members,
                         photo: item.photoPath.flatMap { store.carePhotos[$0] },
+                        expiringDoc: expiringDoc(for: item),
                         onEdit: { store.send(.editCareItemTapped(item)) },
                         onMarkDone: { taskID in
                             store.send(.markCareTaskDone(itemID: item.id, taskID: taskID))
@@ -446,6 +448,21 @@ public struct ChoresView: View {
 
     // MARK: Pets (P10)
 
+    /// The soonest-expiring Family-Brain document linked to `pet` whose expiry is within 30 days (or
+    /// past) — drives the terracotta countdown chip on the pet's row. `nil` when nothing's expiring.
+    private func expiringDoc(for pet: CareItem) -> FamilyDomain.Document? {
+        store.documents
+            .filter { $0.linkedPetIds.contains(pet.id) }
+            .compactMap { doc -> (FamilyDomain.Document, Date)? in
+                guard let expiry = doc.expiryDate,
+                      FamilyDomain.Document.dayCount(from: Date(), to: expiry) <= 30
+                else { return nil }
+                return (doc, expiry)
+            }
+            .min { $0.1 < $1.1 }?
+            .0
+    }
+
     /// Dogs not already on the board, matched by name — lets "The pack" card persist for multi-add
     /// (adding Fajita still offers Sprinkle).
     private var remainingPackStarters: [PetSuggestion] {
@@ -660,6 +677,8 @@ private struct PetRow: View {
     let members: [HouseholdMember]
     /// Cached photo bytes for `item.photoPath`, if loaded. `nil` ⇒ pawprint fallback.
     let photo: Data?
+    /// The soonest linked Family-Brain doc expiring within 30 days (P10) — shows a terracotta chip.
+    let expiringDoc: FamilyDomain.Document?
     let onEdit: () -> Void
     let onMarkDone: (_ taskID: String) -> Void
 
@@ -680,6 +699,10 @@ private struct PetRow: View {
                         Text(breed).font(.caption2).foregroundStyle(Color.inkSoft)
                     }
                     dueLine
+                    if let expiry = expiringDoc?.expiryDate {
+                        DocumentDateChip(date: expiry, kind: .expiry)
+                            .padding(.top, 2)
+                    }
                 }
             }
             .buttonStyle(.plain)

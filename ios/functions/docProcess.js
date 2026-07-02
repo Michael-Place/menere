@@ -76,6 +76,11 @@ const DOCUMENT_TOOL = {
         items: { type: "string" },
         description: "Household member names that LITERALLY appear in the document. Empty if none.",
       },
+      linkedPetNames: {
+        type: "array",
+        items: { type: "string" },
+        description: "Household pet names that LITERALLY appear in the document (e.g. a patient name on a vet record). Empty if none.",
+      },
       extractedText: {
         type: "string",
         description: "A faithful full-text transcription of the document in natural reading order.",
@@ -89,12 +94,13 @@ const SYSTEM_PROMPT = `You break down a scanned family document into structured 
 
 Rules:
 - NEVER invent fields that are not actually present in the document. If something isn't there, omit it.
-- \`type\` MUST be exactly one of: receipt, medical, school, pet, tax, manual, other.
+- \`type\` MUST be exactly one of: receipt, medical, school, pet, tax, manual, other. Vet / veterinary / animal-hospital records (vaccination certificates, pet exam paperwork) are type 'pet'.
 - \`tags\`: 3-8 short lowercase tags useful for later search.
 - \`summary\`: 1-2 short, factual sentences in a neutral voice — no marketing, no speculation.
 - Dates only when explicit or unambiguous; format as ISO YYYY-MM-DD interpreted in America/New_York. Do not guess a year.
 - \`amount\` is a single number (the total) with no currency symbol.
 - \`linkedMemberNames\`: include a household member's name ONLY if it literally appears in the document text. The household's member names are provided to you; do not add names that aren't printed on the document.
+- \`linkedPetNames\`: include a household pet's name ONLY if it literally appears in the document (e.g. a "Patient" name on a vet record). The household's pet names are provided to you; do not add names that aren't printed on the document.
 - \`extractedText\`: transcribe the document faithfully in reading order — this powers full-text search.`;
 
 /** Firestore Timestamp at noon UTC for an ISO YYYY-MM-DD string, or null if unparseable. */
@@ -131,11 +137,14 @@ async function buildContentBlocks(bucket, pagePaths) {
 }
 
 /** Ask Claude for the structured document breakdown. Returns the tool input object, or throws. */
-async function callClaude(apiKey, contentBlocks, memberNames) {
+async function callClaude(apiKey, contentBlocks, memberNames, petNames) {
   const client = new Anthropic({ apiKey });
   const roster = memberNames.length
     ? `Household member names (for linkedMemberNames matching): ${memberNames.join(", ")}.`
     : "There are no household member names to match.";
+  const pets = petNames.length
+    ? `Household pet names (for linkedPetNames matching): ${petNames.join(", ")}.`
+    : "There are no household pet names to match.";
 
   const response = await client.messages.create({
     model: MODEL,
@@ -151,7 +160,7 @@ async function callClaude(apiKey, contentBlocks, memberNames) {
           ...contentBlocks,
           {
             type: "text",
-            text: `Break down this document. Times/dates are ${TZ}. ${roster}`,
+            text: `Break down this document. Times/dates are ${TZ}. ${roster} ${pets}`,
           },
         ],
       },
@@ -191,9 +200,24 @@ async function processDocument({ db, hid, docId, apiKey }) {
       }
     });
 
+    // Pet roster (name → careItem id) — pets are CareItems with kind == "pet". Their names go to
+    // Claude for linkedPetNames matching, mirroring members; matched names map to careItem ids.
+    const careSnap = await db.collection("households").doc(hid).collection("careItems").get();
+    const petIdByLowerName = {};
+    const petNames = [];
+    careSnap.forEach((c) => {
+      const data = c.data() || {};
+      if (data.kind !== "pet") return;
+      const name = String(data.name || "").trim();
+      if (name) {
+        petIdByLowerName[name.toLowerCase()] = c.id;
+        petNames.push(name);
+      }
+    });
+
     const bucket = admin.storage().bucket(STORAGE_BUCKET);
     const contentBlocks = await buildContentBlocks(bucket, pagePaths);
-    const out = await callClaude(apiKey, contentBlocks, memberNames);
+    const out = await callClaude(apiKey, contentBlocks, memberNames, petNames);
 
     // Normalize type.
     const type = DOC_TYPES.includes(out.type) ? out.type : "other";
@@ -223,10 +247,24 @@ async function processDocument({ db, hid, docId, apiKey }) {
       }
     });
 
+    // Map linkedPetNames → careItem ids; unmatched pet names fall into tags (mirroring members).
+    const linkedPetIds = [];
+    (Array.isArray(out.linkedPetNames) ? out.linkedPetNames : []).forEach((rawName) => {
+      const name = String(rawName || "").trim();
+      if (!name) return;
+      const petId = petIdByLowerName[name.toLowerCase()];
+      if (petId) {
+        if (!linkedPetIds.includes(petId)) linkedPetIds.push(petId);
+      } else {
+        addTag(name);
+      }
+    });
+
     const update = {
       type,
       tags,
       linkedMemberIds,
+      linkedPetIds,
       summary: String(out.summary || "").trim(),
       extractedText: String(out.extractedText || "").trim(),
       processingState: "processed",
@@ -250,7 +288,7 @@ async function processDocument({ db, hid, docId, apiKey }) {
     if (expiryDate) update.expiryDate = expiryDate;
 
     await docRef.set(update, { merge: true });
-    console.log(`[docs] processed ${docId} type=${type}`);
+    console.log(`[docs] processed ${docId} type=${type} pets=${linkedPetIds.length}`);
     return { processed: true, type };
   } catch (err) {
     // Never leave a document stuck pending.

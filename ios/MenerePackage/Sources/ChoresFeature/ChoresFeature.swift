@@ -21,6 +21,9 @@ public struct ChoresReducer {
         /// Plant photo bytes, keyed by Storage `photoPath` (light in-memory cache; mirrors the docs
         /// page cache). Loaded after `careItems` land so plant rows render a real thumbnail.
         var carePhotos: [String: Data] = [:]
+        /// Family-Brain documents (P10) — loaded one-shot alongside care items so a pet's row can show
+        /// a terracotta expiry chip when a linked doc (e.g. a rabies cert) is expiring or past due.
+        var documents: [FamilyDomain.Document] = []
         /// In-memory only: the starter-suggestions card comes back on relaunch (acceptable for a
         /// private app; persisting the dismissal is a possible later polish).
         var careSuggestionsDismissed = false
@@ -49,7 +52,7 @@ public struct ChoresReducer {
 
     public enum Action: Equatable, BindableAction {
         case task
-        case loaded(chores: [Chore], members: [HouseholdMember], stats: [MemberStats], rewards: [Reward], activity: [ActivityItem], careItems: [CareItem])
+        case loaded(chores: [Chore], members: [HouseholdMember], stats: [MemberStats], rewards: [Reward], activity: [ActivityItem], careItems: [CareItem], documents: [FamilyDomain.Document])
         case statsUpdated([MemberStats])
         case addTapped
         case editTapped(Chore)
@@ -105,13 +108,15 @@ public struct ChoresReducer {
                         async let rewards = persistence.rewards(hid)
                         async let activity = persistence.activity(hid)
                         async let careItems = persistence.careItems(hid)
+                        async let documents = persistence.documents(hid)
                         await send(.loaded(
                             chores: (try? await chores) ?? [],
                             members: (try? await members) ?? [],
                             stats: (try? await stats) ?? [],
                             rewards: (try? await rewards) ?? [],
                             activity: (try? await activity) ?? [],
-                            careItems: (try? await careItems) ?? []
+                            careItems: (try? await careItems) ?? [],
+                            documents: (try? await documents) ?? []
                         ))
                     },
                     // Leaderboard updates live as the server-side XP trigger writes stats.
@@ -124,8 +129,9 @@ public struct ChoresReducer {
                     .cancellable(id: CancelID.observeStats, cancelInFlight: true)
                 )
 
-            case let .loaded(chores, members, stats, rewards, activity, careItems):
+            case let .loaded(chores, members, stats, rewards, activity, careItems, documents):
                 state.isLoading = false
+                state.documents = documents
                 state.chores = chores.sorted {
                     $0.isCompleted == $1.isCompleted ? $0.createdAt < $1.createdAt : (!$0.isCompleted && $1.isCompleted)
                 }

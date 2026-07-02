@@ -25,6 +25,8 @@ public struct DocumentDetailReducer {
         /// Loaded to (a) show the calendar action's idempotent done-state and (b) avoid duplicates.
         var events: [FamilyEvent] = []
         var members: [HouseholdMember] = []
+        /// The household's pets (CareItems with kind == .pet), for the Pets field row + link menu (P10).
+        var pets: [CareItem] = []
         var showFullText = false
         var isEditingTitle = false
         var titleDraft = ""
@@ -64,6 +66,8 @@ public struct DocumentDetailReducer {
         case pagesLoaded([String: Data])
         case eventsLoaded([FamilyEvent])
         case membersLoaded([HouseholdMember])
+        case petsLoaded([CareItem])
+        case petToggled(String)
         case addToCalendarTapped
         case eventAdded(FamilyEvent)
         case editTitleTapped
@@ -110,11 +114,13 @@ public struct DocumentDetailReducer {
                 let pagePaths = state.doc.pagePaths.filter { $0.hasSuffix(".jpg") }
                 state.pagesLoading = !pagePaths.isEmpty
                 return .run { send in
-                    // Pages, events, and members load in parallel; each degrades independently.
+                    // Pages, events, members, and pets load in parallel; each degrades independently.
                     async let events = persistence.events(hid)
                     async let members = persistence.members(hid)
+                    async let careItems = persistence.careItems(hid)
                     await send(.eventsLoaded((try? await events) ?? []))
                     await send(.membersLoaded((try? await members) ?? []))
+                    await send(.petsLoaded(((try? await careItems) ?? []).filter { $0.kind == .pet }))
                     var loaded: [String: Data] = [:]
                     for path in pagePaths {
                         if let data = try? await storage.downloadData(path) {
@@ -136,6 +142,23 @@ public struct DocumentDetailReducer {
             case let .membersLoaded(members):
                 state.members = members
                 return .none
+
+            case let .petsLoaded(pets):
+                state.pets = pets
+                return .none
+
+            case let .petToggled(petID):
+                guard let hid = hid() else { return .none }
+                if let idx = state.doc.linkedPetIds.firstIndex(of: petID) {
+                    state.doc.linkedPetIds.remove(at: idx)
+                } else {
+                    state.doc.linkedPetIds.append(petID)
+                }
+                let doc = state.doc
+                return .run { send in
+                    try await persistence.saveDocument(hid, doc)
+                    await send(.delegate(.didChange(doc)))
+                }
 
             case .addToCalendarTapped:
                 guard let hid = hid(), let due = state.doc.dueDate, !state.onCalendar else { return .none }
@@ -273,6 +296,23 @@ public struct DocumentDetailView: View {
                             }
                         }
                     } label: { Label("Change type", systemImage: "tag") }
+
+                    if !store.pets.isEmpty {
+                        Menu {
+                            ForEach(store.pets) { pet in
+                                Button {
+                                    store.send(.petToggled(pet.id))
+                                } label: {
+                                    Label(
+                                        pet.name,
+                                        systemImage: doc.linkedPetIds.contains(pet.id) ? "checkmark" : "pawprint"
+                                    )
+                                }
+                                .accessibilityIdentifier("detail-link-pet-\(pet.id)")
+                            }
+                        } label: { Label("Link pets", systemImage: "pawprint") }
+                            .accessibilityIdentifier("detail-link-pets")
+                    }
 
                     Button(role: .destructive) {
                         store.send(.deleteTapped)
@@ -430,6 +470,21 @@ public struct DocumentDetailView: View {
                                 .frame(width: 10, height: 10)
                             Text(member.name).foregroundStyle(Color.ink)
                         }
+                    }
+                }
+            }
+            let linkedPets = store.pets.filter { doc.linkedPetIds.contains($0.id) }
+            if !linkedPets.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    fieldLabel("Pets")
+                    ForEach(linkedPets) { pet in
+                        HStack(spacing: 8) {
+                            Image(systemName: "pawprint.fill")
+                                .font(.caption)
+                                .foregroundStyle(Color.sky)
+                            Text(pet.name).foregroundStyle(Color.ink)
+                        }
+                        .accessibilityIdentifier("detail-pet-\(pet.id)")
                     }
                 }
             }

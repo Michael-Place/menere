@@ -175,6 +175,7 @@ let package = Package(
                 "PersistenceClient",
                 "StorageClient",
                 "UserDomain",
+                "DocsFeature",
             ]
         ),
         .target(

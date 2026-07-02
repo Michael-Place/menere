@@ -1,4 +1,5 @@
 import ComposableArchitecture
+import DocsFeature
 import FamilyDomain
 import MenereUI
 import PersistenceClient
@@ -130,6 +131,9 @@ public struct CareItemFormReducer {
         var showAISuggestion: Bool = false
         /// A warm inline note under the identify button for a low-confidence / failed identify.
         var identifyNote: String?
+        /// Family-Brain documents linked to this pet (P10 "Vet records" timeline), newest first.
+        /// Loaded one-shot in `.task` for pets only.
+        var petDocs: [FamilyDomain.Document] = []
 
         public init(item: CareItem, isEditing: Bool) {
             self.item = item
@@ -154,6 +158,7 @@ public struct CareItemFormReducer {
         case removeTask(id: String)
         case photoPicked(Data)
         case photoLoaded(Data?)
+        case docsLoaded([FamilyDomain.Document])
         case identifyTapped
         case identifyResponse(PlantIdentification?)
         case delegate(Delegate)
@@ -194,16 +199,35 @@ public struct CareItemFormReducer {
         Reduce { state, action in
             switch action {
             case .task:
-                // Edit mode: fetch the existing photo for display (best-effort).
-                guard let path = state.item.photoPath, !path.isEmpty, state.loadedPhoto == nil
-                else { return .none }
+                // Edit mode: fetch the existing photo for display (best-effort). Pets also load their
+                // linked Family-Brain documents for the "Vet records" timeline.
+                let photoPath: String? = {
+                    guard state.loadedPhoto == nil, let p = state.item.photoPath, !p.isEmpty else { return nil }
+                    return p
+                }()
+                let petID = state.isPet ? state.item.id : nil
+                guard photoPath != nil || petID != nil else { return .none }
+                let hid = hid()
                 return .run { send in
                     @Dependency(\.storage) var storage
-                    await send(.photoLoaded(try? await storage.downloadData(path)))
+                    @Dependency(\.persistence) var persistence
+                    if let photoPath {
+                        await send(.photoLoaded(try? await storage.downloadData(photoPath)))
+                    }
+                    if let petID, let hid {
+                        let docs = ((try? await persistence.documents(hid)) ?? [])
+                            .filter { $0.linkedPetIds.contains(petID) }
+                        await send(.docsLoaded(docs))
+                    }
                 }
 
             case let .photoLoaded(data):
                 state.loadedPhoto = data
+                return .none
+
+            case let .docsLoaded(docs):
+                // Newest first — by the document's own date, falling back to when it was filed.
+                state.petDocs = docs.sorted { ($0.docDate ?? $0.createdAt) > ($1.docDate ?? $1.createdAt) }
                 return .none
 
             case let .photoPicked(data):
@@ -371,6 +395,7 @@ public struct CareItemFormView: View {
                     breedSection
                     birthdaySection
                     vetSection
+                    vetRecordsSection
                 }
 
                 Section("Icon") {
@@ -642,6 +667,50 @@ public struct CareItemFormView: View {
             ))
             .keyboardType(.phonePad)
             .accessibilityIdentifier("pet-vet-phone-field")
+        }
+    }
+
+    /// P10 — the pet's document timeline: Family-Brain documents linked to this pet, newest first.
+    /// Each row shows the doc title + the existing expiry/due countdown chip; tapping pushes the real
+    /// ``DocumentDetailView`` (ChoresFeature → DocsFeature is cycle-free). Empty state nudges a scan.
+    @ViewBuilder
+    private var vetRecordsSection: some View {
+        Section("Vet records") {
+            if store.petDocs.isEmpty {
+                Text("No records yet — scan the vet paperwork and it'll file itself.")
+                    .font(.caption).foregroundStyle(Color.inkSoft)
+                    .accessibilityIdentifier("pet-vet-records-empty")
+            } else {
+                ForEach(store.petDocs) { doc in
+                    NavigationLink {
+                        DocumentDetailView(
+                            store: Store(initialState: DocumentDetailReducer.State(doc: doc)) {
+                                DocumentDetailReducer()
+                            }
+                        )
+                    } label: {
+                        vetRecordRow(doc)
+                    }
+                    .accessibilityIdentifier("pet-vet-record-\(doc.id)")
+                }
+            }
+        }
+    }
+
+    private func vetRecordRow(_ doc: FamilyDomain.Document) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: doc.type.symbolName)
+                .font(.subheadline)
+                .foregroundStyle(Color.sky)
+                .frame(width: 24)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(doc.title).foregroundStyle(Color.ink)
+                if let expiry = doc.expiryDate {
+                    DocumentDateChip(date: expiry, kind: .expiry)
+                } else if let due = doc.dueDate {
+                    DocumentDateChip(date: due, kind: .due)
+                }
+            }
         }
     }
 }
