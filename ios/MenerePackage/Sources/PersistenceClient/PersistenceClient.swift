@@ -117,6 +117,15 @@ public struct PersistenceClient: Sendable {
     /// `mock` flag from the C1 fixture) actually clear.
     public var saveHueConfig: @Sendable (_ hid: String, _ config: HueConfig) async throws -> Void
 
+    // MARK: Smart home (Lutron) config (P15)
+    /// The household's Lutron config at `households/{hid}/config/lutron`, or nil when absent (never
+    /// paired). Decode-safe (mock/hand-written docs still resolve). The cheap gate for the House
+    /// "Shades" section and Today's shade rituals — no doc, no shades.
+    public var lutronConfig: @Sendable (_ hid: String) async throws -> LutronConfig?
+    /// Full-document write of the Lutron config (P15-C1 pairing / re-pairing). Not a merge — the whole
+    /// `households/{hid}/config/lutron` doc is replaced, so a dropped `mock` flag actually clears.
+    public var saveLutronConfig: @Sendable (_ hid: String, _ config: LutronConfig) async throws -> Void
+
     // MARK: Activity feed
     /// Recent activity, newest first (capped at 50).
     public var activity: @Sendable (_ hid: String) async throws -> [ActivityItem]
@@ -402,6 +411,17 @@ extension PersistenceClient: DependencyKey {
             saveHueConfig: { hid, config in
                 // Full-doc replace (merge: false) so a removed `mock` flag is cleared, not retained.
                 try await households().document(hid).collection("config").document("hue").setData(
+                    Firestore.Encoder().encode(config)
+                )
+            },
+            lutronConfig: { hid in
+                let s = try await households().document(hid).collection("config").document("lutron").getDocument()
+                guard let d = s.data() else { return nil }
+                return try Firestore.Decoder().decode(LutronConfig.self, from: d)
+            },
+            saveLutronConfig: { hid, config in
+                // Full-doc replace (merge: false) — same rationale as saveHueConfig.
+                try await households().document(hid).collection("config").document("lutron").setData(
                     Firestore.Encoder().encode(config)
                 )
             },

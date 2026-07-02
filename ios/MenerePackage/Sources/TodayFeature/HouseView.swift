@@ -1,6 +1,7 @@
 import ComposableArchitecture
 import FamilyDomain
 import HueClient
+import LutronClient
 import MenereUI
 import SwiftUI
 
@@ -11,11 +12,18 @@ import SwiftUI
 public struct HouseView: View {
     @Bindable private var store: StoreOf<HouseReducer>
 
-    /// Seed from Today's live snapshot so the screen renders instantly, then refresh on appear.
-    public init(config: HueConfig, members: [HouseholdMember], bridges: [BridgeSnapshot]) {
+    /// Seed from Today's live snapshot so the screen renders instantly, then refresh on appear. Lutron
+    /// shades load on appear from `lutronConfig` (P15-C1) — no need to pre-fetch them on Today.
+    public init(
+        config: HueConfig, members: [HouseholdMember], bridges: [BridgeSnapshot],
+        lutronConfig: LutronConfig? = nil, shades: [LutronShade] = []
+    ) {
         _store = Bindable(
             wrappedValue: Store(
-                initialState: HouseReducer.State(config: config, members: members, bridges: bridges)
+                initialState: HouseReducer.State(
+                    config: config, members: members, bridges: bridges,
+                    lutronConfig: lutronConfig, shades: shades
+                )
             ) { HouseReducer() }
         )
     }
@@ -30,6 +38,12 @@ public struct HouseView: View {
             VStack(alignment: .leading, spacing: 20) {
                 ForEach(store.bridges) { snap in
                     bridgeSection(snap)
+                }
+                // Shades sections (P15-C1) live below the lights — one per area. When both a Hue room
+                // and a Lutron area share a name they still render separately this chunk (unification
+                // is future polish).
+                ForEach(store.shadesByArea, id: \.area) { group in
+                    shadesSection(area: group.area, shades: group.shades)
                 }
             }
             .padding(.horizontal)
@@ -93,6 +107,84 @@ public struct HouseView: View {
                     .fill(Color.familySurface)
             )
         }
+    }
+
+    // MARK: Shades section (P15-C1)
+
+    private func shadesSection(area: String, shades: [LutronShade]) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text("\(area) · Shades".uppercased())
+                .font(.system(.caption, design: .rounded).weight(.semibold))
+                .foregroundStyle(Color.inkSoft)
+                .padding(.bottom, 6)
+            VStack(spacing: 0) {
+                ForEach(Array(shades.enumerated()), id: \.element.id) { idx, shade in
+                    shadeRow(shade)
+                    if idx < shades.count - 1 {
+                        Divider().overlay(Color.inkSoft.opacity(0.15)).padding(.leading, 16)
+                    }
+                }
+            }
+            .background(
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .fill(Color.familySurface)
+            )
+        }
+        .accessibilityIdentifier("house-shades-\(area)")
+    }
+
+    private func shadeRow(_ shade: LutronShade) -> some View {
+        VStack(spacing: 8) {
+            HStack(spacing: 12) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(shade.name)
+                        .font(.system(.body, design: .rounded).weight(.medium))
+                        .foregroundStyle(Color.ink)
+                    Text(LutronLevel.label(shade.level))
+                        .font(.system(.caption, design: .rounded))
+                        .foregroundStyle(Color.inkSoft)
+                        .contentTransition(.numericText())
+                        .accessibilityIdentifier("house-shade-level-\(shade.zoneId)")
+                }
+                Spacer(minLength: 0)
+                // Up · Stop · Down (raise / stop / lower).
+                HStack(spacing: 6) {
+                    shadeButton("chevron.up", id: "house-shade-raise-\(shade.zoneId)") {
+                        store.send(.raiseShade(zoneId: shade.zoneId))
+                    }
+                    shadeButton("stop.fill", id: "house-shade-stop-\(shade.zoneId)") {
+                        store.send(.stopShade(zoneId: shade.zoneId))
+                    }
+                    shadeButton("chevron.down", id: "house-shade-lower-\(shade.zoneId)") {
+                        store.send(.lowerShade(zoneId: shade.zoneId))
+                    }
+                }
+            }
+            Slider(
+                value: Binding(
+                    get: { Double(shade.level) },
+                    set: { store.send(.shadeLevelChanged(zoneId: shade.zoneId, level: Int($0.rounded()))) }
+                ),
+                in: 0...100
+            )
+            .tint(Color.bacanGreen)
+            .accessibilityIdentifier("house-shade-slider-\(shade.zoneId)")
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .accessibilityIdentifier("house-shade-\(shade.zoneId)")
+    }
+
+    private func shadeButton(_ systemName: String, id: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: systemName)
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(Color.bacanGreen)
+                .frame(width: 34, height: 30)
+                .background(Capsule(style: .continuous).fill(Color.bacanGreen.opacity(0.14)))
+        }
+        .buttonStyle(.pressable)
+        .accessibilityIdentifier(id)
     }
 
     // MARK: Room row

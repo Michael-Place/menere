@@ -28,6 +28,12 @@
 	<string>Bacán uses the camera to scan wine labels and family documents.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>Bacán uses your location to estimate drive times to dinner.</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Bacán finds your family's Lutron shade bridge on your home Wi-Fi so you can open and close the shades.</string>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_lutron._tcp</string>
+	</array>
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>

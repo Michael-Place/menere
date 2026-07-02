@@ -26,6 +26,7 @@ let package = Package(
         .library(name: "StorageClient", targets: ["StorageClient"]),
         .library(name: "LocationClient", targets: ["LocationClient"]),
         .library(name: "HueClient", targets: ["HueClient"]),
+        .library(name: "LutronClient", targets: ["LutronClient"]),
         .library(name: "IdentifyClient", targets: ["IdentifyClient"]),
         .library(name: "EnrichmentClient", targets: ["EnrichmentClient"]),
         .library(name: "CatalogClient", targets: ["CatalogClient"]),
@@ -116,6 +117,7 @@ let package = Package(
                 "PersistenceClient",
                 "HouseholdClient",
                 "HueClient",
+                "LutronClient",
             ]
         ),
         .target(
@@ -130,6 +132,7 @@ let package = Package(
                 "DocsFeature",
                 "LocationClient",
                 "HueClient",
+                "LutronClient",
             ]
         ),
         .target(
@@ -251,6 +254,14 @@ let package = Package(
         ),
         .target(
             name: "HueClient",
+            dependencies: [
+                .product(name: "Dependencies", package: "swift-dependencies"),
+                .product(name: "DependenciesMacros", package: "swift-dependencies"),
+                "FamilyDomain",
+            ]
+        ),
+        .target(
+            name: "LutronClient",
             dependencies: [
                 .product(name: "Dependencies", package: "swift-dependencies"),
                 .product(name: "DependenciesMacros", package: "swift-dependencies"),
@@ -392,6 +403,7 @@ let package = Package(
                 "HouseholdClient",
                 "UserDomain",
                 "HueClient",
+                "LutronClient",
                 "FamilyDomain",
             ]
         ),
@@ -415,11 +427,19 @@ let package = Package(
             ]
         ),
         .testTarget(
+            name: "LutronClientTests",
+            dependencies: [
+                "LutronClient",
+                "FamilyDomain",
+            ]
+        ),
+        .testTarget(
             name: "TodayFeatureTests",
             dependencies: [
                 .product(name: "ComposableArchitecture", package: "swift-composable-architecture"),
                 "TodayFeature",
                 "HueClient",
+                "LutronClient",
                 "FamilyDomain",
             ]
         ),

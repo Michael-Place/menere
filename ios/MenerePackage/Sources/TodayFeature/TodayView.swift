@@ -473,7 +473,10 @@ public struct TodayView: View {
     /// card (temps / lights summary / ritual buttons) is unchanged.
     private func houseCardHeader(_ house: HouseSnapshot) -> some View {
         NavigationLink {
-            HouseView(config: house.config, members: store.members, bridges: house.bridges)
+            HouseView(
+                config: house.config, members: store.members, bridges: house.bridges,
+                lutronConfig: store.lutronConfig
+            )
         } label: {
             HStack(spacing: 8) {
                 Image(systemName: "lightbulb.fill")

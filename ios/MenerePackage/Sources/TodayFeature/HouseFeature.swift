@@ -2,6 +2,7 @@ import ComposableArchitecture
 import FamilyDomain
 import Foundation
 import HueClient
+import LutronClient
 
 /// The granular House control surface (P12-C4) — the SUBSTRATE future family experiences (and the
 /// planned P14 agent tools) compose on. Where the Today "house" card is a read-only summary + ritual
@@ -32,10 +33,29 @@ public struct HouseReducer {
         /// The scene id whose recall just succeeded — drives the room-detail success haptic.
         public var recalledScene: String?
 
-        public init(config: HueConfig, members: [HouseholdMember] = [], bridges: [BridgeSnapshot] = []) {
+        // MARK: Lutron shades (P15-C1)
+        /// The household's Lutron config (nil = no shades). Stable for the screen's lifetime.
+        public var lutronConfig: LutronConfig?
+        /// Live shade state, mutated optimistically and re-synced on refresh. Loaded on `.task`.
+        public var shades: [LutronShade] = []
+
+        public init(
+            config: HueConfig, members: [HouseholdMember] = [], bridges: [BridgeSnapshot] = [],
+            lutronConfig: LutronConfig? = nil, shades: [LutronShade] = []
+        ) {
             self.config = config
             self.members = members
             self.bridges = bridges
+            self.lutronConfig = lutronConfig
+            self.shades = shades
+        }
+
+        /// Shades grouped by area/room name, each group's shades sorted by name — the House "Shades"
+        /// sections. Areas are alphabetical for a stable layout.
+        public var shadesByArea: [(area: String, shades: [LutronShade])] {
+            Dictionary(grouping: shades, by: \.areaName)
+                .map { (area: $0.key, shades: $0.value.sorted { $0.name < $1.name }) }
+                .sorted { $0.area < $1.area }
         }
 
         /// True once more than one bridge is reachable — the view then groups sections by bridge name.
@@ -87,11 +107,21 @@ public struct HouseReducer {
         case recallScene(bridgeId: String, groupId: String, sceneId: String)
         case sceneRecalled(sceneId: String)
         case clearSceneSuccess(sceneId: String)
+
+        // Lutron shades (P15-C1)
+        case shadesReloaded([LutronShade])
+        /// Shade slider moved (0–100). Optimistic + debounced commit.
+        case shadeLevelChanged(zoneId: String, level: Int)
+        case commitShadeLevel(zoneId: String, level: Int)
+        case raiseShade(zoneId: String)
+        case lowerShade(zoneId: String)
+        case stopShade(zoneId: String)
     }
 
     public init() {}
 
     @Dependency(\.hue) var hue
+    @Dependency(\.lutron) var lutron
     @Dependency(\.continuousClock) var clock
 
     /// ≥150ms between slider PUTs (the required floor). One quiescent tick, then one write.
@@ -102,6 +132,7 @@ public struct HouseReducer {
         case sceneSuccess(String)
         case roomBrightness(String)
         case lightBrightness(String)
+        case shadeLevel(String)
     }
 
     public var body: some ReducerOf<Self> {
@@ -110,16 +141,67 @@ public struct HouseReducer {
             case .task, .refresh:
                 state.isRefreshing = true
                 let bridges = state.config.bridges
-                return .run { send in
-                    let snapshots = await hue.readHouse(bridges)
-                    await send(.houseReloaded(snapshots))
-                }
-                .cancellable(id: CancelID.refresh, cancelInFlight: true)
+                let lutronConfig = state.lutronConfig
+                return .merge(
+                    .run { send in
+                        let snapshots = await hue.readHouse(bridges)
+                        await send(.houseReloaded(snapshots))
+                    }
+                    .cancellable(id: CancelID.refresh, cancelInFlight: true),
+                    // Shades load independently — a Lutron hiccup never blocks the lights.
+                    .run { send in
+                        guard let lutronConfig else { return }
+                        let shades = (try? await lutron.shades(lutronConfig)) ?? []
+                        await send(.shadesReloaded(shades))
+                    }
+                )
 
             case let .houseReloaded(snapshots):
                 state.isRefreshing = false
                 state.bridges = snapshots
                 return .none
+
+            case let .shadesReloaded(shades):
+                state.shades = shades
+                return .none
+
+            case let .shadeLevelChanged(zoneId, level):
+                guard state.lutronConfig != nil,
+                      let i = state.shades.firstIndex(where: { $0.zoneId == zoneId }) else { return .none }
+                let clamped = LutronLevel.clamp(level)
+                state.shades[i].level = clamped   // optimistic
+                return .run { send in
+                    try await clock.sleep(for: Self.sliderDebounce)
+                    await send(.commitShadeLevel(zoneId: zoneId, level: clamped))
+                }
+                .cancellable(id: CancelID.shadeLevel(zoneId), cancelInFlight: true)
+
+            case let .commitShadeLevel(zoneId, level):
+                guard let config = state.lutronConfig else { return .none }
+                return .run { _ in
+                    try? await lutron.setShadeLevel(config, zoneId, level)
+                }
+
+            case let .raiseShade(zoneId):
+                guard let config = state.lutronConfig,
+                      let i = state.shades.firstIndex(where: { $0.zoneId == zoneId }) else { return .none }
+                state.shades[i].level = LutronLevel.max   // optimistic: fully open
+                return .run { _ in try? await lutron.raise(config, zoneId) }
+
+            case let .lowerShade(zoneId):
+                guard let config = state.lutronConfig,
+                      let i = state.shades.firstIndex(where: { $0.zoneId == zoneId }) else { return .none }
+                state.shades[i].level = LutronLevel.min   // optimistic: fully closed
+                return .run { _ in try? await lutron.lower(config, zoneId) }
+
+            case let .stopShade(zoneId):
+                guard let config = state.lutronConfig else { return .none }
+                // Stop leaves the shade wherever it is; re-read to sync the true resting level.
+                return .run { send in
+                    try? await lutron.stop(config, zoneId)
+                    let shades = (try? await lutron.shades(config)) ?? []
+                    await send(.shadesReloaded(shades))
+                }
 
             case let .toggleRoom(bridgeId, roomId):
                 guard let bi = state.bridges.firstIndex(where: { $0.bridge.bridgeId == bridgeId }),

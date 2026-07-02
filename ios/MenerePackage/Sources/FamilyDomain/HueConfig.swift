@@ -197,20 +197,33 @@ public struct HueRitual: Codable, Equatable, Sendable, Identifiable {
     /// bridgeId (defaults to "" and the config migration fills it from the single bridge).
     public var bridgeId: String
 
+    /// **Cross-ecosystem shade actions (P15-C1).** When present, recalling this ritual ALSO drives
+    /// the household's Lutron shades to the given levels, fire-and-forget alongside the Hue scene —
+    /// so "Bedtime" both dims the boys' lights and closes their shades in one tap. Each entry names a
+    /// LEAP zone id and a target level (0 = closed, 100 = open). Decode-safe (`decodeIfPresent`): a
+    /// ritual with no `shadeActions` is exactly the pre-P15 behavior (Hue-only). There is no pairing
+    /// UI to edit these yet — config-as-conversation: Michael can name his exact shades and the field
+    /// gets written to his Bedtime ritual in the config doc (an editing UI is future polish).
+    public var shadeActions: [ShadeAction]?
+
     /// Rituals are unique by (key, bridgeId): the same standard ritual could in principle exist on
     /// two bridges, though the app binds each standard ritual to one bridge at a time.
     public var id: String { "\(bridgeId)/\(key)" }
 
-    public init(key: String, label: String, sceneId: String, groupId: String, bridgeId: String = "") {
+    public init(
+        key: String, label: String, sceneId: String, groupId: String,
+        bridgeId: String = "", shadeActions: [ShadeAction]? = nil
+    ) {
         self.key = key
         self.label = label
         self.sceneId = sceneId
         self.groupId = groupId
         self.bridgeId = bridgeId
+        self.shadeActions = shadeActions
     }
 
     private enum CodingKeys: String, CodingKey {
-        case key, label, sceneId, groupId, bridgeId
+        case key, label, sceneId, groupId, bridgeId, shadeActions
     }
 
     public init(from decoder: Decoder) throws {
@@ -220,5 +233,23 @@ public struct HueRitual: Codable, Equatable, Sendable, Identifiable {
         sceneId = try c.decode(String.self, forKey: .sceneId)
         groupId = try c.decode(String.self, forKey: .groupId)
         bridgeId = try c.decodeIfPresent(String.self, forKey: .bridgeId) ?? ""
+        shadeActions = try c.decodeIfPresent([ShadeAction].self, forKey: .shadeActions)
+    }
+}
+
+/// One shade-level target folded into a `HueRitual` (P15-C1). Pure data in `FamilyDomain` so the
+/// ritual model stays free of any Lutron transport dependency; `LutronClient.setShadeLevel` consumes
+/// `zoneId` + `level` at recall time.
+public struct ShadeAction: Codable, Equatable, Sendable, Identifiable {
+    /// The LEAP zone id (e.g. `"5"` for `/zone/5`) to drive.
+    public var zoneId: String
+    /// Target level 0–100 (0 = fully closed, 100 = fully open), clamped by the client.
+    public var level: Int
+
+    public var id: String { zoneId }
+
+    public init(zoneId: String, level: Int) {
+        self.zoneId = zoneId
+        self.level = level
     }
 }

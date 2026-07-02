@@ -3,6 +3,7 @@ import ComposableArchitecture
 import FamilyDomain
 import HouseholdClient
 import HueClient
+import LutronClient
 import MenereUI
 import PersistenceClient
 import SwiftUI
@@ -36,6 +37,13 @@ public struct SettingsReducer {
         /// The bridge pending a Remove confirmation (nil = none).
         var removingBridge: HueBridgeConfig?
         @Presents var huePairing: HuePairingReducer.State?
+
+        // MARK: Smart home (Lutron shades, P15-C1)
+        /// The household's Lutron config, or nil when never paired (→ the "Set up" row).
+        var lutronConfig: LutronConfig?
+        /// Live reachability of the Lutron bridge (nil = still probing).
+        var lutronReachable: Bool?
+        @Presents var lutronPairing: LutronPairingReducer.State?
 
         public init() {}
 
@@ -80,6 +88,13 @@ public struct SettingsReducer {
         case hueSceneChosen(ritual: HueRitual, scene: HueScene)
         case hueConfigResaved(HueConfig)
         case huePairing(PresentationAction<HuePairingReducer.Action>)
+
+        // Smart home (Lutron shades)
+        case lutronConfigLoaded(LutronConfig?)
+        case lutronReachabilityProbed(Bool)
+        case setupLutronTapped
+        case rePairLutronTapped
+        case lutronPairing(PresentationAction<LutronPairingReducer.Action>)
     }
 
     public init() {}
@@ -133,6 +148,9 @@ public struct SettingsReducer {
                     // reachability dot + scenes that name the ritual bindings.
                     let config = try? await persistence.hueConfig(hid)
                     await send(.hueConfigLoaded(config ?? nil))
+                    // Lutron shades config (P15) — same load-then-probe pattern.
+                    let lutron = try? await persistence.lutronConfig(hid)
+                    await send(.lutronConfigLoaded(lutron ?? nil))
                 }
 
             case let .hueConfigLoaded(config):
@@ -234,6 +252,39 @@ public struct SettingsReducer {
             case .huePairing:
                 return .none
 
+            // MARK: Lutron shades (P15-C1)
+
+            case let .lutronConfigLoaded(config):
+                state.lutronConfig = config
+                state.lutronReachable = nil
+                guard let config else { return .none }
+                return .run { send in
+                    @Dependency(\.lutron) var lutron
+                    let reachable = (try? await lutron.testConnection(config)) ?? false
+                    await send(.lutronReachabilityProbed(reachable))
+                }
+
+            case let .lutronReachabilityProbed(reachable):
+                state.lutronReachable = reachable
+                return .none
+
+            case .setupLutronTapped, .rePairLutronTapped:
+                @Shared(.user) var user
+                guard let hid = user?.householdId else { return .none }
+                state.lutronPairing = LutronPairingReducer.State(hid: hid, existingConfig: state.lutronConfig)
+                return .none
+
+            case let .lutronPairing(.presented(.delegate(.finished(config)))):
+                state.lutronPairing = nil
+                return .send(.lutronConfigLoaded(config))
+
+            case .lutronPairing(.presented(.delegate(.cancelled))):
+                state.lutronPairing = nil
+                return .none
+
+            case .lutronPairing:
+                return .none
+
             case let .householdLoaded(h):
                 state.isLoadingHousehold = false
                 state.household = h
@@ -298,6 +349,9 @@ public struct SettingsReducer {
         }
         .ifLet(\.$huePairing, action: \.huePairing) {
             HuePairingReducer()
+        }
+        .ifLet(\.$lutronPairing, action: \.lutronPairing) {
+            LutronPairingReducer()
         }
     }
 }
@@ -435,6 +489,9 @@ public struct SettingsView: View {
         .sheet(item: $store.scope(state: \.huePairing, action: \.huePairing)) { pairingStore in
             HuePairingView(store: pairingStore)
         }
+        .sheet(item: $store.scope(state: \.lutronPairing, action: \.lutronPairing)) { pairingStore in
+            LutronPairingView(store: pairingStore)
+        }
         .sheet(isPresented: Binding(
             get: { store.huePickerRitual != nil },
             set: { if !$0 { store.send(.hueRitualTapped(nil)) } }
@@ -488,12 +545,73 @@ public struct SettingsView: View {
                 }
                 .accessibilityIdentifier("hue-setup-row")
             }
+
+            // Lutron shades (P15-C1) — below the Hue bridge list.
+            lutronRow
         } header: {
             Text("Smart home")
         } footer: {
             if store.hueConfig?.bridges.isEmpty ?? true {
                 Text("Pair your Hue bridge to light up the house from Today.")
             }
+        }
+    }
+
+    /// The Lutron shades row: paired → status + reachability dot with a Re-pair swipe action;
+    /// unpaired → "Set up Lutron shades".
+    @ViewBuilder
+    private var lutronRow: some View {
+        if let config = store.lutronConfig {
+            HStack(spacing: 12) {
+                Image(systemName: "blinds.horizontal.closed")
+                    .foregroundStyle(Color.bacanGreen)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(config.displayName).foregroundStyle(Color.ink)
+                    Text("Lutron shades").font(.caption).foregroundStyle(Color.inkSoft)
+                }
+                Spacer()
+                lutronReachabilityDot
+            }
+            .accessibilityIdentifier("lutron-bridge-row")
+            .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                Button {
+                    store.send(.rePairLutronTapped)
+                } label: {
+                    Label("Re-pair", systemImage: "arrow.triangle.2.circlepath")
+                }
+                .tint(Color.bacanGreen)
+            }
+            .contextMenu {
+                Button { store.send(.rePairLutronTapped) } label: {
+                    Label("Re-pair", systemImage: "arrow.triangle.2.circlepath")
+                }
+            }
+        } else {
+            Button {
+                store.send(.setupLutronTapped)
+            } label: {
+                Label("Set up Lutron shades", systemImage: "blinds.horizontal.closed")
+                    .foregroundStyle(Color.ink)
+            }
+            .accessibilityIdentifier("lutron-setup-row")
+        }
+    }
+
+    @ViewBuilder
+    private var lutronReachabilityDot: some View {
+        switch store.lutronReachable {
+        case .some(true):
+            HStack(spacing: 6) {
+                Circle().fill(Color.bacanGreen).frame(width: 8, height: 8)
+                Text("Reachable").font(.caption).foregroundStyle(Color.inkSoft)
+            }
+        case .some(false):
+            HStack(spacing: 6) {
+                Circle().fill(Color.inkSoft).frame(width: 8, height: 8)
+                Text("Unreachable").font(.caption).foregroundStyle(Color.inkSoft)
+            }
+        case .none:
+            ProgressView().controlSize(.mini)
         }
     }
 

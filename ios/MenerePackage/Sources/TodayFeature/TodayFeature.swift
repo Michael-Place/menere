@@ -3,6 +3,7 @@ import FamilyDomain
 import Foundation
 import HueClient
 import LocationClient
+import LutronClient
 import MenereUI
 import PersistenceClient
 import UserDomain
@@ -98,6 +99,10 @@ public struct TodayReducer {
         /// whenever there's no config doc OR the bridge is unreachable (even after a rediscover) —
         /// in both cases the card simply hides. This card NEVER surfaces an error.
         var house: HouseSnapshot?
+        /// The household's Lutron shade config (P15-C1), loaded independently alongside the house card.
+        /// Passed into `HouseView` (which loads live shade levels on appear) and consulted when a
+        /// ritual carries `shadeActions`. Nil = no shades paired.
+        var lutronConfig: LutronConfig?
         /// The ritual key whose scene recall is in flight (drives the button's pending state).
         var recallingRitual: String?
         /// The ritual key that just succeeded — drives the checkmark morph + success haptic until
@@ -151,6 +156,9 @@ public struct TodayReducer {
         /// Load/refresh the Hue "house" card (independent, non-blocking; hides itself on any issue).
         case loadHouse
         case houseLoaded(HouseSnapshot?)
+        /// Load the Lutron shade config (independent, non-blocking).
+        case loadLutronConfig
+        case lutronConfigLoaded(LutronConfig?)
         /// Recall a ritual's scene (Bedtime / Dinner's ready).
         case recallRitual(HueRitual)
         case ritualRecallFinished(key: String)
@@ -237,6 +245,8 @@ public struct TodayReducer {
                     .send(.loadBriefing(force: false)),
                     // The "house" card loads independently too — never blocks/breaks the dashboard.
                     .send(.loadHouse),
+                    // Lutron shade config (P15) — for HouseView + ritual shadeActions.
+                    .send(.loadLutronConfig),
                     // Ask once so tonight's drive time can resolve (idempotent; no-op if determined).
                     .run { _ in
                         @Dependency(\.location) var location
@@ -399,15 +409,42 @@ public struct TodayReducer {
                 state.house = snapshot
                 return .none
 
+            case .loadLutronConfig:
+                guard let hid = hid() else { return .none }
+                return .run { send in
+                    @Dependency(\.persistence) var persistence
+                    let config = try? await persistence.lutronConfig(hid)
+                    await send(.lutronConfigLoaded(config ?? nil))
+                }
+
+            case let .lutronConfigLoaded(config):
+                state.lutronConfig = config
+                return .none
+
             case let .recallRitual(ritual):
                 // Route the recall to the ritual's OWN bridge; ignore if that bridge isn't paired.
                 guard let bridge = state.house?.config.bridge(ritual.bridgeId),
                       state.recallingRitual == nil else { return .none }
                 state.recallingRitual = ritual.key
+                // P15-C1: a ritual may ALSO carry shade actions — fire them fire-and-forget alongside
+                // the Hue scene (best-effort; the card never surfaces a shade error). Bedtime both dims
+                // the boys' lights and closes their shades in one tap.
+                let shadeActions = ritual.shadeActions ?? []
+                let lutronConfig = state.lutronConfig
                 return .run { send in
                     @Dependency(\.hue) var hue
+                    @Dependency(\.lutron) var lutron
                     // Best-effort: recall failures degrade silently (the card never shows errors).
                     try? await hue.recallScene(bridge, ritual.groupId, ritual.sceneId)
+                    if let lutronConfig, !shadeActions.isEmpty {
+                        await withTaskGroup(of: Void.self) { group in
+                            for action in shadeActions {
+                                group.addTask {
+                                    try? await lutron.setShadeLevel(lutronConfig, action.zoneId, action.level)
+                                }
+                            }
+                        }
+                    }
                     await send(.ritualRecallFinished(key: ritual.key))
                 }
 
