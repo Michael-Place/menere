@@ -17,6 +17,7 @@ const { lookupColaClassType } = require("./ttbLookup");
 const { identifyWineLabel } = require("./claudeVision");
 const { extractRecipe: runExtractRecipe } = require("./recipeExtract");
 const { extractEventsFromText } = require("./eventExtract");
+const { generateDailyBriefing } = require("./briefingGenerate");
 const { notifyHousehold, memberName } = require("./notifications");
 const { awardChoreXP, reverseChoreXP } = require("./choreXP");
 
@@ -140,6 +141,40 @@ exports.extractRecipe = onCall(
       return await runExtractRecipe({ url, text, apiKey: ANTHROPIC_API_KEY.value() });
     } catch (err) {
       throw new HttpsError("internal", `Recipe extraction failed: ${err.message}`);
+    }
+  }
+);
+
+/**
+ * `generateDailyBriefing` is a v2 HTTPS callable (us-central1) that returns the family's AI daily
+ * briefing for today (America/New_York): `{ summary, highlights:[], date, cached }`. The household
+ * is derived from the CALLER (`users/{uid}.householdId`) — a client-passed hid is never trusted.
+ * Results are cached per ET-day at `households/{hid}/briefings/{YYYY-MM-DD}`; pass `force: true`
+ * (the refresh button) to regenerate and overwrite. Reuses the existing `ANTHROPIC_API_KEY` secret.
+ */
+exports.generateDailyBriefing = onCall(
+  { timeoutSeconds: 60, memory: "512MiB", secrets: [ANTHROPIC_API_KEY] },
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError("unauthenticated", "You must be signed in.");
+    }
+    const uid = request.auth.uid;
+    const force = request.data?.force === true;
+
+    const userSnap = await db().collection("users").doc(uid).get();
+    const hid = userSnap.exists ? userSnap.data().householdId : null;
+    if (!hid) {
+      throw new HttpsError("failed-precondition", "No household for this user.");
+    }
+    try {
+      return await generateDailyBriefing({
+        db: db(),
+        hid,
+        apiKey: ANTHROPIC_API_KEY.value(),
+        force,
+      });
+    } catch (err) {
+      throw new HttpsError("internal", `Briefing failed: ${err.message}`);
     }
   }
 );

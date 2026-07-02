@@ -34,6 +34,12 @@ public struct TodayReducer {
         var firstName: String?
         var isLoading = false
 
+        /// AI daily briefing. Loaded by an INDEPENDENT effect so it never blocks the other cards;
+        /// on any failure it stays nil and the card hides itself (the dashboard must never look
+        /// broken because an AI call failed). `briefingLoading` drives the shimmer skeleton.
+        var briefing: DailyBriefing?
+        var briefingLoading = false
+
         public init() {}
 
         func stats(for memberID: String) -> MemberStats {
@@ -50,6 +56,9 @@ public struct TodayReducer {
         /// Complete/uncomplete a chore from the Today "Chores today" card. Behaves identically to
         /// completing it in the Chores tab (shared ``ChoreCompletion`` logic).
         case toggleChore(Chore)
+        /// Load/refresh the AI briefing. `force` bypasses the per-day server cache (refresh button).
+        case loadBriefing(force: Bool)
+        case briefingResponse(DailyBriefing?)
         // Quick-action deep links — the parent (MainTabReducer) switches tabs in response.
         case quickAddEventTapped
         case quickAddListTapped
@@ -66,6 +75,8 @@ public struct TodayReducer {
     }
 
     public init() {}
+
+    private enum CancelID { case briefing }
 
     private func hid() -> String? {
         @Shared(.user) var user
@@ -99,24 +110,29 @@ public struct TodayReducer {
                     return .none
                 }
                 state.isLoading = true
-                return .run { send in
-                    @Dependency(\.persistence) var persistence
-                    // All loads resilient: a failed fetch degrades to an empty state.
-                    async let events = persistence.events(hid)
-                    async let members = persistence.members(hid)
-                    async let recipes = persistence.recipes(hid)
-                    async let plan = persistence.mealPlan(hid)
-                    async let chores = persistence.chores(hid)
-                    async let stats = persistence.memberStats(hid)
-                    await send(.loaded(
-                        events: (try? await events) ?? [],
-                        members: (try? await members) ?? [],
-                        recipes: (try? await recipes) ?? [],
-                        mealPlan: (try? await plan) ?? [],
-                        chores: (try? await chores) ?? [],
-                        stats: (try? await stats) ?? []
-                    ))
-                }
+                // The card loads run as ONE effect; the briefing is a SEPARATE, merged effect so a
+                // slow/failed AI call never delays the schedule/chores/family cards.
+                return .merge(
+                    .run { send in
+                        @Dependency(\.persistence) var persistence
+                        // All loads resilient: a failed fetch degrades to an empty state.
+                        async let events = persistence.events(hid)
+                        async let members = persistence.members(hid)
+                        async let recipes = persistence.recipes(hid)
+                        async let plan = persistence.mealPlan(hid)
+                        async let chores = persistence.chores(hid)
+                        async let stats = persistence.memberStats(hid)
+                        await send(.loaded(
+                            events: (try? await events) ?? [],
+                            members: (try? await members) ?? [],
+                            recipes: (try? await recipes) ?? [],
+                            mealPlan: (try? await plan) ?? [],
+                            chores: (try? await chores) ?? [],
+                            stats: (try? await stats) ?? []
+                        ))
+                    },
+                    .send(.loadBriefing(force: false))
+                )
 
             case let .loaded(events, members, recipes, mealPlan, chores, stats):
                 state.isLoading = false
@@ -142,6 +158,24 @@ public struct TodayReducer {
                     @Dependency(\.persistence) var persistence
                     try await persistence.writeCompletion(hid: hid, outcome)
                 }
+
+            case let .loadBriefing(force):
+                // Only meaningful with a household; otherwise leave the card hidden.
+                guard hid() != nil else { return .none }
+                state.briefingLoading = true
+                return .run { send in
+                    @Dependency(\.briefing) var briefing
+                    // Failure → nil → the card hides (never surfaces an error on the dashboard).
+                    let result = try? await briefing.generate(force)
+                    await send(.briefingResponse(result))
+                }
+                .cancellable(id: CancelID.briefing, cancelInFlight: true)
+
+            case let .briefingResponse(result):
+                state.briefingLoading = false
+                // Keep the last good briefing if a refresh failed, so the card doesn't vanish.
+                if let result { state.briefing = result }
+                return .none
 
             case .quickAddEventTapped:
                 return .send(.delegate(.openCalendar))

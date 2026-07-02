@@ -64,7 +64,8 @@ public struct MainTabReducer {
                 return .none
             case .today(.delegate(.openKitchen)):
                 state.selectedTab = .recipes
-                return .none
+                // "Plan dinner" lands on Kitchen's Meal Plan segment (current week).
+                return .send(.recipes(.showMealPlan))
 
             case .today, .lists, .calendar, .chores, .recipes, .settings, .binding:
                 return .none

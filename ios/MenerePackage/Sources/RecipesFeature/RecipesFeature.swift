@@ -26,6 +26,9 @@ public struct RecipesReducer {
 
     public enum Action: Equatable, BindableAction {
         case task
+        /// Public entry point (used by the Today tab's "Plan dinner") — jump straight to the
+        /// Meal Plan segment on the current week.
+        case showMealPlan
         case loaded(recipes: [Recipe], mealPlan: [MealPlanEntry])
         case addTapped
         case editTapped(Recipe)
@@ -67,6 +70,11 @@ public struct RecipesReducer {
                         mealPlan: (try? await plan) ?? []
                     ))
                 }
+
+            case .showMealPlan:
+                state.segment = .mealPlan
+                state.weekStart = RecipesReducer.startOfWeek(Date())
+                return .none
 
             case let .loaded(recipes, plan):
                 state.isLoading = false

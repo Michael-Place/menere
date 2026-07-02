@@ -16,7 +16,7 @@ public struct TodayView: View {
             VStack(alignment: .leading, spacing: 20) {
                 greeting
 
-                // ─── SEAM (P6-C3): AI "briefing" card slots in HERE, above the schedule. ───
+                briefingCard
 
                 scheduleCard
                 dinnerCard
@@ -67,6 +67,69 @@ public struct TodayView: View {
         let f = DateFormatter()
         f.dateFormat = "EEEE, MMMM d"
         return "\(f.string(from: Date())) at the Place house"
+    }
+
+    // MARK: AI daily briefing (P6-C3)
+
+    /// Shown only while loading (skeleton) or when a briefing exists. On failure it's absent
+    /// entirely — the dashboard never surfaces an AI error.
+    @ViewBuilder
+    private var briefingCard: some View {
+        if store.briefingLoading || store.briefing != nil {
+            card {
+                HStack(spacing: 8) {
+                    Image(systemName: "sparkles")
+                        .font(.subheadline)
+                        .foregroundStyle(Color.inkSoft)
+                    Text("Daily briefing")
+                        .familyTitle(.headline)
+                        .foregroundStyle(Color.ink)
+                    Spacer()
+                    Button { store.send(.loadBriefing(force: true)) } label: {
+                        Image(systemName: "arrow.clockwise")
+                            .font(.subheadline)
+                            .foregroundStyle(Color.bacanGreen)
+                    }
+                    .buttonStyle(.pressable)
+                    .disabled(store.briefingLoading)
+                }
+
+                if store.briefingLoading {
+                    briefingSkeleton
+                } else if let briefing = store.briefing {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text(briefing.summary)
+                            .foregroundStyle(Color.ink)
+                            .fixedSize(horizontal: false, vertical: true)
+                        if !briefing.highlights.isEmpty {
+                            VStack(alignment: .leading, spacing: 6) {
+                                ForEach(briefing.highlights, id: \.self) { line in
+                                    HStack(alignment: .top, spacing: 8) {
+                                        Text("•").foregroundStyle(Color.bacanGreen)
+                                        Text(line)
+                                            .foregroundStyle(Color.inkSoft)
+                                            .fixedSize(horizontal: false, vertical: true)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private var briefingSkeleton: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            ForEach(0..<3, id: \.self) { i in
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(Color.inkSoft.opacity(0.15))
+                    .frame(height: 12)
+                    .frame(maxWidth: i == 2 ? 180 : .infinity, alignment: .leading)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .shimmering()
     }
 
     // MARK: Today's schedule
