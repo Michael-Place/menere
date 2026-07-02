@@ -29,8 +29,31 @@ async function householdTokens(db, hid, excludeUid) {
   return tokens;
 }
 
+/**
+ * Look up a household member's first name from their rich profile
+ * (`households/{hid}/members/{uid}`.name). Returns the given `fallback` (default null) when the
+ * uid is missing/unknown, so callers can degrade gracefully to name-less copy. Only the first
+ * whitespace-delimited token is returned — the voice is first-name subject.
+ */
+async function memberName(db, hid, uid, fallback = null) {
+  if (!uid) return fallback;
+  try {
+    const snap = await db.collection("households").doc(hid).collection("members").doc(uid).get();
+    const name = snap.exists ? snap.data().name : null;
+    if (typeof name === "string" && name.trim().length > 0) {
+      return name.trim().split(/\s+/)[0];
+    }
+  } catch (_) {
+    // fall through to fallback
+  }
+  return fallback;
+}
+
 /** Multicast a title/body to a household's members. No-op when there are no tokens. */
 async function notifyHousehold(db, hid, { title, body }, excludeUid) {
+  // Log the composed payload permanently: it's the ground truth for what copy each trigger
+  // produced, and the only observable output when there are no FCM tokens (e.g. sim-only devices).
+  console.log(`[notify] hid=${hid} ${JSON.stringify({ title, body })}`);
   const tokens = await householdTokens(db, hid, excludeUid);
   if (tokens.length === 0) return;
   await admin.messaging().sendEachForMulticast({
@@ -39,4 +62,4 @@ async function notifyHousehold(db, hid, { title, body }, excludeUid) {
   });
 }
 
-module.exports = { notifyHousehold };
+module.exports = { notifyHousehold, memberName };

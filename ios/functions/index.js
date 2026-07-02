@@ -17,7 +17,7 @@ const { lookupColaClassType } = require("./ttbLookup");
 const { identifyWineLabel } = require("./claudeVision");
 const { extractRecipe: runExtractRecipe } = require("./recipeExtract");
 const { extractEventsFromText } = require("./eventExtract");
-const { notifyHousehold } = require("./notifications");
+const { notifyHousehold, memberName } = require("./notifications");
 const { awardChoreXP, reverseChoreXP } = require("./choreXP");
 
 const ANTHROPIC_API_KEY = defineSecret("ANTHROPIC_API_KEY");
@@ -150,15 +150,32 @@ exports.extractRecipe = onCall(
 
 const db = () => admin.firestore();
 
+/**
+ * Human "when" for a calendar event, in the household's default zone (America/New_York, matching
+ * receiveEmail). All-day events show just the date; timed events add the time. Returns null when
+ * the timestamp is missing/unparseable so callers can drop the "— {when}" clause gracefully.
+ */
+function formatWhen(startTs, isAllDay) {
+  const date = startTs && typeof startTs.toDate === "function" ? startTs.toDate() : null;
+  if (!date || isNaN(date.getTime())) return null;
+  const opts = isAllDay
+    ? { weekday: "short", month: "short", day: "numeric", timeZone: "America/New_York" }
+    : { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZone: "America/New_York" };
+  return new Intl.DateTimeFormat("en-US", opts).format(date);
+}
+
 /** New calendar event → tell the household. */
 exports.onEventCreated = onDocumentCreated(
   "households/{hid}/events/{eventID}",
   async (event) => {
     const data = event.data && event.data.data();
     if (!data || !data.title) return;
+    // FamilyEvent has no creator field, so lead with the event itself and add the "when".
+    const when = formatWhen(data.startDate, data.isAllDay);
+    const title = String(data.title);
     await notifyHousehold(db(), event.params.hid, {
-      title: "New event",
-      body: String(data.title),
+      title: "New on the calendar",
+      body: when ? `"${title}" — ${when}` : `"${title}"`,
     });
   }
 );
@@ -180,11 +197,18 @@ exports.onChoreToggled = onDocumentUpdated(
 
     const hid = event.params.hid;
     if (isCompleted) {
-      await awardChoreXP(db(), hid, event.params.choreID, after);
+      // awardChoreXP runs before the push and returns the exact XP granted, so we can name it.
+      const awarded = await awardChoreXP(db(), hid, event.params.choreID, after);
+      const name = await memberName(db(), hid, after.completedByMemberID);
+      const title = String(after.title);
+      const xp = awarded > 0 ? ` (+${awarded} XP)` : "";
+      const body = name
+        ? `${name} took care of "${title}"${xp}`
+        : `"${title}" is done${xp}`;
       await notifyHousehold(
         db(),
         hid,
-        { title: "Chore done", body: `"${after.title}" was completed` },
+        { title: "One less thing", body },
         after.completedByMemberID
       );
     } else {
@@ -200,9 +224,24 @@ exports.onListItemChecked = onDocumentUpdated(
     const before = event.data.before.data() || {};
     const after = event.data.after.data() || {};
     if (before.isCompleted || !after.isCompleted) return;
-    await notifyHousehold(db(), event.params.hid, {
-      title: "List updated",
-      body: `"${after.title}" was checked off`,
+
+    const hid = event.params.hid;
+    const item = String(after.title);
+    // ListItem stores no "checked by" field; assigneeID is the best-available proxy for the actor.
+    const name = await memberName(db(), hid, after.assigneeID);
+    // The parent list's title makes a nice notification title; fall back if it's not readable.
+    let listTitle = "List update";
+    try {
+      const listSnap = await db()
+        .collection("households").doc(hid).collection("lists").doc(event.params.listID).get();
+      if (listSnap.exists && typeof listSnap.data().title === "string" && listSnap.data().title.trim()) {
+        listTitle = listSnap.data().title.trim();
+      }
+    } catch (_) { /* keep fallback */ }
+
+    await notifyHousehold(db(), hid, {
+      title: listTitle,
+      body: name ? `${name} checked off "${item}"` : `Checked off "${item}"`,
     });
   }
 );
@@ -290,8 +329,8 @@ exports.receiveEmail = onRequest(
 
     if (written > 0) {
       await notifyHousehold(db(), hid, {
-        title: "Events added from email",
-        body: `${written} event${written === 1 ? "" : "s"} added to your calendar`,
+        title: "Straight from your inbox",
+        body: `${written} event${written === 1 ? "" : "s"} added from your forwarded email`,
       });
     }
     res.status(200).send(`ok: ${written} events`);
