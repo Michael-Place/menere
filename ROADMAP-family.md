@@ -198,7 +198,19 @@ for free. Doctor paperwork links to Famfis → appears on his timeline (P11).
 
 ## Act II phases
 
-### P5 — Identity: the reskin + voice pass
+### P5 — Identity: the reskin + voice pass  ✅ done (2026-07-01, commits a937c2d…87e19a8)
+Shipped in six chunks, each build-green + sim-smoke-tested: (C1) FamilyTheme tokens +
+chrome swap with the Cellar parchment seam (`.wineChrome()`); (C2) family-four
+MemberColors — botanical/terracotta/marigold/sky, additive cases, first in the picker
+(Michael already saved botanical); (C3) warm+witty voice pass on all family surfaces;
+(C4) motion kit in MenereUI — `.stickerSlap`, `ConfettiBurst` (member-color level-up,
+wired to the stats stream), `.pressable`, `.appearBounce`, Reduce-Motion aware;
+(C5) Bacán rename — `CFBundleDisplayName` in Info.plist (INFOPLIST_KEY_* is a no-op
+with an explicit plist), record-label "B" icon, rebranded Welcome/auth on the family
+mesh; (C6) family-voice push copy in all four notify functions, deployed + live
+smoke-tested via Admin SDK (XP-neutral, artifacts cleaned). Leftovers: confetti worth
+one glance on a real device; `familyHero()` type helper if more hero wordmarks appear;
+`support@menere.app` userAgent strings if ever user-visible.
 The highest-leverage phase; transforms every existing screen before anything new
 is added.
 - **New theme layer** alongside the wine tokens (they stay for Cellar):
