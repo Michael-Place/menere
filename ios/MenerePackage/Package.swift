@@ -169,6 +169,7 @@ let package = Package(
             name: "ChoresFeature",
             dependencies: [
                 .product(name: "ComposableArchitecture", package: "swift-composable-architecture"),
+                .product(name: "FirebaseFunctions", package: "firebase-ios-sdk"),
                 "MenereUI",
                 "FamilyDomain",
                 "PersistenceClient",

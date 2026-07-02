@@ -47,6 +47,13 @@ public struct CareItemFormReducer {
         var pendingPhoto: Data?
         /// The existing photo bytes loaded from Storage in edit mode, for display.
         var loadedPhoto: Data?
+        /// AI plant-identify in flight — drives the button spinner.
+        var isIdentifying: Bool = false
+        /// Show the "AI suggestion — edit anything" caption under the filled fields (set after a
+        /// successful identify; cleared once the user, e.g., re-picks a photo).
+        var showAISuggestion: Bool = false
+        /// A warm inline note under the identify button for a low-confidence / failed identify.
+        var identifyNote: String?
 
         public init(item: CareItem, isEditing: Bool) {
             self.item = item
@@ -68,6 +75,8 @@ public struct CareItemFormReducer {
         case removeTask(id: String)
         case photoPicked(Data)
         case photoLoaded(Data?)
+        case identifyTapped
+        case identifyResponse(PlantIdentification?)
         case delegate(Delegate)
         case binding(BindingAction<State>)
 
@@ -81,6 +90,24 @@ public struct CareItemFormReducer {
     private func hid() -> String? {
         @Shared(.user) var user
         return user?.householdId
+    }
+
+    /// Weave the AI light phrase into the care notes, e.g. light "Bright indirect" + notes "Water when
+    /// the top inch is dry." → "Bright indirect light. Water when the top inch is dry." Either side may
+    /// be empty; returns `nil` only when both are.
+    static func composedCareNotes(light: String?, notes: String?) -> String? {
+        var parts: [String] = []
+        if let light = light?.trimmingCharacters(in: .whitespacesAndNewlines), !light.isEmpty {
+            // Avoid "light light" if the phrase already says it; keep the sentence terminated.
+            var phrase = light.lowercased().contains("light") ? light : "\(light) light"
+            if !phrase.hasSuffix(".") { phrase += "." }
+            parts.append(phrase)
+        }
+        if let notes = notes?.trimmingCharacters(in: .whitespacesAndNewlines), !notes.isEmpty {
+            parts.append(notes)
+        }
+        let joined = parts.joined(separator: " ")
+        return joined.isEmpty ? nil : joined
     }
 
     public var body: some ReducerOf<Self> {
@@ -102,6 +129,46 @@ public struct CareItemFormReducer {
 
             case let .photoPicked(data):
                 state.pendingPhoto = data
+                // A new photo invalidates any prior AI suggestion / note.
+                state.showAISuggestion = false
+                state.identifyNote = nil
+                return .none
+
+            case .identifyTapped:
+                guard let source = state.displayPhoto, !state.isIdentifying else { return .none }
+                state.isIdentifying = true
+                state.identifyNote = nil
+                state.showAISuggestion = false
+                return .run { send in
+                    @Dependency(\.plants) var plants
+                    // Send the same compressed JPEG the form would upload on Save.
+                    let jpeg = CarePhotoProcessing.compressedJPEG(from: source) ?? source
+                    do {
+                        await send(.identifyResponse(try await plants.identify(jpeg)))
+                    } catch {
+                        await send(.identifyResponse(nil))   // nil ⇒ the call failed
+                    }
+                }
+
+            case let .identifyResponse(result):
+                state.isIdentifying = false
+                // Failure, low confidence, or an "Unknown" result → fill nothing, show a warm note.
+                guard let result, !result.isLowConfidence, !result.isUnknown else {
+                    state.identifyNote = "Couldn't tell from this photo — try a closer shot of the leaves."
+                    return .none
+                }
+                state.item.species = result.commonName
+                state.item.speciesLatin = result.latinName?.blankToNil
+                state.item.careNotes = Self.composedCareNotes(light: result.light, notes: result.careNotes)
+                // Don't-stomp: only apply the AI cadence if the "Water" task is still the untouched
+                // 7-day default. A user who deliberately changed it keeps their choice.
+                if let water = result.waterIntervalDays,
+                   let idx = state.item.tasks.firstIndex(where: {
+                       $0.title.lowercased() == "water" && $0.intervalDays == 7
+                   }) {
+                    state.item.tasks[idx].intervalDays = water
+                }
+                state.showAISuggestion = true
                 return .none
 
             case .addTaskTapped:
@@ -339,9 +406,33 @@ public struct CareItemFormView: View {
                 }
                 Spacer()
             }
-            // SEAM (P9-C2 — AI plant identify): an "Identify from photo" button lands here. It runs
-            // the scan pipeline (FM/Claude) on `store.displayPhoto` → fills `species`,
-            // `speciesLatin`, and a suggested `careNotes`/watering schedule, provenance-badged.
+            // P9-C2 — AI plant identify: runs the `identifyPlant` Claude-vision callable on the
+            // compressed photo → fills species / speciesLatin / careNotes and (don't-stomp) the Water
+            // cadence. Enabled only when a photo is present.
+            Button {
+                store.send(.identifyTapped)
+            } label: {
+                HStack(spacing: 8) {
+                    if store.isIdentifying {
+                        ProgressView().controlSize(.small)
+                        Text("Identifying…")
+                    } else {
+                        Label("Identify from photo", systemImage: "sparkles")
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.pressable)
+            .disabled(store.displayPhoto == nil || store.isIdentifying)
+            .accessibilityIdentifier("plant-identify-button")
+
+            if let note = store.identifyNote {
+                Text(note)
+                    .font(.caption)
+                    .foregroundStyle(Color.inkSoft)
+                    .accessibilityIdentifier("plant-identify-note")
+            }
         }
     }
 
@@ -378,6 +469,13 @@ public struct CareItemFormView: View {
             ), axis: .vertical)
             .lineLimit(1...4)
             .accessibilityIdentifier("plant-notes-field")
+
+            if store.showAISuggestion {
+                Label("AI suggestion — edit anything", systemImage: "sparkles")
+                    .font(.caption)
+                    .foregroundStyle(Color.inkSoft)
+                    .accessibilityIdentifier("plant-ai-suggestion-caption")
+            }
         }
     }
 }

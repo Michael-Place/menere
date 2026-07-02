@@ -19,6 +19,7 @@ const { extractRecipe: runExtractRecipe } = require("./recipeExtract");
 const { extractEventsFromText } = require("./eventExtract");
 const { generateDailyBriefing } = require("./briefingGenerate");
 const { processDocument } = require("./docProcess");
+const { identifyPlant } = require("./plantIdentify");
 const { notifyHousehold, memberName } = require("./notifications");
 const { awardChoreXP, reverseChoreXP } = require("./choreXP");
 
@@ -214,6 +215,34 @@ exports.processDocument = onCall(
       });
     } catch (err) {
       throw new HttpsError("internal", `Document processing failed: ${err.message}`);
+    }
+  }
+);
+
+/**
+ * `identifyPlant` is a v2 HTTPS callable (us-central1) for the P9 Plants module. Input
+ * `{ imageBase64, mediaType }` (same transport as `identifyLabel`). It runs Claude vision (Sonnet 5)
+ * with a forced tool-use schema over a single plant photo and returns identity + care fields
+ * `{ commonName, latinName, confidence, waterIntervalDays, light, careNotes }`. Grounded to what's
+ * visible: a non-plant / unidentifiable photo comes back as `confidence:"low"`, commonName "Unknown",
+ * latinName null. Reuses the existing `ANTHROPIC_API_KEY` secret. No rate limiting (private app).
+ */
+exports.identifyPlant = onCall(
+  { timeoutSeconds: 60, memory: "512MiB", secrets: [ANTHROPIC_API_KEY] },
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError("unauthenticated", "You must be signed in.");
+    }
+    const data = request.data || {};
+    const imageBase64 = typeof data.imageBase64 === "string" ? data.imageBase64 : "";
+    const mediaType = typeof data.mediaType === "string" ? data.mediaType : "image/jpeg";
+    if (!imageBase64) {
+      throw new HttpsError("invalid-argument", "imageBase64 is required.");
+    }
+    try {
+      return await identifyPlant({ imageBase64, mediaType, apiKey: ANTHROPIC_API_KEY.value() });
+    } catch (err) {
+      throw new HttpsError("internal", `Plant identification failed: ${err.message}`);
     }
   }
 );
