@@ -41,9 +41,14 @@ public struct DocsLibraryView: View {
             } else {
                 Section {
                     ForEach(store.documents) { doc in
-                        DocumentRow(doc: doc) {
-                            store.send(.processDocument(doc.id))
+                        Button {
+                            store.send(.documentTapped(doc))
+                        } label: {
+                            DocumentRow(doc: doc) {
+                                store.send(.processDocument(doc.id))
+                            }
                         }
+                        .buttonStyle(.plain)
                     }
                     .onDelete { store.send(.deleteDocuments($0)) }
                 }
@@ -84,6 +89,11 @@ public struct DocsLibraryView: View {
             }
         }
         .task { store.send(.task) }
+        .navigationDestination(
+            item: $store.scope(state: \.detail, action: \.detail)
+        ) { detailStore in
+            DocumentDetailView(store: detailStore)
+        }
         // Choose photos → up to ~8 pages, converted to Data in onChange.
         .photosPicker(
             isPresented: $store.showPhotosPicker,
@@ -202,8 +212,14 @@ struct DocumentRow: View {
                     tagChips
                 }
 
+                if let expiry = doc.expiryDate {
+                    DocumentDateChip(date: expiry, kind: .expiry)
+                } else if let due = doc.dueDate {
+                    DocumentDateChip(date: due, kind: .due)
+                }
+
                 if doc.processingState == .failed {
-                    Label("Tap to retry", systemImage: "exclamationmark.triangle")
+                    Label("Needs another pass", systemImage: "exclamationmark.triangle")
                         .font(.caption2)
                         .foregroundStyle(.orange)
                         .accessibilityIdentifier("doc-failed-badge")
@@ -222,9 +238,6 @@ struct DocumentRow: View {
         }
         .padding(.vertical, 2)
         .contentShape(Rectangle())
-        .onTapGesture {
-            if doc.processingState == .failed { onReprocess() }
-        }
         .contextMenu {
             if doc.processingState != .processed {
                 Button {

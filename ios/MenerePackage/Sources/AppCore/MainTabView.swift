@@ -1,6 +1,7 @@
 import CalendarFeature
 import ChoresFeature
 import ComposableArchitecture
+import DocsFeature
 import ListsFeature
 import MenereUI
 import RecipesFeature
@@ -15,6 +16,9 @@ public struct MainTabReducer {
         var selectedTab: TabItem = .today
         /// Family/profile is presented as a sheet from the tab-bar toolbar rather than a tab.
         var showSettings = false
+        /// Family-Brain search is presented as a sheet from the shared toolbar on every tab.
+        var showSearch = false
+        var search = BrainSearchReducer.State()
         var today = TodayReducer.State()
         var lists = ListsReducer.State()
         var calendar = CalendarReducer.State()
@@ -32,6 +36,7 @@ public struct MainTabReducer {
         case chores(ChoresReducer.Action)
         case recipes(RecipesReducer.Action)
         case settings(SettingsReducer.Action)
+        case search(BrainSearchReducer.Action)
         case tabSelected(TabItem)
         case binding(BindingAction<State>)
     }
@@ -47,6 +52,7 @@ public struct MainTabReducer {
         Scope(state: \.chores, action: \.chores, child: ChoresReducer.init)
         Scope(state: \.recipes, action: \.recipes, child: RecipesReducer.init)
         Scope(state: \.settings, action: \.settings, child: SettingsReducer.init)
+        Scope(state: \.search, action: \.search, child: BrainSearchReducer.init)
 
         Reduce { state, action in
             switch action {
@@ -67,7 +73,11 @@ public struct MainTabReducer {
                 // "Plan dinner" lands on Kitchen's Meal Plan segment (current week).
                 return .send(.recipes(.showMealPlan))
 
-            case .today, .lists, .calendar, .chores, .recipes, .settings, .binding:
+            case .search(.closeTapped):
+                state.showSearch = false
+                return .none
+
+            case .today, .lists, .calendar, .chores, .recipes, .settings, .search, .binding:
                 return .none
             }
         }
@@ -155,6 +165,10 @@ public struct MainTabView: View {
             // Sheets don't inherit the TabView tint — re-apply the family accent explicitly.
             .tint(.bacanGreen)
         }
+        .sheet(isPresented: $store.showSearch) {
+            // BrainSearchView owns its own NavigationStack (results push the document detail).
+            BrainSearchView(store: store.scope(state: \.search, action: \.search))
+        }
     }
 
     /// Persistent "Family" entry point, shown top-leading on every primary tab. Opens the
@@ -167,6 +181,14 @@ public struct MainTabView: View {
             }
             .accessibilityLabel("Family")
             .accessibilityIdentifier("family-button")
+        }
+        // Family-Brain search — present on every tab, coexisting with each tab's own trailing "+".
+        ToolbarItem(placement: .topBarTrailing) {
+            Button { store.showSearch = true } label: {
+                Image(systemName: "magnifyingglass")
+            }
+            .accessibilityLabel("Search the family brain")
+            .accessibilityIdentifier("brain-search-button")
         }
     }
 }

@@ -24,6 +24,9 @@ public struct StorageClient: Sendable {
     /// Best-effort delete of Storage objects by path (used to clean up document pages on delete or
     /// after a partial-upload failure). Never throws for individual missing objects.
     public var deletePaths: @Sendable (_ paths: [String]) async throws -> Void
+    /// Fetch the raw bytes of a Storage object by path — used to render member-gated document pages
+    /// (resolved through an authenticated ref, not a public download URL). Capped at 12 MB/page.
+    public var downloadData: @Sendable (_ path: String) async throws -> Data
 }
 
 extension StorageClient: DependencyKey {
@@ -58,6 +61,9 @@ extension StorageClient: DependencyKey {
                     // Best-effort: a missing object (already gone / never uploaded) is not an error.
                     try? await Storage.storage().reference().child(path).delete()
                 }
+            },
+            downloadData: { path in
+                try await Storage.storage().reference().child(path).data(maxSize: 12 * 1024 * 1024)
             }
         )
     }()
@@ -72,7 +78,8 @@ extension StorageClient: DependencyKey {
         uploadDocumentPDF: { hid, docId, _ in
             "households/\(hid)/documents/\(docId)/document.pdf"
         },
-        deletePaths: { _ in }
+        deletePaths: { _ in },
+        downloadData: { _ in Data() }
     )
 }
 

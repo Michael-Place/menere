@@ -66,6 +66,7 @@ let package = Package(
                 "CellarFeature",
                 "TodayFeature",
                 "ListsFeature",
+                "DocsFeature",
                 "CalendarFeature",
                 "ChoresFeature",
                 "RecipesFeature",
@@ -123,6 +124,7 @@ let package = Package(
                 "FamilyDomain",
                 "PersistenceClient",
                 "UserDomain",
+                "DocsFeature",
             ]
         ),
         .target(

@@ -28,6 +28,8 @@ public struct TodayReducer {
         var recipes: [Recipe] = []
         var mealPlan: [MealPlanEntry] = []
         var chores: [Chore] = []
+        /// Family-Brain documents — powers the "Needs attention" card (due/expiring soon).
+        var documents: [FamilyDomain.Document] = []
         /// One-shot leaderboard stats (the live stream stays Chores-tab machinery).
         var stats: [MemberStats] = []
         /// The signed-in member's first name (first whitespace token), or nil if unknown.
@@ -51,7 +53,8 @@ public struct TodayReducer {
         case task
         case loaded(
             events: [FamilyEvent], members: [HouseholdMember], recipes: [Recipe],
-            mealPlan: [MealPlanEntry], chores: [Chore], stats: [MemberStats]
+            mealPlan: [MealPlanEntry], chores: [Chore], stats: [MemberStats],
+            documents: [FamilyDomain.Document]
         )
         /// Complete/uncomplete a chore from the Today "Chores today" card. Behaves identically to
         /// completing it in the Chores tab (shared ``ChoreCompletion`` logic).
@@ -122,19 +125,21 @@ public struct TodayReducer {
                         async let plan = persistence.mealPlan(hid)
                         async let chores = persistence.chores(hid)
                         async let stats = persistence.memberStats(hid)
+                        async let documents = persistence.documents(hid)
                         await send(.loaded(
                             events: (try? await events) ?? [],
                             members: (try? await members) ?? [],
                             recipes: (try? await recipes) ?? [],
                             mealPlan: (try? await plan) ?? [],
                             chores: (try? await chores) ?? [],
-                            stats: (try? await stats) ?? []
+                            stats: (try? await stats) ?? [],
+                            documents: (try? await documents) ?? []
                         ))
                     },
                     .send(.loadBriefing(force: false))
                 )
 
-            case let .loaded(events, members, recipes, mealPlan, chores, stats):
+            case let .loaded(events, members, recipes, mealPlan, chores, stats, documents):
                 state.isLoading = false
                 state.events = events
                 state.members = members
@@ -142,6 +147,7 @@ public struct TodayReducer {
                 state.mealPlan = mealPlan
                 state.chores = chores
                 state.stats = stats
+                state.documents = documents
                 state.firstName = firstName(from: members)
                 return .none
 

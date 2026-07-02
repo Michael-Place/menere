@@ -1,4 +1,5 @@
 import ComposableArchitecture
+import DocsFeature
 import FamilyDomain
 import MenereUI
 import SwiftUI
@@ -23,6 +24,7 @@ public struct TodayView: View {
                 quickActions
 
                 choresCard
+                needsAttentionCard
                 familyCard
             }
             .padding(.horizontal)
@@ -306,6 +308,57 @@ public struct TodayView: View {
             Text("\(chore.effectiveXP) XP")
                 .font(.system(.caption, design: .rounded).weight(.semibold))
                 .foregroundStyle(color)
+        }
+    }
+
+    // MARK: Needs attention (Family Brain, P7-C3)
+
+    /// Documents whose dueDate/expiryDate is past-due or within the next 30 days, soonest first.
+    private func needsAttentionDocs() -> [FamilyDomain.Document] {
+        let now = Date()
+        return store.documents
+            .filter { $0.needsAttention(now: now, within: 30) }
+            .sorted { ($0.soonestActionableDate ?? .distantFuture) < ($1.soonestActionableDate ?? .distantFuture) }
+    }
+
+    /// Hidden entirely when nothing is due/expiring — the dashboard stays quiet when it can.
+    @ViewBuilder
+    private var needsAttentionCard: some View {
+        let docs = needsAttentionDocs()
+        if !docs.isEmpty {
+            card {
+                cardHeader("Needs attention", symbol: "exclamationmark.circle")
+                VStack(spacing: 12) {
+                    ForEach(Array(docs.prefix(3))) { doc in
+                        HStack(spacing: 12) {
+                            Text(doc.title)
+                                .foregroundStyle(Color.ink)
+                                .lineLimit(1)
+                            Spacer()
+                            if let expiry = doc.expiryDate,
+                               (doc.dueDate == nil || expiry <= doc.dueDate!) {
+                                DocumentDateChip(date: expiry, kind: .expiry)
+                            } else if let due = doc.dueDate {
+                                DocumentDateChip(date: due, kind: .due)
+                            }
+                        }
+                    }
+                    Button { store.send(.delegate(.openLists)) } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: "brain")
+                            Text("Family Brain")
+                            Spacer()
+                            Image(systemName: "chevron.right").font(.footnote.weight(.semibold))
+                        }
+                        .font(.system(.subheadline, design: .rounded).weight(.semibold))
+                        .foregroundStyle(Color.bacanGreen)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.pressable)
+                    .accessibilityIdentifier("today-brain-link")
+                }
+            }
+            .accessibilityIdentifier("today-needs-attention")
         }
     }
 

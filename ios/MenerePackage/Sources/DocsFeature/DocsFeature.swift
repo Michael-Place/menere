@@ -30,6 +30,9 @@ public struct DocsReducer {
         var showFileImporter = false
         var showScanner = false
 
+        // Pushed document detail (C3).
+        @Presents var detail: DocumentDetailReducer.State?
+
         // A single message-alert channel (scanner-unavailable on sim, upload failures, import errors).
         var alertMessage: String?
 
@@ -58,6 +61,8 @@ public struct DocsReducer {
         // AI processing (P7-C2)
         case processDocument(String)      // docId — trigger/retry AI enrichment (also the retry action)
         // Library
+        case documentTapped(FamilyDomain.Document)
+        case detail(PresentationAction<DocumentDetailReducer.Action>)
         case deleteDocuments(IndexSet)
         case dismissAlert
         case binding(BindingAction<State>)
@@ -225,6 +230,24 @@ public struct DocsReducer {
                     await send(.documentsLoaded(updated))
                 }
 
+            case let .documentTapped(doc):
+                state.detail = DocumentDetailReducer.State(doc: doc)
+                return .none
+
+            // Keep the library in sync with edits/deletes made from the pushed detail.
+            case let .detail(.presented(.delegate(.didChange(doc)))):
+                if let idx = state.documents.firstIndex(where: { $0.id == doc.id }) {
+                    state.documents[idx] = doc
+                }
+                return .none
+
+            case let .detail(.presented(.delegate(.didDelete(id)))):
+                state.documents.removeAll { $0.id == id }
+                return .none
+
+            case .detail:
+                return .none
+
             case let .deleteDocuments(offsets):
                 guard let hid = hid() else { return .none }
                 let toDelete = offsets.map { state.documents[$0] }
@@ -244,6 +267,9 @@ public struct DocsReducer {
             case .binding:
                 return .none
             }
+        }
+        .ifLet(\.$detail, action: \.detail) {
+            DocumentDetailReducer()
         }
     }
 

@@ -125,6 +125,25 @@ public struct Document: Codable, Equatable, Identifiable, Sendable {
         self.processingState = processingState
     }
 
+    /// The soonest actionable date driving "attention": the earlier of `dueDate` / `expiryDate`,
+    /// or nil when neither is set. Powers the Today "Needs attention" card and detail chips.
+    public var soonestActionableDate: Date? {
+        [dueDate, expiryDate].compactMap { $0 }.min()
+    }
+
+    /// Whole calendar days from `now` to `date` (negative = past-due). Day-granular so "today" is 0.
+    public static func dayCount(from now: Date, to date: Date, calendar: Calendar = .current) -> Int {
+        let a = calendar.startOfDay(for: now)
+        let b = calendar.startOfDay(for: date)
+        return calendar.dateComponents([.day], from: a, to: b).day ?? 0
+    }
+
+    /// True when `soonestActionableDate` is past-due or within `days` days of `now`.
+    public func needsAttention(now: Date, within days: Int = 30, calendar: Calendar = .current) -> Bool {
+        guard let date = soonestActionableDate else { return false }
+        return Self.dayCount(from: now, to: date, calendar: calendar) <= days
+    }
+
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = try c.decode(String.self, forKey: .id)
