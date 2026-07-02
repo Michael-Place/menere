@@ -358,7 +358,21 @@ hold for P10 pets (form is kind-parametrized; add pet option sets + a Pets secti
   recurrence engine.
 - Thirsty plants surface on Today; watering gets a leaf-unfurl moment.
 
-### P10 — Pets: Fajita & Sprinkle
+### P10 — Pets: Fajita & Sprinkle  ✅ done (2026-07-02, commits 2720309 + f18ae6d)
+(C1) Pet profiles on the care rails: `CareItem(kind:.pet)` + breed/birthday/vetName/
+vetPhone (decode-safe), pet icon/interval sets, Pets section in Home (sky accent),
+**"The pack"** starter card — one-tap "Add Fajita"/"Add Sprinkle" pre-filled with the
+dog-care schedule (heartworm 30d, flea&tick 30d, grooming 60d, nails 30d),
+kind-parametrized form (shared photo section; AI-identify stays plant-only),
+natural activity verbs (groomed / trimmed nails for / walked / bathed — "bath" only,
+"wash" would misfire on laundry). (C2) **Vet records = Family Brain**: `processDocument`
+now matches household PET names → `linkedPetIds` (deployed; literal-match rule;
+verified E2E — a seeded rabies cert auto-typed `pet`, auto-linked to Sprinkle, expiry
+extracted); document detail gains a Pets link/unlink menu; pet profile shows a
+"Vet records" timeline pushing the real DocumentDetail (ChoresFeature→DocsFeature,
+cycle-free) with expiry chips; pet rows show terracotta expiry chips ≤30d; Today's
+Needs-attention covers pet certs automatically. Note: docs naming an unlisted pet tag
+the name instead — manual link or reprocess after adding the pet.
 - **Pet profiles** (`CareItem(kind: pet)` + pet-specific fields): photo, birthday,
   breed, vet contact, weight log.
 - **Care schedules:** meds, heartworm/flea-tick, grooming, nail trims — CareTasks.

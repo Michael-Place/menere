@@ -7,7 +7,10 @@ minimal public-launch hardening).
 
 For the full pivot plan, phase history, and decisions, see **`ROADMAP-family.md`**.
 
-**Act II (in progress — P5 identity ✅, P6 Today ✅, P7 Family Brain ✅, P8 home care ✅, P9 plants & garden ✅):**
+**Act II (in progress — P5 identity ✅, P6 Today ✅, P7 Family Brain ✅, P8 home care ✅, P9 plants & garden ✅, P10 pets ✅):**
+Pets (Fajita & Sprinkle) live in Home on the care rails; vet records are Brain documents
+auto-linked by pet name via `processDocument` (`linkedPetIds`), with expiry chips on pet
+rows/profiles and Today.
 Home tab sections: House care → Plants (photo roster, `identifyPlant` AI species ID,
 LeafUnfurl watering) → Yard & garden (seasonal firstDueAt anchors) → activity/chores/XP.
 The Chores tab is now **Home**: House care section (CareItem/CareTask in FamilyDomain,
