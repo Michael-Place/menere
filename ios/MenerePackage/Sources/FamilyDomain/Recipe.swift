@@ -87,11 +87,43 @@ public struct MealPlanEntry: Codable, Equatable, Identifiable, Sendable {
     public var date: Date
     public var recipeID: String
     public var recipeTitle: String
+    /// When set, this night the family is eating out; the recipe fields are empty.
+    /// An entry is EITHER a recipe (recipeID/recipeTitle) OR eating out (restaurantName).
+    public var restaurantName: String?
 
-    public init(id: String = UUID().uuidString, date: Date, recipeID: String, recipeTitle: String) {
+    public init(
+        id: String = UUID().uuidString,
+        date: Date,
+        recipeID: String,
+        recipeTitle: String,
+        restaurantName: String? = nil
+    ) {
         self.id = id
         self.date = date
         self.recipeID = recipeID
         self.recipeTitle = recipeTitle
+        self.restaurantName = restaurantName
+    }
+
+    /// Convenience: an eating-out entry (recipe fields cleared, restaurant set).
+    public init(id: String = UUID().uuidString, date: Date, restaurantName: String) {
+        self.init(id: id, date: date, recipeID: "", recipeTitle: "", restaurantName: restaurantName)
+    }
+
+    /// Decode-safe: existing recipe docs (no `restaurantName`) keep decoding; older docs
+    /// missing recipe fields tolerate absence too.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        date = try c.decode(Date.self, forKey: .date)
+        recipeID = try c.decodeIfPresent(String.self, forKey: .recipeID) ?? ""
+        recipeTitle = try c.decodeIfPresent(String.self, forKey: .recipeTitle) ?? ""
+        restaurantName = try c.decodeIfPresent(String.self, forKey: .restaurantName)
+    }
+
+    /// True when this night is a restaurant, not a home recipe.
+    public var isEatingOut: Bool {
+        if let restaurantName, !restaurantName.isEmpty { return true }
+        return false
     }
 }

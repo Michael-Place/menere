@@ -50,6 +50,17 @@ public struct RecipesView: View {
         } message: {
             Text(store.generatedMessage ?? "")
         }
+        .alert(
+            "Eating out",
+            isPresented: Binding(
+                get: { store.eatingOutDay != nil },
+                set: { if !$0 { store.send(.eatingOutDismissed) } }
+            )
+        ) {
+            TextField("Where to?", text: $store.eatingOutName)
+            Button("Cancel", role: .cancel) { store.send(.eatingOutDismissed) }
+            Button("Save") { store.send(.saveEatingOut) }
+        }
     }
 
     // MARK: Recipes
@@ -108,15 +119,33 @@ public struct RecipesView: View {
                         VStack(alignment: .leading) {
                             Text(dayName(day)).foregroundStyle(Color.ink)
                             if let e = entry(for: day) {
-                                Text(e.recipeTitle).font(.caption).foregroundStyle(Color.bacanGreen)
+                                if e.isEatingOut {
+                                    HStack(spacing: 4) {
+                                        Image(systemName: "storefront").foregroundStyle(Color.marigold)
+                                        VStack(alignment: .leading, spacing: 1) {
+                                            Text(e.restaurantName ?? "").font(.caption).foregroundStyle(Color.marigold)
+                                            Text("Eating out").font(.caption2).foregroundStyle(Color.inkSoft)
+                                        }
+                                    }
+                                } else {
+                                    Text(e.recipeTitle).font(.caption).foregroundStyle(Color.bacanGreen)
+                                }
                             } else {
                                 Text("Nothing planned — cereal night?").font(.caption).foregroundStyle(Color.inkSoft)
                             }
                         }
                         Spacer()
                         Menu {
-                            ForEach(store.recipes) { recipe in
-                                Button(recipe.title) { store.send(.assignMeal(date: day, recipe: recipe)) }
+                            Button {
+                                store.send(.eatingOutTapped(date: day))
+                            } label: {
+                                Label("Eating out…", systemImage: "fork.knife.circle")
+                            }
+                            if !store.recipes.isEmpty {
+                                Divider()
+                                ForEach(store.recipes) { recipe in
+                                    Button(recipe.title) { store.send(.assignMeal(date: day, recipe: recipe)) }
+                                }
                             }
                             if let e = entry(for: day) {
                                 Divider()
@@ -125,7 +154,6 @@ public struct RecipesView: View {
                         } label: {
                             Image(systemName: "pencil.circle").foregroundStyle(Color.bacanGreen)
                         }
-                        .disabled(store.recipes.isEmpty)
                     }
                 }
             }

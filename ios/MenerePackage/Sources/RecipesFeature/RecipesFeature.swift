@@ -19,6 +19,9 @@ public struct RecipesReducer {
         var weekStart: Date = RecipesReducer.startOfWeek(Date())
         var isLoading = false
         var generatedMessage: String?
+        /// The day currently being assigned an "Eating out…" restaurant (drives the text alert).
+        var eatingOutDay: Date?
+        var eatingOutName: String = ""
         @Presents var form: RecipeFormReducer.State?
 
         public init() {}
@@ -34,6 +37,9 @@ public struct RecipesReducer {
         case editTapped(Recipe)
         case toggleFavorite(Recipe)
         case assignMeal(date: Date, recipe: Recipe)
+        case eatingOutTapped(date: Date)
+        case saveEatingOut
+        case eatingOutDismissed
         case clearMeal(MealPlanEntry)
         case generateGroceryList
         case groceryListGenerated(itemCount: Int)
@@ -120,6 +126,37 @@ public struct RecipesReducer {
                     try await persistence.saveMealPlanEntry(hid, entry)
                 }
 
+            case let .eatingOutTapped(date):
+                state.eatingOutDay = Calendar.current.startOfDay(for: date)
+                state.eatingOutName = ""
+                return .none
+
+            case .saveEatingOut:
+                guard let hid = hid(), let day = state.eatingOutDay else { return .none }
+                let name = state.eatingOutName.trimmingCharacters(in: .whitespacesAndNewlines)
+                state.eatingOutDay = nil
+                state.eatingOutName = ""
+                guard !name.isEmpty else { return .none }
+                // Eating out clears any recipe for that day (an entry is one kind or the other).
+                let existing = state.mealPlan.first { Calendar.current.isDate($0.date, inSameDayAs: day) }
+                let entry = MealPlanEntry(
+                    id: existing?.id ?? UUID().uuidString, date: day, restaurantName: name
+                )
+                if let i = state.mealPlan.firstIndex(where: { $0.id == entry.id }) {
+                    state.mealPlan[i] = entry
+                } else {
+                    state.mealPlan.append(entry)
+                }
+                return .run { _ in
+                    @Dependency(\.persistence) var persistence
+                    try await persistence.saveMealPlanEntry(hid, entry)
+                }
+
+            case .eatingOutDismissed:
+                state.eatingOutDay = nil
+                state.eatingOutName = ""
+                return .none
+
             case let .clearMeal(entry):
                 guard let hid = hid() else { return .none }
                 state.mealPlan.removeAll { $0.id == entry.id }
@@ -135,6 +172,7 @@ public struct RecipesReducer {
                 let weekRecipeIDs = Set(
                     state.mealPlan
                         .filter { $0.date >= state.weekStart && $0.date < weekEnd }
+                        .filter { !$0.isEatingOut } // eating-out nights have no ingredients
                         .map(\.recipeID)
                 )
                 let ingredients = state.recipes

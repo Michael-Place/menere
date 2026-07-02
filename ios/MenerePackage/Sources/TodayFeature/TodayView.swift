@@ -183,7 +183,14 @@ public struct TodayView: View {
     private var dinnerCard: some View {
         card {
             cardHeader("Tonight's dinner", symbol: "fork.knife")
-            if let title = tonightsDinnerTitle {
+            if let entry = tonightsEntry, entry.isEatingOut {
+                HStack(spacing: 8) {
+                    Image(systemName: "storefront").foregroundStyle(Color.marigold)
+                    Text("Out tonight — \(entry.restaurantName ?? "")")
+                        .familyTitle()
+                        .foregroundStyle(Color.ink)
+                }
+            } else if let title = tonightsDinnerTitle {
                 Text(title)
                     .familyTitle()
                     .foregroundStyle(Color.ink)
@@ -201,9 +208,12 @@ public struct TodayView: View {
         }
     }
 
+    private var tonightsEntry: MealPlanEntry? {
+        store.mealPlan.first { cal.isDateInToday($0.date) }
+    }
+
     private var tonightsDinnerTitle: String? {
-        let entry = store.mealPlan.first { cal.isDateInToday($0.date) }
-        guard let entry else { return nil }
+        guard let entry = tonightsEntry, !entry.isEatingOut else { return nil }
         // Prefer the live recipe title (renames), falling back to the stored snapshot.
         return store.recipes.first { $0.id == entry.recipeID }?.title ?? entry.recipeTitle
     }
