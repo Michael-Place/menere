@@ -449,6 +449,14 @@ Original notes (still apply): one `HueClient` dependency, local-first:
 - Later Hue-adjacent products (buttons, dials, smart plugs) and any other
   ecosystems in the house each get their own deliberate integration when wanted —
   same hyper-specific philosophy.
+- **Michael's correction #3 (2026-07-02): granular control IS wanted** — the
+  rituals-only stance was too pure. P12-C4 builds a full House control surface
+  (rooms/zones/lights with on-off/brightness/scenes, drill-down, multi-bridge,
+  roomOwners avatars) as the SUBSTRATE that future family-centric experiences
+  compose on as more smart-home signals layer in. Whimsy suggestions (vinyl night,
+  December button, darkness-aware bedtime, pantry awareness) explicitly parked —
+  "none of that blows me away yet"; revisit when layered signals produce real use
+  cases. C5 candidate: CLIP v2 SSE live state.
 
 ### P13 — Money: expense tracking + budgets (Michael's request, 2026-07-02)
 Ordering flexible (can jump ahead of P11/P12). **Key insight: the Family Brain
