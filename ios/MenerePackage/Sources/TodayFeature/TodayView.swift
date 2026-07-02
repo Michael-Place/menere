@@ -184,12 +184,7 @@ public struct TodayView: View {
         card {
             cardHeader("Tonight's dinner", symbol: "fork.knife")
             if let entry = tonightsEntry, entry.isEatingOut {
-                HStack(spacing: 8) {
-                    Image(systemName: "storefront").foregroundStyle(Color.marigold)
-                    Text("Out tonight — \(entry.restaurantName ?? "")")
-                        .familyTitle()
-                        .foregroundStyle(Color.ink)
-                }
+                eatingOutContent(entry)
             } else if let title = tonightsDinnerTitle {
                 Text(title)
                     .familyTitle()
@@ -205,6 +200,80 @@ public struct TodayView: View {
                     .buttonStyle(.pressable)
                 }
             }
+        }
+    }
+
+    /// The eating-out branch: title (+ reservation time), address, an async traffic-aware drive
+    /// line, and — when a reservation is set — the idempotent add-to-calendar action.
+    @ViewBuilder
+    private func eatingOutContent(_ entry: MealPlanEntry) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Image(systemName: "storefront").foregroundStyle(Color.marigold)
+                Text(outTonightLine(entry))
+                    .familyTitle()
+                    .foregroundStyle(Color.ink)
+            }
+            if entry.hasPlace, let address = entry.restaurantAddress, !address.isEmpty {
+                Text(address)
+                    .font(.subheadline)
+                    .foregroundStyle(Color.inkSoft)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if let driveLine = driveLine(entry) {
+                Label {
+                    Text(driveLine.text)
+                } icon: {
+                    Image(systemName: driveLine.timeToGo ? "figure.walk.departure" : "car.fill")
+                }
+                .font(.system(.subheadline, design: .rounded).weight(.semibold))
+                .foregroundStyle(driveLine.timeToGo ? Color.terracotta : Color.bacanGreen)
+                .accessibilityIdentifier("today-dinner-drive")
+            }
+            if entry.reservationAt != nil {
+                dinnerCalendarAction
+            }
+        }
+    }
+
+    /// "Out tonight — Test Bistro" or "Out tonight — Test Bistro · 7:30".
+    private func outTonightLine(_ entry: MealPlanEntry) -> String {
+        let name = entry.restaurantName ?? ""
+        if let time = entry.reservationTimeShort { return "Out tonight — \(name) · \(time)" }
+        return "Out tonight — \(name)"
+    }
+
+    /// The drive line, or nil when there's no ETA yet / MKDirections failed. When a reservation is
+    /// set (same-day), appends the leave-by time — computed as reservation − ETA − a 5-minute
+    /// buffer. If that moment is already past, it flips to a terracotta "time to go".
+    private func driveLine(_ entry: MealPlanEntry) -> (text: String, timeToGo: Bool)? {
+        guard let mins = store.driveMinutes else { return nil }
+        let base = "≈\(mins) min drive"
+        guard let reservationAt = entry.reservationAt, cal.isDateInToday(reservationAt) else {
+            return (base, false)
+        }
+        let leaveBy = reservationAt.addingTimeInterval(-Double(mins + 5) * 60)
+        if leaveBy <= Date() {
+            return ("\(base) — time to go", true)
+        }
+        return ("\(base) — leave by \(MealPlanEntry.shortTime(leaveBy))", false)
+    }
+
+    @ViewBuilder
+    private var dinnerCalendarAction: some View {
+        if store.dinnerOnCalendar {
+            Label("On the calendar", systemImage: "checkmark.circle.fill")
+                .font(.system(.subheadline, design: .rounded).weight(.semibold))
+                .foregroundStyle(Color.bacanGreen)
+                .accessibilityIdentifier("today-dinner-on-calendar")
+        } else {
+            Button { store.send(.addDinnerToCalendarTapped) } label: {
+                Label("Add to calendar", systemImage: "calendar.badge.plus")
+                    .font(.system(.subheadline, design: .rounded).weight(.semibold))
+                    .foregroundStyle(Color.bacanGreen)
+            }
+            .buttonStyle(.pressable)
+            .accessibilityIdentifier("today-dinner-add-to-calendar")
         }
     }
 

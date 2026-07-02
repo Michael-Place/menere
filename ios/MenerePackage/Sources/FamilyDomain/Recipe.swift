@@ -90,28 +90,64 @@ public struct MealPlanEntry: Codable, Equatable, Identifiable, Sendable {
     /// When set, this night the family is eating out; the recipe fields are empty.
     /// An entry is EITHER a recipe (recipeID/recipeTitle) OR eating out (restaurantName).
     public var restaurantName: String?
+    /// Formatted street address, resolved via MKLocalSearch when a real place is picked.
+    public var restaurantAddress: String?
+    /// Resolved coordinates (present together, or both nil for a name-only entry).
+    public var restaurantLatitude: Double?
+    public var restaurantLongitude: Double?
+    /// The reservation / plan-to-arrive time, when the family set one. Drives the Today card's
+    /// "leave by" math and the one-tap add-to-calendar.
+    public var reservationAt: Date?
 
     public init(
         id: String = UUID().uuidString,
         date: Date,
         recipeID: String,
         recipeTitle: String,
-        restaurantName: String? = nil
+        restaurantName: String? = nil,
+        restaurantAddress: String? = nil,
+        restaurantLatitude: Double? = nil,
+        restaurantLongitude: Double? = nil,
+        reservationAt: Date? = nil
     ) {
         self.id = id
         self.date = date
         self.recipeID = recipeID
         self.recipeTitle = recipeTitle
         self.restaurantName = restaurantName
+        self.restaurantAddress = restaurantAddress
+        self.restaurantLatitude = restaurantLatitude
+        self.restaurantLongitude = restaurantLongitude
+        self.reservationAt = reservationAt
     }
 
-    /// Convenience: an eating-out entry (recipe fields cleared, restaurant set).
-    public init(id: String = UUID().uuidString, date: Date, restaurantName: String) {
-        self.init(id: id, date: date, recipeID: "", recipeTitle: "", restaurantName: restaurantName)
+    /// Convenience: an eating-out entry (recipe fields cleared, restaurant set). Place details
+    /// (address/coords/reservation) are optional — a name-only night just omits them.
+    public init(
+        id: String = UUID().uuidString,
+        date: Date,
+        restaurantName: String,
+        restaurantAddress: String? = nil,
+        restaurantLatitude: Double? = nil,
+        restaurantLongitude: Double? = nil,
+        reservationAt: Date? = nil
+    ) {
+        self.init(
+            id: id, date: date, recipeID: "", recipeTitle: "",
+            restaurantName: restaurantName, restaurantAddress: restaurantAddress,
+            restaurantLatitude: restaurantLatitude, restaurantLongitude: restaurantLongitude,
+            reservationAt: reservationAt
+        )
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, date, recipeID, recipeTitle, restaurantName
+        case restaurantAddress, restaurantLatitude, restaurantLongitude, reservationAt
     }
 
     /// Decode-safe: existing recipe docs (no `restaurantName`) keep decoding; older docs
-    /// missing recipe fields tolerate absence too.
+    /// missing recipe fields tolerate absence too. Every place field is `decodeIfPresent`, so
+    /// pre-P6.2 eating-out docs (name only) decode with nil address/coords/reservation.
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = try c.decode(String.self, forKey: .id)
@@ -119,11 +155,50 @@ public struct MealPlanEntry: Codable, Equatable, Identifiable, Sendable {
         recipeID = try c.decodeIfPresent(String.self, forKey: .recipeID) ?? ""
         recipeTitle = try c.decodeIfPresent(String.self, forKey: .recipeTitle) ?? ""
         restaurantName = try c.decodeIfPresent(String.self, forKey: .restaurantName)
+        restaurantAddress = try c.decodeIfPresent(String.self, forKey: .restaurantAddress)
+        restaurantLatitude = try c.decodeIfPresent(Double.self, forKey: .restaurantLatitude)
+        restaurantLongitude = try c.decodeIfPresent(Double.self, forKey: .restaurantLongitude)
+        reservationAt = try c.decodeIfPresent(Date.self, forKey: .reservationAt)
+    }
+
+    /// Encode-safe mirror of the custom decode: nil place fields are omitted (never written as
+    /// null), so a name-only night stays a lean doc and recipe docs are unchanged.
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encode(date, forKey: .date)
+        try c.encode(recipeID, forKey: .recipeID)
+        try c.encode(recipeTitle, forKey: .recipeTitle)
+        try c.encodeIfPresent(restaurantName, forKey: .restaurantName)
+        try c.encodeIfPresent(restaurantAddress, forKey: .restaurantAddress)
+        try c.encodeIfPresent(restaurantLatitude, forKey: .restaurantLatitude)
+        try c.encodeIfPresent(restaurantLongitude, forKey: .restaurantLongitude)
+        try c.encodeIfPresent(reservationAt, forKey: .reservationAt)
     }
 
     /// True when this night is a restaurant, not a home recipe.
     public var isEatingOut: Bool {
         if let restaurantName, !restaurantName.isEmpty { return true }
         return false
+    }
+
+    /// True when a real, resolved place is attached (both coordinates present) — powers the
+    /// Today card's address + drive-time intelligence. Name-only nights are `false`.
+    public var hasPlace: Bool {
+        restaurantLatitude != nil && restaurantLongitude != nil
+    }
+
+    /// The reservation time formatted like "7:30" (used in day rows and the Today title). Nil when
+    /// no reservation is set.
+    public var reservationTimeShort: String? {
+        guard let reservationAt else { return nil }
+        return MealPlanEntry.shortTime(reservationAt)
+    }
+
+    /// "7:30"-style short time (no AM/PM), shared so day rows and the Today card format identically.
+    public static func shortTime(_ date: Date) -> String {
+        let f = DateFormatter()
+        f.dateFormat = "h:mm"
+        return f.string(from: date)
     }
 }

@@ -26,6 +26,8 @@
 	<true/>
 	<key>NSCameraUsageDescription</key>
 	<string>Menere uses the camera to scan wine bottle labels and barcodes.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Bacán uses your location to estimate drive times to dinner.</string>
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>

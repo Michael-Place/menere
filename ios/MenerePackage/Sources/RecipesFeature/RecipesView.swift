@@ -50,16 +50,13 @@ public struct RecipesView: View {
         } message: {
             Text(store.generatedMessage ?? "")
         }
-        .alert(
-            "Eating out",
+        .sheet(
             isPresented: Binding(
                 get: { store.eatingOutDay != nil },
                 set: { if !$0 { store.send(.eatingOutDismissed) } }
             )
         ) {
-            TextField("Where to?", text: $store.eatingOutName)
-            Button("Cancel", role: .cancel) { store.send(.eatingOutDismissed) }
-            Button("Save") { store.send(.saveEatingOut) }
+            EatingOutSheet(store: store)
         }
     }
 
@@ -123,8 +120,10 @@ public struct RecipesView: View {
                                     HStack(spacing: 4) {
                                         Image(systemName: "storefront").foregroundStyle(Color.marigold)
                                         VStack(alignment: .leading, spacing: 1) {
-                                            Text(e.restaurantName ?? "").font(.caption).foregroundStyle(Color.marigold)
-                                            Text("Eating out").font(.caption2).foregroundStyle(Color.inkSoft)
+                                            Text(eatingOutLine(e)).font(.caption).foregroundStyle(Color.marigold)
+                                            Text(e.restaurantAddress ?? "Eating out")
+                                                .font(.caption2).foregroundStyle(Color.inkSoft)
+                                                .lineLimit(1)
                                         }
                                     }
                                 } else {
@@ -179,5 +178,12 @@ public struct RecipesView: View {
         let f = DateFormatter()
         f.dateFormat = "EEEE, MMM d"
         return f.string(from: date)
+    }
+
+    /// "Test Bistro" or, with a reservation, "Test Bistro · 7:30".
+    private func eatingOutLine(_ entry: MealPlanEntry) -> String {
+        let name = entry.restaurantName ?? ""
+        if let time = entry.reservationTimeShort { return "\(name) · \(time)" }
+        return name
     }
 }

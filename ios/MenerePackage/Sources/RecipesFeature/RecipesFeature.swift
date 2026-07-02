@@ -1,5 +1,6 @@
 import ComposableArchitecture
 import FamilyDomain
+import LocationClient
 import MenereUI
 import SwiftUI
 import UserDomain
@@ -11,6 +12,24 @@ public struct RecipesReducer {
         case mealPlan = "Meal Plan"
     }
 
+    /// The working state of the "Eating out…" place-search sheet. A day is either still being
+    /// searched (no `name` yet) or has a place chosen — a resolved restaurant (address + coords)
+    /// or a name-only fallback (`name` set, coords nil).
+    public struct EatingOutDraft: Equatable {
+        var query: String = ""
+        var name: String?
+        var address: String?
+        var latitude: Double?
+        var longitude: Double?
+        var reservationEnabled: Bool = false
+        var reservationTime: Date = Date()
+
+        /// A place (resolved or name-only) has been chosen — the sheet can save.
+        var isPlaceSelected: Bool { name?.isEmpty == false }
+        /// A real, coordinate-backed place (vs a typed-as-is name).
+        var hasCoordinates: Bool { latitude != nil && longitude != nil }
+    }
+
     @ObservableState
     public struct State: Equatable {
         var recipes: [Recipe] = []
@@ -19,9 +38,9 @@ public struct RecipesReducer {
         var weekStart: Date = RecipesReducer.startOfWeek(Date())
         var isLoading = false
         var generatedMessage: String?
-        /// The day currently being assigned an "Eating out…" restaurant (drives the text alert).
+        /// The day currently being assigned an "Eating out…" restaurant (drives the search sheet).
         var eatingOutDay: Date?
-        var eatingOutName: String = ""
+        var eatingOutDraft = EatingOutDraft()
         @Presents var form: RecipeFormReducer.State?
 
         public init() {}
@@ -38,6 +57,12 @@ public struct RecipesReducer {
         case toggleFavorite(Recipe)
         case assignMeal(date: Date, recipe: Recipe)
         case eatingOutTapped(date: Date)
+        /// A live completer suggestion was resolved to a real place via MKLocalSearch.
+        case placeResolved(name: String, address: String, latitude: Double, longitude: Double)
+        /// "Use "{typed}" as-is" — the name-only fallback (no address/coords).
+        case useTypedAsIs
+        /// Back out of a chosen place to search again.
+        case changePlaceTapped
         case saveEatingOut
         case eatingOutDismissed
         case clearMeal(MealPlanEntry)
@@ -127,20 +152,78 @@ public struct RecipesReducer {
                 }
 
             case let .eatingOutTapped(date):
-                state.eatingOutDay = Calendar.current.startOfDay(for: date)
-                state.eatingOutName = ""
+                let cal = Calendar.current
+                let day = cal.startOfDay(for: date)
+                state.eatingOutDay = day
+                var draft = EatingOutDraft()
+                // Default the reservation picker to ~7:00 PM of that day.
+                draft.reservationTime = cal.date(bySettingHour: 19, minute: 0, second: 0, of: day) ?? day
+                // Re-opening an existing eating-out day prefills name/place/time.
+                if let existing = state.mealPlan.first(where: { cal.isDate($0.date, inSameDayAs: day) }),
+                   existing.isEatingOut {
+                    draft.name = existing.restaurantName
+                    draft.query = existing.restaurantName ?? ""
+                    draft.address = existing.restaurantAddress
+                    draft.latitude = existing.restaurantLatitude
+                    draft.longitude = existing.restaurantLongitude
+                    if let reservationAt = existing.reservationAt {
+                        draft.reservationEnabled = true
+                        draft.reservationTime = reservationAt
+                    }
+                }
+                state.eatingOutDraft = draft
+                return .none
+
+            case let .placeResolved(name, address, latitude, longitude):
+                state.eatingOutDraft.name = name
+                state.eatingOutDraft.query = name
+                state.eatingOutDraft.address = address
+                state.eatingOutDraft.latitude = latitude
+                state.eatingOutDraft.longitude = longitude
+                return .none
+
+            case .useTypedAsIs:
+                let name = state.eatingOutDraft.query.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !name.isEmpty else { return .none }
+                state.eatingOutDraft.name = name
+                state.eatingOutDraft.address = nil
+                state.eatingOutDraft.latitude = nil
+                state.eatingOutDraft.longitude = nil
+                return .none
+
+            case .changePlaceTapped:
+                state.eatingOutDraft.name = nil
+                state.eatingOutDraft.address = nil
+                state.eatingOutDraft.latitude = nil
+                state.eatingOutDraft.longitude = nil
                 return .none
 
             case .saveEatingOut:
                 guard let hid = hid(), let day = state.eatingOutDay else { return .none }
-                let name = state.eatingOutName.trimmingCharacters(in: .whitespacesAndNewlines)
+                let cal = Calendar.current
+                let draft = state.eatingOutDraft
+                guard let rawName = draft.name?.trimmingCharacters(in: .whitespacesAndNewlines),
+                      !rawName.isEmpty else {
+                    state.eatingOutDay = nil
+                    return .none
+                }
+                // Combine the picked day with the reservation time-of-day.
+                let reservationAt: Date? = draft.reservationEnabled
+                    ? cal.date(
+                        bySettingHour: cal.component(.hour, from: draft.reservationTime),
+                        minute: cal.component(.minute, from: draft.reservationTime),
+                        second: 0, of: day
+                    )
+                    : nil
                 state.eatingOutDay = nil
-                state.eatingOutName = ""
-                guard !name.isEmpty else { return .none }
+                state.eatingOutDraft = EatingOutDraft()
                 // Eating out clears any recipe for that day (an entry is one kind or the other).
-                let existing = state.mealPlan.first { Calendar.current.isDate($0.date, inSameDayAs: day) }
+                let existing = state.mealPlan.first { cal.isDate($0.date, inSameDayAs: day) }
                 let entry = MealPlanEntry(
-                    id: existing?.id ?? UUID().uuidString, date: day, restaurantName: name
+                    id: existing?.id ?? UUID().uuidString, date: day,
+                    restaurantName: rawName, restaurantAddress: draft.address,
+                    restaurantLatitude: draft.latitude, restaurantLongitude: draft.longitude,
+                    reservationAt: reservationAt
                 )
                 if let i = state.mealPlan.firstIndex(where: { $0.id == entry.id }) {
                     state.mealPlan[i] = entry
@@ -154,7 +237,7 @@ public struct RecipesReducer {
 
             case .eatingOutDismissed:
                 state.eatingOutDay = nil
-                state.eatingOutName = ""
+                state.eatingOutDraft = EatingOutDraft()
                 return .none
 
             case let .clearMeal(entry):

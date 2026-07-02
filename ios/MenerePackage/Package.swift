@@ -24,6 +24,7 @@ let package = Package(
         .library(name: "RecipesFeature", targets: ["RecipesFeature"]),
         .library(name: "PersistenceClient", targets: ["PersistenceClient"]),
         .library(name: "StorageClient", targets: ["StorageClient"]),
+        .library(name: "LocationClient", targets: ["LocationClient"]),
         .library(name: "IdentifyClient", targets: ["IdentifyClient"]),
         .library(name: "EnrichmentClient", targets: ["EnrichmentClient"]),
         .library(name: "CatalogClient", targets: ["CatalogClient"]),
@@ -125,6 +126,7 @@ let package = Package(
                 "PersistenceClient",
                 "UserDomain",
                 "DocsFeature",
+                "LocationClient",
             ]
         ),
         .target(
@@ -182,6 +184,7 @@ let package = Package(
                 "FamilyDomain",
                 "PersistenceClient",
                 "UserDomain",
+                "LocationClient",
             ]
         ),
         .target(
@@ -231,6 +234,13 @@ let package = Package(
                 .product(name: "Dependencies", package: "swift-dependencies"),
                 .product(name: "DependenciesMacros", package: "swift-dependencies"),
                 .product(name: "FirebaseStorage", package: "firebase-ios-sdk"),
+            ]
+        ),
+        .target(
+            name: "LocationClient",
+            dependencies: [
+                .product(name: "Dependencies", package: "swift-dependencies"),
+                .product(name: "DependenciesMacros", package: "swift-dependencies"),
             ]
         ),
         .target(

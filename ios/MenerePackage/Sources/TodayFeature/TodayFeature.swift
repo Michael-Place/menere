@@ -1,6 +1,7 @@
 import ComposableArchitecture
 import FamilyDomain
 import Foundation
+import LocationClient
 import MenereUI
 import PersistenceClient
 import UserDomain
@@ -44,10 +45,33 @@ public struct TodayReducer {
         var briefing: DailyBriefing?
         var briefingLoading = false
 
+        /// Traffic-aware drive time (minutes) to tonight's restaurant. Loaded by an INDEPENDENT
+        /// effect after the cards render; nil (hidden) until it resolves and on any failure — the
+        /// dashboard never waits on MapKit.
+        var driveMinutes: Int?
+
         public init() {}
 
         func stats(for memberID: String) -> MemberStats {
             stats.first { $0.memberID == memberID } ?? MemberStats(id: memberID, memberID: memberID)
+        }
+
+        /// Tonight's meal-plan entry (today's date), if any.
+        func tonightsEntry() -> MealPlanEntry? {
+            let cal = Calendar.current
+            return mealPlan.first { cal.isDateInToday($0.date) }
+        }
+
+        /// Whether the "Dinner at {name}" event already sits on the reservation day — drives the
+        /// add-to-calendar button's idempotent done state.
+        var dinnerOnCalendar: Bool {
+            guard let entry = tonightsEntry(), entry.isEatingOut, let reservationAt = entry.reservationAt
+            else { return false }
+            let title = "Dinner at \(entry.restaurantName ?? "")"
+            let cal = Calendar.current
+            return events.contains {
+                $0.title == title && cal.isDate($0.startDate, inSameDayAs: reservationAt)
+            }
         }
     }
 
@@ -67,6 +91,12 @@ public struct TodayReducer {
         /// Load/refresh the AI briefing. `force` bypasses the per-day server cache (refresh button).
         case loadBriefing(force: Bool)
         case briefingResponse(DailyBriefing?)
+        /// Kick the traffic-aware ETA to tonight's restaurant (independent, non-blocking).
+        case computeDrive
+        case driveResult(Int?)
+        /// Drop tonight's reservation on the shared calendar as a "Dinner at {name}" event.
+        case addDinnerToCalendarTapped
+        case dinnerEventAdded(FamilyEvent)
         // Quick-action deep links — the parent (MainTabReducer) switches tabs in response.
         case quickAddEventTapped
         case quickAddListTapped
@@ -84,7 +114,7 @@ public struct TodayReducer {
 
     public init() {}
 
-    private enum CancelID { case briefing }
+    private enum CancelID { case briefing, drive }
 
     private func hid() -> String? {
         @Shared(.user) var user
@@ -143,7 +173,12 @@ public struct TodayReducer {
                             careItems: (try? await careItems) ?? []
                         ))
                     },
-                    .send(.loadBriefing(force: false))
+                    .send(.loadBriefing(force: false)),
+                    // Ask once so tonight's drive time can resolve (idempotent; no-op if determined).
+                    .run { _ in
+                        @Dependency(\.location) var location
+                        location.requestWhenInUseAuthorization()
+                    }
                 )
 
             case let .loaded(events, members, recipes, mealPlan, chores, stats, documents, careItems):
@@ -157,6 +192,53 @@ public struct TodayReducer {
                 state.documents = documents
                 state.careItems = careItems
                 state.firstName = firstName(from: members)
+                // Once cards have data, fire the drive-time lookup independently (never blocks).
+                if let entry = state.tonightsEntry(), entry.hasPlace {
+                    return .send(.computeDrive)
+                }
+                state.driveMinutes = nil
+                return .none
+
+            case .computeDrive:
+                guard let entry = state.tonightsEntry(), entry.hasPlace,
+                      let lat = entry.restaurantLatitude, let lng = entry.restaurantLongitude
+                else { return .none }
+                return .run { send in
+                    @Dependency(\.location) var location
+                    // Traffic-aware ETA leaving now; nil on any failure → the line stays hidden.
+                    let mins = await location.driveTimeMinutes(lat, lng, Date())
+                    await send(.driveResult(mins))
+                }
+                .cancellable(id: CancelID.drive, cancelInFlight: true)
+
+            case let .driveResult(mins):
+                state.driveMinutes = mins
+                return .none
+
+            case .addDinnerToCalendarTapped:
+                guard let hid = hid(), let entry = state.tonightsEntry(), entry.isEatingOut,
+                      let reservationAt = entry.reservationAt, !state.dinnerOnCalendar
+                else { return .none }
+                let name = entry.restaurantName ?? ""
+                let event = FamilyEvent(
+                    title: "Dinner at \(name)",
+                    startDate: reservationAt,
+                    isAllDay: false,
+                    location: entry.restaurantAddress,
+                    notes: "From the meal plan"
+                )
+                @Shared(.user) var user
+                let actorID = user?.id
+                return .run { send in
+                    @Dependency(\.persistence) var persistence
+                    try await persistence.saveEvent(hid, event)
+                    try? await persistence.logActivity(hid, .eventAdded(title: event.title, actorID: actorID))
+                    await send(.dinnerEventAdded(event))
+                }
+
+            case let .dinnerEventAdded(event):
+                // Reflect locally so the button swaps to "On the calendar" immediately.
+                state.events.append(event)
                 return .none
 
             case let .toggleChore(chore):
