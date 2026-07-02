@@ -56,7 +56,9 @@ public struct ChoresView: View {
                     store.send(.addRewardTapped)
                 } label: {
                     Label("Add reward", systemImage: "plus")
+                        .appearBounce()
                 }
+                .buttonStyle(.pressable)
             } header: {
                 Text("Rewards")
             } footer: {
@@ -66,6 +68,11 @@ public struct ChoresView: View {
         }
         .scrollContentBackground(.hidden)
         .background(Color.familyCanvas)
+        .overlay {
+            // Member-colored celebration when the live leaderboard reports a level-up.
+            ConfettiBurst(color: confettiColor, trigger: store.confettiTrigger)
+                .ignoresSafeArea()
+        }
         .navigationTitle("Chores")
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
@@ -84,6 +91,13 @@ public struct ChoresView: View {
             Button("Cancel", role: .cancel) { store.showAddReward = false }
             Button("Add") { store.send(.createReward) }
         }
+    }
+
+    /// The confetti color for the most recent level-up (falls back to the brand green).
+    private var confettiColor: Color {
+        guard let mc = store.confettiColor else { return .bacanGreen }
+        let rgb = mc.rgb
+        return Color(red: rgb.red, green: rgb.green, blue: rgb.blue)
     }
 
     // MARK: Leaderboard
@@ -131,8 +145,9 @@ public struct ChoresView: View {
             Button { store.send(.toggleComplete(chore)) } label: {
                 Image(systemName: chore.isCompleted ? "checkmark.circle.fill" : "circle")
                     .foregroundStyle(chore.isCompleted ? Color.bacanGreen : Color.inkSoft)
+                    .stickerSlap(isOn: chore.isCompleted, color: .bacanGreen)
             }
-            .buttonStyle(.borderless)
+            .buttonStyle(.pressable)
 
             Button { store.send(.editTapped(chore)) } label: {
                 VStack(alignment: .leading, spacing: 2) {

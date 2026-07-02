@@ -143,6 +143,8 @@ public struct ChoreFormView: View {
             }
             .scrollContentBackground(.hidden)
             .background(Color.familyCanvas)
+            .selectionHaptic(store.chore.difficulty)
+            .selectionHaptic(store.chore.recurrence)
             .navigationTitle(store.isEditing ? "Edit Chore" : "New Chore")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

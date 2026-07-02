@@ -20,6 +20,10 @@ public struct ChoresReducer {
         var showAddReward = false
         var newRewardTitle = ""
         var newRewardCost = 50
+        // Confetti celebration: bumped when the live leaderboard reports a member's level rising;
+        // `confettiColor` is that member's color (drives ``ConfettiBurst`` in ``ChoresView``).
+        var confettiTrigger = 0
+        var confettiColor: MemberColor?
 
         public init() {}
 
@@ -97,6 +101,15 @@ public struct ChoresReducer {
                 return .none
 
             case let .statsUpdated(stats):
+                // Level-up celebration: fire only when a member we already had stats for rises a
+                // level (skips the initial snapshot, where no prior stat exists to compare against).
+                for updated in stats {
+                    if let prior = state.stats.first(where: { $0.memberID == updated.memberID }),
+                       updated.level > prior.level {
+                        state.confettiColor = state.members.first { $0.id == updated.memberID }?.color
+                        state.confettiTrigger += 1
+                    }
+                }
                 state.stats = stats
                 return .none
 

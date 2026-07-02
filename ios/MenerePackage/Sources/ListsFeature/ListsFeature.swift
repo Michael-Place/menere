@@ -203,7 +203,8 @@ public struct ListsView: View {
         .navigationTitle("Lists")
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
-                Button { store.send(.addTapped) } label: { Image(systemName: "plus") }
+                Button { store.send(.addTapped) } label: { Image(systemName: "plus").appearBounce() }
+                    .buttonStyle(.pressable)
                     .accessibilityIdentifier("add-list-button")
             }
         }

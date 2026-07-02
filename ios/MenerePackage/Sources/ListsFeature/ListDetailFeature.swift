@@ -137,10 +137,12 @@ public struct ListDetailView: View {
                     TextField("Add an item…", text: $store.newItemTitle)
                         .onSubmit { store.send(.addItem) }
                         .accessibilityIdentifier("new-list-item-field")
-                    Button { store.send(.addItem) } label: { Image(systemName: "plus.circle.fill") }
-                        .buttonStyle(.borderless)
-                        .foregroundStyle(Color.bacanGreen)
-                        .disabled(store.newItemTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    Button { store.send(.addItem) } label: {
+                        Image(systemName: "plus.circle.fill").appearBounce()
+                    }
+                    .buttonStyle(.pressable)
+                    .foregroundStyle(Color.bacanGreen)
+                    .disabled(store.newItemTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
             }
             .listRowBackground(Color.familySurface)
@@ -158,8 +160,9 @@ public struct ListDetailView: View {
             Button { store.send(.toggle(item)) } label: {
                 Image(systemName: item.isCompleted ? "checkmark.circle.fill" : "circle")
                     .foregroundStyle(item.isCompleted ? Color.bacanGreen : Color.inkSoft)
+                    .stickerSlap(isOn: item.isCompleted, color: .bacanGreen)
             }
-            .buttonStyle(.borderless)
+            .buttonStyle(.pressable)
 
             Text(item.title)
                 .strikethrough(item.isCompleted)
