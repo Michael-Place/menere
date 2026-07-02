@@ -388,8 +388,24 @@ thing that vanishes if nobody writes it down.
   Storage + polaroid UI (`PolaroidFrame` exists), timeline per kid, quick-capture
   from Today. Linked Brain documents (scanned artwork!) appear on the timeline.
 
-### P12 — Smart home: Philips Hue, hyper-specific
-**Design refined with Michael 2026-07-02 (planning session):**
+### P12 — Smart home: Philips Hue, hyper-specific  ✅ done (2026-07-02, commits 04dccd6 + b4b4cad)
+Shipped: (C1) `HueClient` target (V1 REST ported/trimmed from NowSpinning + NEW
+scenes/sensors/rediscover; private-IP cert trust; mock mode for bridge-less
+verification) + `HueConfig` contract at `households/{hid}/config/hue` + Today's
+**"The house" card** — sensor temps ("Famfis's room 72°"), lights summary, ritual
+buttons (Bedtime evening-prominent ≥18:00 unit-tested, Dinner's-ready meal-plan
+aware); config absent/unreachable → card hides silently. (C2) **bridge lifecycle
+in Settings** — Smart home section (status + reachability dot, ritual binding rows,
+Re-pair), pairing sheet (discover → link-button 30s auto-poll → key → binding step),
+name-based auto-match (scene name contains ritual key/label word; sensor labels
+carry forward via `sensorNames`), unbound rituals simply don't render. TestStore-
+verified state machine; discovery from the sim found Michael's 3 real bridges
+(deliberately did not authenticate). **REMAINING HUMAN STEP: Michael pairs on his
+phone** — Settings → Smart home → Set up Philips Hue → press bridge button →
+confirm bindings → save. Pre-existing `SettingsReducerTests` crash (environmental,
+predates P12) noted for later.
+
+**Design (as refined with Michael 2026-07-02):**
 - **Not another Hue client** — no device browser, no per-light controls, no generic
   settings. BUT (Michael's correction #2, 2026-07-02): **bridge lifecycle DOES belong
   in the app** — bridges die/get repurposed, and re-pairing must not require a dev
