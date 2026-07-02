@@ -389,8 +389,26 @@ thing that vanishes if nobody writes it down.
   from Today. Linked Brain documents (scanned artwork!) appear on the timeline.
 
 ### P12 — Smart home: Philips Hue, hyper-specific
-Decision: per-product deep integrations (no generic abstraction); **Hue first**
-because the whole house runs on it. One `HueClient` dependency, local-first:
+**Design refined with Michael 2026-07-02 (planning session):**
+- **Not another Hue client.** No pairing UI, no device browser, no settings screens.
+  Setup happens once in the dev chat (press link button → key minted → config
+  written); the app only consumes.
+- **Hybrid config/live split (Michael's correction to the original all-hardcoded
+  pitch):** the Firestore config doc `households/{hid}/config/hue` holds IDENTITY —
+  bridge address, app key, family mappings (room↔member, which scene is "Bedtime"/
+  "Dinner") — while the app pulls LIVE inventory + state from the bridge (rooms,
+  scenes, light states, sensor temps). Config-as-conversation for the mappings.
+- **Rituals chosen:** Bedtime button (evening-prominent on Today), Dinner's-ready
+  scene (meal-plan aware), room temps on Today (motion sensors as nursery
+  thermometers). Chore→member-color-blink CUT (not selected).
+- **Boilerplate source:** NowSpinning (`~/repo/nowspinning`) has a working Hue
+  integration — port its client patterns rather than rewriting.
+- Local-network-first; bridge unreachable → the card simply hides. Remote OAuth
+  maybe later. Pairing (C0) deferred until Michael is near the bridge — C1 builds
+  against the config contract with previews/mocks and goes live the moment the
+  config doc exists.
+
+Original notes (still apply): one `HueClient` dependency, local-first:
 - **Bridge pairing:** mDNS/Bonjour discovery → link-button press → app key,
   stored per-device (Keychain). Local **CLIP v2 API** (HTTPS REST) for control.
 - **Live state:** CLIP v2 **Server-Sent Events** stream → rooms/zones, light and
