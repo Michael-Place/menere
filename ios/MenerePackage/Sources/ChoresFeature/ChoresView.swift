@@ -12,17 +12,22 @@ public struct ChoresView: View {
         self.store = store
     }
 
-    /// Non-plant care (house/zone) — the House-care section's rows.
-    private var houseItems: [CareItem] { store.careItems.filter { $0.kind != .plant } }
+    /// Whole-house upkeep — the House-care section's rows (P9-C3 split zones out into their own).
+    private var houseItems: [CareItem] { store.careItems.filter { $0.kind == .house } }
     /// Plant care items — the Plants section's rows.
     private var plantItems: [CareItem] { store.careItems.filter { $0.kind == .plant } }
+    /// Yard & garden zones — the seasonal-landscaping section's rows (P9-C3).
+    private var zoneItems: [CareItem] { store.careItems.filter { $0.kind == .zone } }
 
     public var body: some View {
         List {
             Section("House care") {
-                // The health banner is kind-agnostic: it rolls up *all* care items (plants flow in
-                // automatically), while the rows below show only house/zone upkeep.
-                if store.careItems.isEmpty {
+                // The health banner is kind-agnostic: it rolls up *all* care items (plants and yard
+                // zones flow in automatically), while the rows below show only whole-house upkeep.
+                if !store.careItems.isEmpty {
+                    HouseHealthBanner(health: CareItem.houseHealth(for: store.careItems))
+                }
+                if houseItems.isEmpty {
                     if store.careSuggestionsDismissed {
                         Text("Nothing under care yet — add the first thing you always forget.")
                             .foregroundStyle(Color.inkSoft)
@@ -30,7 +35,6 @@ public struct ChoresView: View {
                         careSuggestionsCard
                     }
                 } else {
-                    HouseHealthBanner(health: CareItem.houseHealth(for: store.careItems))
                     ForEach(houseItems) { item in
                         CareRow(
                             item: item,
@@ -72,6 +76,30 @@ public struct ChoresView: View {
                     }
                     addPlantButton
                 }
+            }
+            .listRowBackground(Color.familySurface)
+
+            Section("Yard & garden") {
+                ForEach(zoneItems) { item in
+                    // Zones are house-ish (sticker-slap mark-done, not the plant leaf-unfurl).
+                    CareRow(
+                        item: item,
+                        members: store.members,
+                        onEdit: { store.send(.editCareItemTapped(item)) },
+                        onMarkDone: { taskID in
+                            store.send(.markCareTaskDone(itemID: item.id, taskID: taskID))
+                        }
+                    )
+                }
+                // Seasonal starters persist (filtered to the not-yet-added ones) so several jobs can be
+                // scheduled in one sitting — unlike the one-and-done House card. Dismissable.
+                if !remainingYardStarters.isEmpty, !store.yardSuggestionsDismissed {
+                    yardSuggestionsCard
+                } else if zoneItems.isEmpty {
+                    Text("Nothing in the yard yet — add a seasonal job.")
+                        .foregroundStyle(Color.inkSoft)
+                }
+                addYardZoneButton
             }
             .listRowBackground(Color.familySurface)
 
@@ -323,6 +351,72 @@ public struct ChoresView: View {
         .buttonStyle(.pressable)
         .accessibilityIdentifier("add-plant-button")
     }
+
+    // MARK: Yard & garden (P9-C3)
+
+    /// Starters not already on the board, matched by name — lets the card persist for multi-add.
+    private var remainingYardStarters: [YardSuggestion] {
+        let existing = Set(zoneItems.map(\.name))
+        return YardSuggestion.starters.filter { !existing.contains($0.name) }
+    }
+
+    /// Seasonal-starters card mirroring the House-care one: each row one-tap-adds a yard zone anchored
+    /// to the next occurrence of its month, repeating yearly. Persists (filtered) for multi-add;
+    /// dismissable.
+    private var yardSuggestionsCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Seasonal jobs")
+                .font(.headline).foregroundStyle(Color.ink)
+            Text("Tap to schedule a landscaping job to its next window. Edit anytime.")
+                .font(.caption).foregroundStyle(Color.inkSoft)
+            ForEach(remainingYardStarters) { suggestion in
+                Button {
+                    store.send(.yardSuggestionTapped(suggestion))
+                } label: {
+                    HStack(spacing: 10) {
+                        Image(systemName: suggestion.icon)
+                            .foregroundStyle(Color.bacanGreen)
+                            .frame(width: 24)
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(suggestion.name).foregroundStyle(Color.ink)
+                            Text(yardSubtitle(suggestion))
+                                .font(.caption2).foregroundStyle(Color.inkSoft)
+                        }
+                        Spacer()
+                        Image(systemName: "plus.circle.fill").foregroundStyle(Color.bacanGreen)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("yard-suggestion-\(suggestion.id)")
+            }
+            Button("No thanks, I'll add my own") {
+                store.send(.dismissYardSuggestions)
+            }
+            .font(.caption).foregroundStyle(Color.inkSoft)
+            .accessibilityIdentifier("dismiss-yard-suggestions")
+        }
+        .padding(.vertical, 4)
+    }
+
+    /// "Next: Sep 15 · yearly" — the next-occurrence date the tap would anchor to.
+    private func yardSubtitle(_ suggestion: YardSuggestion) -> String {
+        let date = suggestion.nextAnchor().formatted(.dateTime.month(.abbreviated).day())
+        return "Next: \(date) · yearly"
+    }
+
+    private var addYardZoneButton: some View {
+        Button {
+            store.send(.addYardZoneTapped)
+        } label: {
+            Label("Add a yard zone", systemImage: "plus")
+                .appearBounce()
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.pressable)
+        .accessibilityIdentifier("add-yard-zone-button")
+    }
 }
 
 /// A single Plants row: circular photo thumbnail (or a leaf fallback), name, species, the soonest
@@ -527,6 +621,11 @@ private struct CareRow: View {
                 // Due far out — reassure with who handled it last, if anyone.
                 if task.lastDoneAt != nil {
                     Text(doneText(task)).font(.caption).foregroundStyle(Color.inkSoft)
+                } else if let due = task.dueAt {
+                    // Never done but anchored to a real date (a seasonal yard window) — name the date
+                    // rather than a bare day count, which reads clearer for far-off seasonal jobs.
+                    Text("Due \(due.formatted(.dateTime.month(.abbreviated).day()))")
+                        .font(.caption).foregroundStyle(Color.inkSoft)
                 } else {
                     Text("Due in \(d) days").font(.caption).foregroundStyle(Color.inkSoft)
                 }

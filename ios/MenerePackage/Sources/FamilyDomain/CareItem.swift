@@ -213,11 +213,19 @@ public struct CareItem: Codable, Equatable, Identifiable, Sendable {
         "cloud.rain.fill", "sparkles", "ladybug.fill", "scissors", "fanblades.fill", "wind",
     ]
 
-    /// The icon set for a given care kind. Plants get leaf/drop/sun flavor; everything else keeps
-    /// the house/zone set (no behavior change for existing House-care call sites).
+    /// Yard-flavored icon grid (P9-C3) — tree/leaf/pruning/sun-and-sprinkler glyphs for outdoor
+    /// seasonal zones, distinct from indoor-plant and house-upkeep sets.
+    public static let zoneIconOptions: [String] = [
+        "tree.fill", "leaf.fill", "scissors", "sun.max.fill", "sprinkler.and.droplets.fill",
+        "drop.fill", "cloud.rain.fill", "sparkles", "wind", "flame.fill", "trash.fill", "hammer.fill",
+    ]
+
+    /// The icon set for a given care kind. Plants get leaf/drop/sun flavor; yard zones get
+    /// tree/pruning/sprinkler flavor; house keeps the upkeep glyphs (no change for existing call sites).
     public static func iconOptions(for kind: CareKind) -> [String] {
         switch kind {
         case .plant: return plantIconOptions
+        case .zone: return zoneIconOptions
         default: return iconOptions
         }
     }
@@ -274,11 +282,16 @@ public struct CareItem: Codable, Equatable, Identifiable, Sendable {
     /// Plant watering-ish cadences — tighter intervals than house upkeep.
     public static let plantIntervalChoices: [Int?] = [2, 3, 5, 7, 10, 14, 30, nil]
 
-    /// The cadence choices for a given care kind. Plants get short watering intervals; everything
-    /// else keeps the house/zone set (no behavior change for existing call sites).
+    /// Yard cadences (P9-C3) — seasonal windows measured in months, plus a `nil` "seasonal / manual"
+    /// for one-off jobs you only mark when you do them.
+    public static let zoneIntervalChoices: [Int?] = [30, 60, 90, 180, 365, nil]
+
+    /// The cadence choices for a given care kind. Plants get short watering intervals; yard zones get
+    /// month-scale seasonal windows; house keeps its set (no behavior change for existing call sites).
     public static func intervalChoices(for kind: CareKind) -> [Int?] {
         switch kind {
         case .plant: return plantIntervalChoices
+        case .zone: return zoneIntervalChoices
         default: return intervalChoices
         }
     }
@@ -293,6 +306,7 @@ public struct CareItem: Codable, Equatable, Identifiable, Sendable {
         case 60: return "Every 2 months"
         case 90: return "Quarterly"
         case 180: return "Twice a year"
+        case 365: return "Yearly"
         case let .some(d): return "Every \(d) days"
         }
     }

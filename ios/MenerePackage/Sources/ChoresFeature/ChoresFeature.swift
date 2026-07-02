@@ -24,6 +24,8 @@ public struct ChoresReducer {
         /// In-memory only: the starter-suggestions card comes back on relaunch (acceptable for a
         /// private app; persisting the dismissal is a possible later polish).
         var careSuggestionsDismissed = false
+        /// Same, for the Yard & garden seasonal-starters card (P9-C3).
+        var yardSuggestionsDismissed = false
         var isLoading = false
         @Presents var form: ChoreFormReducer.State?
         @Presents var careForm: CareItemFormReducer.State?
@@ -59,6 +61,10 @@ public struct ChoresReducer {
         case markCareTaskDone(itemID: String, taskID: String)
         case careSuggestionTapped(CareSuggestion)
         case dismissCareSuggestions
+        // P9-C3 — Yard & garden (kind == .zone)
+        case addYardZoneTapped
+        case yardSuggestionTapped(YardSuggestion)
+        case dismissYardSuggestions
         // P9 — Plants
         case addPlantTapped
         case carePhotosLoaded([String: Data])
@@ -262,6 +268,31 @@ public struct ChoresReducer {
 
             case .dismissCareSuggestions:
                 state.careSuggestionsDismissed = true
+                return .none
+
+            case .addYardZoneTapped:
+                // A new yard zone starts with one yearly seasonal task and zone-flavored option sets
+                // (no photo/species — those stay plant-only).
+                state.careForm = CareItemFormReducer.State(
+                    item: CareItem(
+                        kind: .zone, name: "", iconSymbol: "tree.fill",
+                        tasks: [CareTask(title: "", intervalDays: 365)]
+                    ),
+                    isEditing: false
+                )
+                return .none
+
+            case let .yardSuggestionTapped(suggestion):
+                guard let (hid, _) = ctx() else { return .none }
+                let item = suggestion.makeItem()
+                state.careItems = Self.sortedCare(state.careItems + [item])
+                return .run { _ in
+                    @Dependency(\.persistence) var persistence
+                    try await persistence.saveCareItem(hid, item)
+                }
+
+            case .dismissYardSuggestions:
+                state.yardSuggestionsDismissed = true
                 return .none
 
             case .careForm(.presented(.delegate(.didChange))):

@@ -37,6 +37,52 @@ public struct CareSuggestion: Equatable, Identifiable, Sendable {
     ]
 }
 
+/// A one-tap starter for the Yard & garden empty state (P9-C3) — the seasonal landscaping jobs
+/// Michael runs on the calendar. Each anchors its first-due to the **next occurrence** of a
+/// month/day (this year if still ahead, else next year) and repeats **yearly** (`intervalDays: 365`)
+/// once completed — so a fresh add reads as a future window, not "due today."
+public struct YardSuggestion: Equatable, Identifiable, Sendable {
+    public let id: String
+    let name: String
+    let icon: String
+    let taskTitle: String
+    let month: Int
+    let day: Int
+
+    /// The next calendar occurrence of `month`/`day` on or after today — this year when the window is
+    /// still ahead, otherwise next year. Anchored at 9am local so a same-day add lands "due today"
+    /// rather than tripping a start-of-day boundary.
+    func nextAnchor(now: Date = Date(), calendar: Calendar = .current) -> Date {
+        var comps = DateComponents()
+        comps.month = month
+        comps.day = day
+        comps.hour = 9
+        comps.year = calendar.component(.year, from: now)
+        let thisYear = calendar.date(from: comps) ?? now
+        if thisYear >= calendar.startOfDay(for: now) { return thisYear }
+        comps.year = (comps.year ?? calendar.component(.year, from: now)) + 1
+        return calendar.date(from: comps) ?? thisYear
+    }
+
+    func makeItem(now: Date = Date()) -> CareItem {
+        CareItem(
+            kind: .zone,
+            name: name,
+            iconSymbol: icon,
+            tasks: [CareTask(title: taskTitle, intervalDays: 365, firstDueAt: nextAnchor(now: now))]
+        )
+    }
+
+    /// Michael's seasonal landscaping rotation (dates are the yearly windows).
+    static let starters: [YardSuggestion] = [
+        .init(id: "mulch", name: "Spring mulch", icon: "tree.fill", taskTitle: "Spread mulch", month: 3, day: 15),
+        .init(id: "prune", name: "Prune shrubs", icon: "scissors", taskTitle: "Prune shrubs", month: 2, day: 15),
+        .init(id: "overseed", name: "Aerate & overseed", icon: "leaf.fill", taskTitle: "Aerate & overseed", month: 9, day: 15),
+        .init(id: "fallcleanup", name: "Fall cleanup", icon: "wind", taskTitle: "Fall cleanup", month: 10, day: 15),
+        .init(id: "leafremoval", name: "Leaf removal", icon: "sparkles", taskTitle: "Leaf removal", month: 11, day: 15),
+    ]
+}
+
 @Reducer
 public struct CareItemFormReducer {
     @ObservableState
@@ -377,6 +423,7 @@ public struct CareItemFormView: View {
 
     private var navTitle: String {
         if store.isPlant { return store.isEditing ? "Edit plant" : "New plant" }
+        if store.item.kind == .zone { return store.isEditing ? "Edit yard zone" : "New yard zone" }
         return store.isEditing ? "Edit care item" : "New care item"
     }
 
