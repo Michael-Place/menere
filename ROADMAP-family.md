@@ -237,7 +237,20 @@ is added.
   ("¡Bacán!" as a celebration exclamation is free brand equity).
 - Cellar interior keeps parchment; the seam is the push from the Lists row.
 
-### P6 — Today dashboard (the family's front door)
+### P6 — Today dashboard (the family's front door)  ✅ done (2026-07-02, commits 509065d…7ee7b48)
+Shipped in three chunks, each build-green + sim-smoke-tested: (C1) `TodayFeature`
+target + Today as first/default tab — hero greeting (time-of-day + first name +
+"at the Place house"), today's-schedule card (recurrence-aware), tonight's-dinner
+card, quick-action deep links; (C2) chores-today card with inline sticker-slap
+completion (shared `ChoreCompletion` helper in FamilyDomain — Chores tab behavior
+unchanged, XP verified 12→24→12 round-trip live) + family member grid (color,
+level, today counts); (C3) **AI daily briefing** — `generateDailyBriefing` callable
+(claude-haiku-4-5, family-voice prompt, per-day cache at
+`households/{hid}/briefings/{YYYY-MM-DD}`, force-refresh) DEPLOYED + verified,
+shimmer-skeleton card that hides silently on failure; bonus: "Plan dinner" lands on
+Kitchen's Meal Plan segment (public `showMealPlan`). Display name is now **¡Bacán!**.
+Leftover ideas: live listeners for dashboard data (currently one-shot + re-select
+refresh); weather on the greeting (WeatherKit, pairs with P9 yard care).
 New first tab. Time-of-day greeting ("Tuesday morning at the Place house"), then
 stacked cards, each tappable through to its module:
 - **Today's events** (calendar, member color dots) · **Dinner tonight** (meal plan)

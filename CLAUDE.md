@@ -7,7 +7,7 @@ minimal public-launch hardening).
 
 For the full pivot plan, phase history, and decisions, see **`ROADMAP-family.md`**.
 
-**Act II (in progress — P5 identity phase ✅ shipped):** the app is now **"Bacán"**
+**Act II (in progress — P5 identity ✅ and P6 Today dashboard ✅ shipped):** the app is now **"Bacán"**
 (Chilean slang; user-facing only — bundle ID, Firebase project, repo, and package all stay
 `menere`). Family surfaces wear the new identity (familyCanvas cream, bacanGreen,
 terracotta/marigold/sky, rounded type, playful motion via `.stickerSlap`/`ConfettiBurst`);
@@ -33,8 +33,12 @@ sit alongside as `web/`. Run `git` from the root; run Firebase/Xcode tooling fro
   `ios/MenerePackage`. **After editing `project.yml`, run `xcodegen generate`** (from `ios/`).
 
 ## App shell (tabs)
-`MainTabView` (in `AppCore`) — four primary tabs, no **More** menu:
-**Calendar · Lists · Chores · Kitchen**. **Family** (`SettingsFeature`) is no longer a tab — it's a
+`MainTabView` (in `AppCore`) — five primary tabs, no **More** menu:
+**Today · Calendar · Lists · Chores · Kitchen** (Today is first and the default).
+**Today** (`TodayFeature`) is the dashboard: greeting, AI daily briefing
+(`generateDailyBriefing`, per-day cached), today's schedule, tonight's dinner, quick-action
+tab deep-links, chores-today card (inline completion via the shared `ChoreCompletion`
+helper in `FamilyDomain`), family member grid. **Family** (`SettingsFeature`) is not a tab — it's a
 `person.crop.circle` toolbar button (top-leading on every tab) that presents `SettingsView` as a
 sheet, driven by `showSettings` in `MainTabReducer`.
 Wine is re-homed **under the Lists tab** as a pinned "Cellar" collection row (not a tab): tapping it
@@ -88,6 +92,9 @@ Ingredient/MealPlanEntry, ActivityItem) and **`WineDomain`** (Wine/Bottle/Tastin
 - `onChoreToggled` — server-authoritative chore XP (`choreXP.js`) + completion push.
 - `receiveEmail` — Postmark inbound webhook → Claude event extraction (`eventExtract.js`) →
   writes calendar events. See ROADMAP for the Postmark setup; times default to `America/New_York`.
+- `generateDailyBriefing` — callable; Claude-written family-voice daily briefing for the Today
+  tab (`briefingGenerate.js`), cached per ET day at `households/{hid}/briefings/{YYYY-MM-DD}`,
+  `force` regenerates.
 
 Secrets (Secret Manager): `ANTHROPIC_API_KEY`, `POSTMARK_WEBHOOK_SECRET`.
 Admin SDK key (gitignored, local): `ios/menere-firebase-adminsdk-fbsvc-*.json`.
