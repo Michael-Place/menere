@@ -39,11 +39,27 @@ public struct ActivityItem: Codable, Equatable, Identifiable, Sendable {
         ActivityItem(text: "Checked \"\(title)\" off \(list)", systemImage: "checklist.checked", actorID: actorID)
     }
 
-    /// A House-care task was marked done. `name` is the actor's first-name-friendly name; `item` is
-    /// the care item's name ("HVAC filter"); `symbol` defaults to a house glyph but callers pass the
-    /// item's own icon. Purely additive — no schema change, so existing activity docs still decode.
-    public static func careDone(item: String, by name: String?, actorID: String?, symbol: String = "house.fill") -> ActivityItem {
+    /// A care task was marked done. `name` is the actor's first-name-friendly name; `item` is the
+    /// care item's name ("HVAC filter", "Monstera"); `task` is the completed task's title, which
+    /// picks a natural verb (water→"watered", feed→"fed", mist→"misted", else "took care of") so
+    /// plants read "Migueluh watered "Monstera"". `symbol` defaults to a house glyph but callers
+    /// pass the item's own icon. Purely additive — activity docs are plain text, so old ones decode.
+    public static func careDone(
+        item: String, task: String? = nil, by name: String?, actorID: String?, symbol: String = "house.fill"
+    ) -> ActivityItem {
         let who = name.map { "\($0) " } ?? ""
-        return ActivityItem(text: "\(who)took care of \"\(item)\"", systemImage: symbol, actorID: actorID)
+        return ActivityItem(text: "\(who)\(careVerb(forTask: task)) \"\(item)\"", systemImage: symbol, actorID: actorID)
+    }
+
+    /// The past-tense verb for a care-task completion, keyed off the task title. Kept liberal
+    /// (substring match, case-insensitive) so "Water", "Water thoroughly", "Deep water" all read
+    /// "watered". Falls back to the kind-agnostic "took care of". Public so plant rows can reuse it
+    /// for their "Watered Jul 2 by …" done line.
+    public static func careVerb(forTask task: String?) -> String {
+        guard let t = task?.lowercased() else { return "took care of" }
+        if t.contains("water") { return "watered" }
+        if t.contains("feed") || t.contains("fertil") { return "fed" }
+        if t.contains("mist") { return "misted" }
+        return "took care of"
     }
 }

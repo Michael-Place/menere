@@ -172,6 +172,7 @@ let package = Package(
                 "MenereUI",
                 "FamilyDomain",
                 "PersistenceClient",
+                "StorageClient",
                 "UserDomain",
             ]
         ),

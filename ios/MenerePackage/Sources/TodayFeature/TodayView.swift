@@ -415,7 +415,9 @@ public struct TodayView: View {
                 .accessibilityIdentifier("today-house-happy")
             } else {
                 card {
-                    cardHeader("Home care", symbol: "house")
+                    // Retitled "Care due" (P9): plants and house upkeep mix here. Each row already
+                    // carries its own kind icon (leaf for plants, house glyphs for upkeep).
+                    cardHeader("Care due", symbol: "checklist.checked")
                     VStack(spacing: 12) {
                         ForEach(Array(due.prefix(3))) { item in
                             TodayCareRow(due: item) {
@@ -629,15 +631,18 @@ private struct TodayCareRow: View {
             Button {
                 onMarkDone()
                 slapOn = true
-                Task { try? await Task.sleep(for: .milliseconds(700)); slapOn = false }
+                Task { try? await Task.sleep(for: .milliseconds(800)); slapOn = false }
             } label: {
-                Image(systemName: "checkmark.circle.fill")
+                // Plants unfurl a droplet; house upkeep keeps the sticker-slap.
+                let isPlant = due.item.kind == .plant
+                Image(systemName: isPlant ? "drop.fill" : "checkmark.circle.fill")
                     .font(.title3)
                     .foregroundStyle(Color.bacanGreen)
-                    .stickerSlap(isOn: slapOn, color: .bacanGreen)
+                    .stickerSlap(isOn: isPlant ? false : slapOn, color: .bacanGreen)
+                    .leafUnfurl(isOn: isPlant ? slapOn : false, color: .bacanGreen)
             }
             .buttonStyle(.pressable)
-            .accessibilityLabel("Mark done")
+            .accessibilityLabel(due.item.kind == .plant ? "Water" : "Mark done")
             .accessibilityIdentifier("today-care-mark-done-\(due.item.id)")
         }
     }

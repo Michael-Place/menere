@@ -2,6 +2,7 @@ import ComposableArchitecture
 import FamilyDomain
 import MenereUI
 import PersistenceClient
+import StorageClient
 import SwiftUI
 import UserDomain
 
@@ -14,8 +15,12 @@ public struct ChoresReducer {
         var stats: [MemberStats] = []
         var rewards: [Reward] = []
         var activity: [ActivityItem] = []
-        // P8 — House care: recurring upkeep, no XP, tracked by who-did-it-last.
+        // P8 — House care: recurring upkeep, no XP, tracked by who-did-it-last. P9 adds plant
+        // `CareItem`s (kind == .plant) into the same array — the view splits them into sections.
         var careItems: [CareItem] = []
+        /// Plant photo bytes, keyed by Storage `photoPath` (light in-memory cache; mirrors the docs
+        /// page cache). Loaded after `careItems` land so plant rows render a real thumbnail.
+        var carePhotos: [String: Data] = [:]
         /// In-memory only: the starter-suggestions card comes back on relaunch (acceptable for a
         /// private app; persisting the dismissal is a possible later polish).
         var careSuggestionsDismissed = false
@@ -54,6 +59,9 @@ public struct ChoresReducer {
         case markCareTaskDone(itemID: String, taskID: String)
         case careSuggestionTapped(CareSuggestion)
         case dismissCareSuggestions
+        // P9 — Plants
+        case addPlantTapped
+        case carePhotosLoaded([String: Data])
         case form(PresentationAction<ChoreFormReducer.Action>)
         case careForm(PresentationAction<CareItemFormReducer.Action>)
         case binding(BindingAction<State>)
@@ -114,6 +122,20 @@ public struct ChoresReducer {
                 state.rewards = rewards.sorted { $0.xpCost < $1.xpCost }
                 state.activity = activity
                 state.careItems = Self.sortedCare(careItems)
+                // Fetch plant photos (kind-agnostic: any care item with a photoPath) into the cache.
+                let photoPaths = careItems.compactMap(\.photoPath).filter { !$0.isEmpty }
+                guard !photoPaths.isEmpty else { return .none }
+                return .run { send in
+                    @Dependency(\.storage) var storage
+                    var loaded: [String: Data] = [:]
+                    for path in photoPaths where loaded[path] == nil {
+                        if let data = try? await storage.downloadData(path) { loaded[path] = data }
+                    }
+                    await send(.carePhotosLoaded(loaded))
+                }
+
+            case let .carePhotosLoaded(map):
+                state.carePhotos.merge(map) { _, new in new }
                 return .none
 
             case let .statsUpdated(stats):
@@ -193,6 +215,18 @@ public struct ChoresReducer {
             case .addCareItemTapped:
                 state.careForm = CareItemFormReducer.State(
                     item: CareItem(name: "", tasks: [CareTask(title: "")]),
+                    isEditing: false
+                )
+                return .none
+
+            case .addPlantTapped:
+                // A new plant pre-fills one weekly "Water" task; the form shows plant-flavored
+                // icon/interval sets, a photo picker, and species/notes (kind == .plant).
+                state.careForm = CareItemFormReducer.State(
+                    item: CareItem(
+                        kind: .plant, name: "", iconSymbol: "leaf.fill",
+                        tasks: [CareTask(title: "Water", intervalDays: 7)]
+                    ),
                     isEditing: false
                 )
                 return .none

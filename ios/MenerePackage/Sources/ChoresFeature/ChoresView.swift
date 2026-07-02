@@ -2,6 +2,7 @@ import ComposableArchitecture
 import FamilyDomain
 import MenereUI
 import SwiftUI
+import UIKit
 import UserDomain
 
 public struct ChoresView: View {
@@ -11,9 +12,16 @@ public struct ChoresView: View {
         self.store = store
     }
 
+    /// Non-plant care (house/zone) — the House-care section's rows.
+    private var houseItems: [CareItem] { store.careItems.filter { $0.kind != .plant } }
+    /// Plant care items — the Plants section's rows.
+    private var plantItems: [CareItem] { store.careItems.filter { $0.kind == .plant } }
+
     public var body: some View {
         List {
             Section("House care") {
+                // The health banner is kind-agnostic: it rolls up *all* care items (plants flow in
+                // automatically), while the rows below show only house/zone upkeep.
                 if store.careItems.isEmpty {
                     if store.careSuggestionsDismissed {
                         Text("Nothing under care yet — add the first thing you always forget.")
@@ -23,7 +31,7 @@ public struct ChoresView: View {
                     }
                 } else {
                     HouseHealthBanner(health: CareItem.houseHealth(for: store.careItems))
-                    ForEach(store.careItems) { item in
+                    ForEach(houseItems) { item in
                         CareRow(
                             item: item,
                             members: store.members,
@@ -44,6 +52,26 @@ public struct ChoresView: View {
                 }
                 .buttonStyle(.pressable)
                 .accessibilityIdentifier("add-care-item-button")
+            }
+            .listRowBackground(Color.familySurface)
+
+            Section("Plants") {
+                if plantItems.isEmpty {
+                    plantsEmptyCard
+                } else {
+                    ForEach(plantItems) { item in
+                        PlantRow(
+                            item: item,
+                            members: store.members,
+                            photo: item.photoPath.flatMap { store.carePhotos[$0] },
+                            onEdit: { store.send(.editCareItemTapped(item)) },
+                            onMarkDone: { taskID in
+                                store.send(.markCareTaskDone(itemID: item.id, taskID: taskID))
+                            }
+                        )
+                    }
+                    addPlantButton
+                }
             }
             .listRowBackground(Color.familySurface)
 
@@ -265,6 +293,162 @@ public struct ChoresView: View {
             .accessibilityIdentifier("dismiss-care-suggestions")
         }
         .padding(.vertical, 4)
+    }
+
+    // MARK: Plants (P9)
+
+    private var plantsEmptyCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                Image(systemName: "leaf.fill").foregroundStyle(Color.bacanGreen)
+                Text("No plants yet")
+                    .font(.headline).foregroundStyle(Color.ink)
+            }
+            Text("Add the monstera before it judges you.")
+                .font(.caption).foregroundStyle(Color.inkSoft)
+            addPlantButton
+        }
+        .padding(.vertical, 4)
+    }
+
+    private var addPlantButton: some View {
+        Button {
+            store.send(.addPlantTapped)
+        } label: {
+            Label("Add a plant", systemImage: "plus")
+                .appearBounce()
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.pressable)
+        .accessibilityIdentifier("add-plant-button")
+    }
+}
+
+/// A single Plants row: circular photo thumbnail (or a leaf fallback), name, species, the soonest
+/// task's due line (task-title-driven verb wording — "Water due today" / "Watered Jul 2 by …"), and
+/// a water-drop mark-done affordance that plays the ``LeafUnfurl`` motion. Routes through the same
+/// `markCareTaskDone` → ``CareCompletion``/`writeCareDone` path as House care.
+private struct PlantRow: View {
+    let item: CareItem
+    let members: [HouseholdMember]
+    /// Cached photo bytes for `item.photoPath`, if loaded. `nil` ⇒ leaf fallback.
+    let photo: Data?
+    let onEdit: () -> Void
+    let onMarkDone: (_ taskID: String) -> Void
+
+    @State private var unfurlOn = false
+
+    private var soonest: CareTask? { item.soonestDueTask() }
+
+    var body: some View {
+        HStack(spacing: 12) {
+            thumbnail
+                .frame(width: 44, height: 44)
+                .clipShape(Circle())
+
+            Button(action: onEdit) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(item.name).foregroundStyle(Color.ink)
+                    speciesLine
+                    dueLine
+                }
+            }
+            .buttonStyle(.plain)
+
+            Spacer()
+
+            if let task = soonest {
+                Button {
+                    onMarkDone(task.id)
+                    unfurlOn = true
+                    Task { try? await Task.sleep(for: .milliseconds(800)); unfurlOn = false }
+                } label: {
+                    Image(systemName: "drop.fill")
+                        .font(.title3)
+                        .foregroundStyle(Color.bacanGreen)
+                        .leafUnfurl(isOn: unfurlOn, color: .bacanGreen)
+                }
+                .buttonStyle(.pressable)
+                .accessibilityLabel("Water")
+                .accessibilityIdentifier("plant-mark-done-\(item.id)")
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var thumbnail: some View {
+        if let photo, let image = UIImage(data: photo) {
+            Image(uiImage: image)
+                .resizable()
+                .scaledToFill()
+        } else {
+            ZStack {
+                Circle().fill(Color.bacanGreen.opacity(0.15))
+                Image(systemName: "leaf.fill").foregroundStyle(Color.bacanGreen)
+            }
+        }
+    }
+
+    /// Species / botanical line. A botanical (latin) name renders italic; a plain common name doesn't.
+    @ViewBuilder
+    private var speciesLine: some View {
+        if let latin = item.speciesLatin, !latin.isEmpty {
+            Text(latin).font(.caption2).italic().foregroundStyle(Color.inkSoft)
+        } else if let species = item.species, !species.isEmpty {
+            Text(species).font(.caption2).foregroundStyle(Color.inkSoft)
+        }
+    }
+
+    /// Due line copy + color, task-title-driven. Domain gives the day math; the view owns voice.
+    @ViewBuilder
+    private var dueLine: some View {
+        if let task = soonest {
+            let days = task.daysUntilDue()
+            if let d = days, d < 0 {
+                Text("\(task.title) overdue by \(-d) day\(-d == 1 ? "" : "s")")
+                    .font(.caption).fontWeight(.semibold).foregroundStyle(Color.terracotta)
+            } else if days == 0 {
+                Text("\(task.title) due today")
+                    .font(.caption).fontWeight(.semibold).foregroundStyle(Color.bacanGreen)
+            } else if let d = days {
+                // Due in the future.
+                if task.lastDoneAt != nil {
+                    Text(doneText(task)).font(.caption).foregroundStyle(Color.inkSoft)
+                } else {
+                    Text("\(task.title) due in \(d) day\(d == 1 ? "" : "s")")
+                        .font(.caption).foregroundStyle(Color.inkSoft)
+                }
+            } else {
+                // Manual / seasonal (no interval).
+                if task.lastDoneAt != nil {
+                    Text(doneText(task)).font(.caption).foregroundStyle(Color.inkSoft)
+                } else {
+                    Text("Mark it when you do it").font(.caption).foregroundStyle(Color.inkSoft)
+                }
+            }
+        } else {
+            Text("No tasks yet — tap to add one").font(.caption).foregroundStyle(Color.inkSoft)
+        }
+    }
+
+    /// "Watered Jul 2 by Migueluh" — the completed task's title picks the past-tense verb.
+    private func doneText(_ task: CareTask) -> String {
+        guard let last = task.lastDoneAt else { return "" }
+        let date = last.formatted(.dateTime.month(.abbreviated).day())
+        let verb = ActivityItem.careVerb(forTask: task.title).capitalizedFirst
+        if let by = task.lastDoneBy, let name = members.first(where: { $0.id == by })?.name {
+            return "\(verb) \(date) by \(name)"
+        }
+        return "\(verb) \(date)"
+    }
+}
+
+private extension String {
+    /// Uppercase just the first character ("watered" → "Watered"), leaving the rest untouched.
+    var capitalizedFirst: String {
+        guard let first else { return self }
+        return first.uppercased() + dropFirst()
     }
 }
 

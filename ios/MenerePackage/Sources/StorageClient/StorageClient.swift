@@ -27,6 +27,12 @@ public struct StorageClient: Sendable {
     /// Fetch the raw bytes of a Storage object by path — used to render member-gated document pages
     /// (resolved through an authenticated ref, not a public download URL). Capped at 12 MB/page.
     public var downloadData: @Sendable (_ path: String) async throws -> Data
+
+    // MARK: Care items (P9 — plant photos, kind-agnostic)
+    /// Upload a JPEG photo for a ``CareItem`` and return its **Storage path** (member-gated, like
+    /// documents). Stored at `households/{hid}/care/{itemId}/photo.jpg` — a single canonical path per
+    /// item, so re-uploading replaces the previous photo.
+    public var uploadCarePhoto: @Sendable (_ hid: String, _ itemId: String, _ data: Data) async throws -> String
 }
 
 extension StorageClient: DependencyKey {
@@ -64,6 +70,14 @@ extension StorageClient: DependencyKey {
             },
             downloadData: { path in
                 try await Storage.storage().reference().child(path).data(maxSize: 12 * 1024 * 1024)
+            },
+            uploadCarePhoto: { hid, itemId, data in
+                let path = "households/\(hid)/care/\(itemId)/photo.jpg"
+                let ref = Storage.storage().reference().child(path)
+                let metadata = StorageMetadata()
+                metadata.contentType = "image/jpeg"
+                _ = try await ref.putDataAsync(data, metadata: metadata)
+                return path
             }
         )
     }()
@@ -79,7 +93,10 @@ extension StorageClient: DependencyKey {
             "households/\(hid)/documents/\(docId)/document.pdf"
         },
         deletePaths: { _ in },
-        downloadData: { _ in Data() }
+        downloadData: { _ in Data() },
+        uploadCarePhoto: { hid, itemId, _ in
+            "households/\(hid)/care/\(itemId)/photo.jpg"
+        }
     )
 }
 

@@ -20,8 +20,9 @@ public enum CareCompletion {
     }
 
     /// Mark the task `taskID` inside `item` done by `uid`: stamp `lastDoneAt`/`lastDoneBy` and build a
-    /// "took care of …" activity item attributed to the actor's name (looked up in `members`) and
-    /// carrying the item's own icon. Returns `nil` if the task isn't found.
+    /// verb-appropriate activity item ("watered "Monstera"" / "took care of "HVAC filter"") attributed
+    /// to the actor's name (looked up in `members`) and carrying the item's own icon. The verb is
+    /// picked from the completed task's title. Returns `nil` if the task isn't found.
     public static func markDone(
         item: CareItem, taskID: String, byMemberID uid: String,
         members: [HouseholdMember], now: Date = Date()
@@ -31,7 +32,10 @@ public enum CareCompletion {
         updated.tasks[t].lastDoneAt = now
         updated.tasks[t].lastDoneBy = uid
         let actorName = members.first { $0.id == uid }?.name
-        let activity = ActivityItem.careDone(item: item.name, by: actorName, actorID: uid, symbol: item.iconSymbol)
+        let activity = ActivityItem.careDone(
+            item: item.name, task: item.tasks[t].title,
+            by: actorName, actorID: uid, symbol: item.iconSymbol
+        )
         return Outcome(updated: updated, activity: activity)
     }
 }

@@ -35,10 +35,15 @@ public enum CareKind: String, Codable, CaseIterable, Sendable, Equatable {
 /// codebase computes derived values (see `Chore.effectiveXP`, `MemberStats.levelProgress`) rather
 /// than persisting them, so there's no stale `dueAt` to reconcile.
 ///
-/// First-due convention: a task with an interval that has **never been done** (`lastDoneAt == nil`)
-/// is treated as **due today** — you haven't done it yet, so it needs doing. A never-done task is
-/// *due* but not *overdue* (there's no missed anchor to be late against). A task with **no
-/// interval** (`intervalDays == nil`) is seasonal/manual: it never becomes automatically due.
+/// Due-anchor convention (interval tasks only — a `nil`-interval task is seasonal/manual and never
+/// auto-due). The next-due date resolves in priority order:
+///   1. **Done before** (`lastDoneAt != nil`): due = `lastDoneAt + intervalDays`.
+///   2. **Never done, but anchored** (`firstDueAt != nil`): due = `firstDueAt` — an explicit first
+///      due date (P9-C3 uses this for seasonal windows, e.g. "first prune in March").
+///   3. **Never done, no anchor**: **due today** — you haven't done it yet, so it needs doing.
+/// A task is *overdue* only when it has a real anchor (a prior completion **or** a `firstDueAt`)
+/// that's in the past. An un-anchored never-done task is *due*, not *overdue* — nothing to be late
+/// against.
 public struct CareTask: Codable, Equatable, Identifiable, Sendable {
     public var id: String
     public var title: String
@@ -47,19 +52,25 @@ public struct CareTask: Codable, Equatable, Identifiable, Sendable {
     public var lastDoneAt: Date?
     /// The uid of whoever last marked it done.
     public var lastDoneBy: String?
+    /// An explicit first-due anchor for a task that's never been done — the due date to use until
+    /// the first completion stamps `lastDoneAt`. `nil` = fall back to "due today". Decode-safe
+    /// additive field (P9); P9-C3 sets it for seasonal windows.
+    public var firstDueAt: Date?
 
     public init(
         id: String = UUID().uuidString,
         title: String,
         intervalDays: Int? = 30,
         lastDoneAt: Date? = nil,
-        lastDoneBy: String? = nil
+        lastDoneBy: String? = nil,
+        firstDueAt: Date? = nil
     ) {
         self.id = id
         self.title = title
         self.intervalDays = intervalDays
         self.lastDoneAt = lastDoneAt
         self.lastDoneBy = lastDoneBy
+        self.firstDueAt = firstDueAt
     }
 
     public init(from decoder: Decoder) throws {
@@ -69,24 +80,28 @@ public struct CareTask: Codable, Equatable, Identifiable, Sendable {
         intervalDays = try c.decodeIfPresent(Int.self, forKey: .intervalDays)
         lastDoneAt = try c.decodeIfPresent(Date.self, forKey: .lastDoneAt)
         lastDoneBy = try c.decodeIfPresent(String.self, forKey: .lastDoneBy)
+        firstDueAt = try c.decodeIfPresent(Date.self, forKey: .firstDueAt)
     }
 
     /// `true` when there's no cadence — seasonal / manual.
     public var isManual: Bool { intervalDays == nil }
 
-    /// Computed next-due date (`lastDoneAt + intervalDays`). `nil` for a manual task or a
-    /// never-done task (no anchor to add the interval to — see `daysUntilDue` for the never-done
-    /// "due today" convention).
+    /// Computed next-due date. `lastDoneAt + intervalDays` once done; otherwise the `firstDueAt`
+    /// anchor when set; `nil` for a manual task or an un-anchored never-done task (see
+    /// `daysUntilDue` for the never-done "due today" convention).
     public var dueAt: Date? {
-        guard let intervalDays, let lastDoneAt else { return nil }
-        return Calendar.current.date(byAdding: .day, value: intervalDays, to: lastDoneAt)
+        guard let intervalDays else { return nil }   // manual: never auto-due
+        if let lastDoneAt {
+            return Calendar.current.date(byAdding: .day, value: intervalDays, to: lastDoneAt)
+        }
+        return firstDueAt   // never done → explicit anchor, or nil ⇒ "due today" in daysUntilDue
     }
 
     /// Whole days until due: `> 0` future, `0` due today, `< 0` overdue. `nil` for manual tasks.
-    /// A never-done interval task returns `0` (due today) per the first-due convention.
+    /// An un-anchored never-done interval task returns `0` (due today) per the convention above.
     public func daysUntilDue(now: Date = Date()) -> Int? {
         guard intervalDays != nil else { return nil }
-        guard let due = dueAt else { return 0 }   // never done → due today
+        guard let due = dueAt else { return 0 }   // never done, no anchor → due today
         let cal = Calendar.current
         return cal.dateComponents(
             [.day],
@@ -101,9 +116,11 @@ public struct CareTask: Codable, Equatable, Identifiable, Sendable {
         return days <= 0
     }
 
-    /// `true` only when a real due date has passed — a never-done task is *due*, not *overdue*.
+    /// `true` only when a real anchor (a prior completion **or** a `firstDueAt`) has passed — an
+    /// un-anchored never-done task is *due*, not *overdue*.
     public func isOverdue(now: Date = Date()) -> Bool {
-        guard lastDoneAt != nil, let days = daysUntilDue(now: now) else { return false }
+        guard lastDoneAt != nil || firstDueAt != nil else { return false }
+        guard let days = daysUntilDue(now: now) else { return false }
         return days < 0
     }
 }
@@ -121,6 +138,15 @@ public struct CareItem: Codable, Equatable, Identifiable, Sendable {
     public var location: String?
     public var tasks: [CareTask]
     public var createdAt: Date
+    /// Storage path of the item's photo (`households/{hid}/care/{id}/photo.jpg`). Plant-flavored
+    /// (P9) but kind-agnostic. Decode-safe additive field.
+    public var photoPath: String?
+    /// Free-text species / common name (plants), e.g. "Monstera". C2 fills this from AI identify.
+    public var species: String?
+    /// Latin / botanical name, e.g. "Monstera deliciosa" — rendered italic when present.
+    public var speciesLatin: String?
+    /// Free-text care notes ("bright indirect light, let the top inch dry out").
+    public var careNotes: String?
 
     public init(
         id: String = UUID().uuidString,
@@ -129,7 +155,11 @@ public struct CareItem: Codable, Equatable, Identifiable, Sendable {
         iconSymbol: String = "house.fill",
         location: String? = nil,
         tasks: [CareTask] = [],
-        createdAt: Date = Date()
+        createdAt: Date = Date(),
+        photoPath: String? = nil,
+        species: String? = nil,
+        speciesLatin: String? = nil,
+        careNotes: String? = nil
     ) {
         self.id = id
         self.kind = kind
@@ -138,6 +168,10 @@ public struct CareItem: Codable, Equatable, Identifiable, Sendable {
         self.location = location
         self.tasks = tasks
         self.createdAt = createdAt
+        self.photoPath = photoPath
+        self.species = species
+        self.speciesLatin = speciesLatin
+        self.careNotes = careNotes
     }
 
     public init(from decoder: Decoder) throws {
@@ -149,6 +183,10 @@ public struct CareItem: Codable, Equatable, Identifiable, Sendable {
         location = try c.decodeIfPresent(String.self, forKey: .location)
         tasks = try c.decodeIfPresent([CareTask].self, forKey: .tasks) ?? []
         createdAt = try c.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
+        photoPath = try c.decodeIfPresent(String.self, forKey: .photoPath)
+        species = try c.decodeIfPresent(String.self, forKey: .species)
+        speciesLatin = try c.decodeIfPresent(String.self, forKey: .speciesLatin)
+        careNotes = try c.decodeIfPresent(String.self, forKey: .careNotes)
     }
 
     /// The task that drives the collapsed row: the soonest-due one. Interval tasks sort by days
@@ -161,12 +199,28 @@ public struct CareItem: Codable, Equatable, Identifiable, Sendable {
 
     // MARK: Form pickers (UI-free option data)
 
-    /// Curated SF Symbols for the care-item icon grid (house/zone flavor).
+    /// Curated SF Symbols for the care-item icon grid (house/zone flavor). Kept for existing call
+    /// sites; new code should prefer ``iconOptions(for:)`` so plants get their own set.
     public static let iconOptions: [String] = [
         "house.fill", "wind", "drop.fill", "sparkles", "shower.fill", "bathtub.fill",
         "bed.double.fill", "sink.fill", "washer.fill", "fanblades.fill", "flame.fill", "spigot.fill",
         "trash.fill", "leaf.fill", "paintbrush.fill", "hammer.fill",
     ]
+
+    /// Plant-flavored icon grid — leaf/drop/sun symbols instead of house upkeep glyphs.
+    public static let plantIconOptions: [String] = [
+        "leaf.fill", "camera.macro", "tree.fill", "drop.fill", "humidity.fill", "sun.max.fill",
+        "cloud.rain.fill", "sparkles", "ladybug.fill", "scissors", "fanblades.fill", "wind",
+    ]
+
+    /// The icon set for a given care kind. Plants get leaf/drop/sun flavor; everything else keeps
+    /// the house/zone set (no behavior change for existing House-care call sites).
+    public static func iconOptions(for kind: CareKind) -> [String] {
+        switch kind {
+        case .plant: return plantIconOptions
+        default: return iconOptions
+        }
+    }
 
     // MARK: House-health rollup (UI-free — the same math powers the Home banner and Today card)
 
@@ -213,8 +267,21 @@ public struct CareItem: Codable, Equatable, Identifiable, Sendable {
         return .caughtUp
     }
 
-    /// The interval choices offered in the task cadence picker (`nil` = seasonal / manual).
+    /// The interval choices offered in the task cadence picker (`nil` = seasonal / manual). Kept for
+    /// existing call sites; new code should prefer ``intervalChoices(for:)``.
     public static let intervalChoices: [Int?] = [7, 14, 30, 60, 90, 180, nil]
+
+    /// Plant watering-ish cadences — tighter intervals than house upkeep.
+    public static let plantIntervalChoices: [Int?] = [2, 3, 5, 7, 10, 14, 30, nil]
+
+    /// The cadence choices for a given care kind. Plants get short watering intervals; everything
+    /// else keeps the house/zone set (no behavior change for existing call sites).
+    public static func intervalChoices(for kind: CareKind) -> [Int?] {
+        switch kind {
+        case .plant: return plantIntervalChoices
+        default: return intervalChoices
+        }
+    }
 
     /// A human label for a cadence value, used by the picker and row copy.
     public static func intervalLabel(_ days: Int?) -> String {
