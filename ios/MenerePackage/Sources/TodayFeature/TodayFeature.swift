@@ -5,6 +5,7 @@ import HueClient
 import LocationClient
 import LutronClient
 import MenereUI
+import NestClient
 import PersistenceClient
 import UserDomain
 
@@ -107,6 +108,9 @@ public struct TodayReducer {
         /// Sonos discovers live off the LAN with no pairing; the doc only forces the mock or carries a
         /// cosmetic room order. Passed into `HouseView`, which discovers speakers on appear.
         var sonosConfig: SonosConfig?
+        /// The household's Nest config (P15-C3), loaded independently alongside the house card. Passed
+        /// into `HouseView`, which loads live thermostat state on appear. Nil = Nest not set up.
+        var nestConfig: NestConfig?
         /// The ritual key whose scene recall is in flight (drives the button's pending state).
         var recallingRitual: String?
         /// The ritual key that just succeeded — drives the checkmark morph + success haptic until
@@ -166,6 +170,9 @@ public struct TodayReducer {
         /// Load the optional Sonos config (independent, non-blocking). Absent → still live-discovers.
         case loadSonosConfig
         case sonosConfigLoaded(SonosConfig?)
+        /// Load the Nest config (independent, non-blocking). Absent → the Climate section hides.
+        case loadNestConfig
+        case nestConfigLoaded(NestConfig?)
         /// Recall a ritual's scene (Bedtime / Dinner's ready).
         case recallRitual(HueRitual)
         case ritualRecallFinished(key: String)
@@ -256,6 +263,8 @@ public struct TodayReducer {
                     .send(.loadLutronConfig),
                     // Sonos config (P15-C2) — optional; HouseView discovers speakers regardless.
                     .send(.loadSonosConfig),
+                    // Nest config (P15-C3) — for HouseView's Climate section.
+                    .send(.loadNestConfig),
                     // Ask once so tonight's drive time can resolve (idempotent; no-op if determined).
                     .run { _ in
                         @Dependency(\.location) var location
@@ -440,6 +449,18 @@ public struct TodayReducer {
 
             case let .sonosConfigLoaded(config):
                 state.sonosConfig = config
+                return .none
+
+            case .loadNestConfig:
+                guard let hid = hid() else { return .none }
+                return .run { send in
+                    @Dependency(\.persistence) var persistence
+                    let config = try? await persistence.nestConfig(hid)
+                    await send(.nestConfigLoaded(config ?? nil))
+                }
+
+            case let .nestConfigLoaded(config):
+                state.nestConfig = config
                 return .none
 
             case let .recallRitual(ritual):

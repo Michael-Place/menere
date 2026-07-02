@@ -3,6 +3,7 @@ import FamilyDomain
 import Foundation
 import HueClient
 import LutronClient
+import NestClient
 import SonosClient
 
 /// The granular House control surface (P12-C4) — the SUBSTRATE future family experiences (and the
@@ -48,10 +49,18 @@ public struct HouseReducer {
         /// optimistically and re-synced on refresh. Discovered on `.task`; empty = no speakers / not home.
         public var sonosGroups: [SonosGroup] = []
 
+        // MARK: Nest thermostat (P15-C3)
+        /// The household's Nest config (nil = not set up). Stable for the screen's lifetime.
+        public var nestConfig: NestConfig?
+        /// Live thermostat state, mutated optimistically and re-synced on refresh. Loaded on `.task`;
+        /// empty = not set up / unreachable (silent degrade).
+        public var thermostats: [NestThermostat] = []
+
         public init(
             config: HueConfig, members: [HouseholdMember] = [], bridges: [BridgeSnapshot] = [],
             lutronConfig: LutronConfig? = nil, shades: [LutronShade] = [],
-            sonosConfig: SonosConfig? = nil, sonosGroups: [SonosGroup] = []
+            sonosConfig: SonosConfig? = nil, sonosGroups: [SonosGroup] = [],
+            nestConfig: NestConfig? = nil, thermostats: [NestThermostat] = []
         ) {
             self.config = config
             self.members = members
@@ -60,6 +69,8 @@ public struct HouseReducer {
             self.shades = shades
             self.sonosConfig = sonosConfig
             self.sonosGroups = sonosGroups
+            self.nestConfig = nestConfig
+            self.thermostats = thermostats
         }
 
         /// Shades grouped by area/room name, each group's shades sorted by name — the House "Shades"
@@ -136,6 +147,15 @@ public struct HouseReducer {
         /// Volume slider moved (0–100). Optimistic + debounced commit (same ≥150ms floor as sliders).
         case sonosVolumeChanged(groupId: String, volume: Int)
         case commitSonosVolume(groupId: String, volume: Int)
+
+        // Nest thermostat (P15-C3)
+        case nestReloaded([NestThermostat])
+        /// A −/+ stepper tap on a thermostat setpoint (±1 °F). Optimistic + debounced commit (≥300ms).
+        case nestSetpointStepped(deviceName: String, kind: NestSetpointKind, deltaF: Int)
+        /// The debounced commit, fired ≥300ms after the last stepper tap.
+        case commitNestSetpoint(deviceName: String)
+        /// Change a thermostat's mode (optimistic; commits immediately). P14 seam over `setMode`.
+        case setNestMode(deviceName: String, mode: NestMode)
     }
 
     public init() {}
@@ -143,10 +163,14 @@ public struct HouseReducer {
     @Dependency(\.hue) var hue
     @Dependency(\.lutron) var lutron
     @Dependency(\.sonos) var sonos
+    @Dependency(\.nest) var nest
     @Dependency(\.continuousClock) var clock
 
     /// ≥150ms between slider PUTs (the required floor). One quiescent tick, then one write.
     static let sliderDebounce: Duration = .milliseconds(150)
+    /// ≥300ms after the last thermostat stepper tap before a single SDM command lands (SDM is a cloud
+    /// call — a coarser debounce than the LAN sliders so a −−−+ flurry collapses to one write).
+    static let stepperDebounce: Duration = .milliseconds(300)
 
     private enum CancelID: Hashable {
         case refresh
@@ -156,6 +180,8 @@ public struct HouseReducer {
         case shadeLevel(String)
         case sonosRefresh
         case sonosVolume(String)
+        case nestRefresh
+        case nestSetpoint(String)
     }
 
     public var body: some ReducerOf<Self> {
@@ -166,6 +192,7 @@ public struct HouseReducer {
                 let bridges = state.config.bridges
                 let lutronConfig = state.lutronConfig
                 let sonosConfig = state.sonosConfig
+                let nestConfig = state.nestConfig
                 return .merge(
                     .run { send in
                         let snapshots = await hue.readHouse(bridges)
@@ -191,7 +218,15 @@ public struct HouseReducer {
                         }
                         await send(.sonosReloaded(groups))
                     }
-                    .cancellable(id: CancelID.sonosRefresh, cancelInFlight: true)
+                    .cancellable(id: CancelID.sonosRefresh, cancelInFlight: true),
+                    // Thermostats load independently (P15-C3) — a Nest cloud hiccup never blocks the
+                    // lights/shades/speakers. Nil config or an error → empty → the Climate section hides.
+                    .run { send in
+                        guard let nestConfig, nestConfig.isConnected else { return }
+                        let thermostats = (try? await nest.thermostats(nestConfig)) ?? []
+                        await send(.nestReloaded(thermostats))
+                    }
+                    .cancellable(id: CancelID.nestRefresh, cancelInFlight: true)
                 )
 
             case let .houseReloaded(snapshots):
@@ -276,6 +311,40 @@ public struct HouseReducer {
                 let coordinator = group.coordinator
                 let config = state.sonosConfig
                 return .run { _ in try? await sonos.setVolume(config, coordinator, volume) }
+
+            // MARK: Nest thermostat (P15-C3)
+
+            case let .nestReloaded(thermostats):
+                state.thermostats = thermostats
+                return .none
+
+            case let .nestSetpointStepped(deviceName, kind, deltaF):
+                guard state.nestConfig != nil,
+                      let i = state.thermostats.firstIndex(where: { $0.id == deviceName }),
+                      let current = state.thermostats[i].setpointF(kind) else { return .none }
+                // Optimistic: nudge the setpoint locally, then debounce the single SDM command.
+                state.thermostats[i] = state.thermostats[i].settingSetpointF(kind, to: current + deltaF)
+                return .run { send in
+                    try await clock.sleep(for: Self.stepperDebounce)
+                    await send(.commitNestSetpoint(deviceName: deviceName))
+                }
+                .cancellable(id: CancelID.nestSetpoint(deviceName), cancelInFlight: true)
+
+            case let .commitNestSetpoint(deviceName):
+                guard let config = state.nestConfig,
+                      let thermostat = state.thermostats.first(where: { $0.id == deviceName }),
+                      let setpoint = thermostat.commitSetpoint() else { return .none }
+                return .run { _ in
+                    // Best-effort — the section never surfaces an error; a failed write leaves the
+                    // optimistic value to be corrected on the next refresh.
+                    try? await nest.setTemperatureF(config, deviceName, setpoint)
+                }
+
+            case let .setNestMode(deviceName, mode):
+                guard let config = state.nestConfig,
+                      let i = state.thermostats.firstIndex(where: { $0.id == deviceName }) else { return .none }
+                state.thermostats[i] = state.thermostats[i].settingMode(mode)   // optimistic
+                return .run { _ in try? await nest.setMode(config, deviceName, mode) }
 
             case let .toggleRoom(bridgeId, roomId):
                 guard let bi = state.bridges.firstIndex(where: { $0.bridge.bridgeId == bridgeId }),

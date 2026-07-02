@@ -133,6 +133,18 @@ public struct PersistenceClient: Sendable {
     /// Decode-safe (an empty `{}` doc still resolves).
     public var sonosConfig: @Sendable (_ hid: String) async throws -> SonosConfig?
 
+    // MARK: Smart home (Nest) config (P15-C3)
+    /// The household's Nest config at `households/{hid}/config/nest`, or nil when absent (never set up).
+    /// Decode-safe (mock/hand-written docs still resolve). The cheap gate for the House "Climate"
+    /// section — no doc, no thermostats.
+    public var nestConfig: @Sendable (_ hid: String) async throws -> NestConfig?
+    /// Full-document write of the Nest config (P15-C3 setup / reconnect). Not a merge — the whole
+    /// `households/{hid}/config/nest` doc is replaced, so a dropped `mock` flag actually clears.
+    public var saveNestConfig: @Sendable (_ hid: String, _ config: NestConfig) async throws -> Void
+    /// Remove the Nest config doc entirely (Settings "Remove"). The Climate section then silently
+    /// disappears.
+    public var deleteNestConfig: @Sendable (_ hid: String) async throws -> Void
+
     // MARK: Activity feed
     /// Recent activity, newest first (capped at 50).
     public var activity: @Sendable (_ hid: String) async throws -> [ActivityItem]
@@ -436,6 +448,20 @@ extension PersistenceClient: DependencyKey {
                 let s = try await households().document(hid).collection("config").document("sonos").getDocument()
                 guard let d = s.data() else { return nil }
                 return try Firestore.Decoder().decode(SonosConfig.self, from: d)
+            },
+            nestConfig: { hid in
+                let s = try await households().document(hid).collection("config").document("nest").getDocument()
+                guard let d = s.data() else { return nil }
+                return try Firestore.Decoder().decode(NestConfig.self, from: d)
+            },
+            saveNestConfig: { hid, config in
+                // Full-doc replace (merge: false) — same rationale as saveHueConfig / saveLutronConfig.
+                try await households().document(hid).collection("config").document("nest").setData(
+                    Firestore.Encoder().encode(config)
+                )
+            },
+            deleteNestConfig: { hid in
+                try await households().document(hid).collection("config").document("nest").delete()
             },
             activity: { hid in
                 let snapshot = try await households().document(hid).collection("activity")

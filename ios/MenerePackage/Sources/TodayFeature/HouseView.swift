@@ -3,6 +3,7 @@ import FamilyDomain
 import HueClient
 import LutronClient
 import MenereUI
+import NestClient
 import SonosClient
 import SwiftUI
 
@@ -18,14 +19,15 @@ public struct HouseView: View {
     public init(
         config: HueConfig, members: [HouseholdMember], bridges: [BridgeSnapshot],
         lutronConfig: LutronConfig? = nil, shades: [LutronShade] = [],
-        sonosConfig: SonosConfig? = nil
+        sonosConfig: SonosConfig? = nil, nestConfig: NestConfig? = nil
     ) {
         _store = Bindable(
             wrappedValue: Store(
                 initialState: HouseReducer.State(
                     config: config, members: members, bridges: bridges,
                     lutronConfig: lutronConfig, shades: shades,
-                    sonosConfig: sonosConfig
+                    sonosConfig: sonosConfig,
+                    nestConfig: nestConfig
                 )
             ) { HouseReducer() }
         )
@@ -52,6 +54,11 @@ public struct HouseView: View {
                 // Renders nothing when discovery found no speakers (not home / no Sonos) — silent degrade.
                 if !store.sonosGroups.isEmpty {
                     speakersSection(store.sonosGroups)
+                }
+                // Climate section (P15-C3) — one row per Nest thermostat, below the speakers. Renders
+                // nothing when there's no thermostat (not set up / unreachable) — silent degrade.
+                if !store.thermostats.isEmpty {
+                    climateSection(store.thermostats)
                 }
             }
             .padding(.horizontal)
@@ -300,6 +307,144 @@ public struct HouseView: View {
         Image(systemName: "music.note")
             .font(.system(size: 18, weight: .semibold))
             .foregroundStyle(playing ? Color.bacanGreen : Color.inkSoft)
+    }
+
+    // MARK: Climate section (P15-C3)
+
+    private func climateSection(_ thermostats: [NestThermostat]) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text("Climate".uppercased())
+                .font(.system(.caption, design: .rounded).weight(.semibold))
+                .foregroundStyle(Color.inkSoft)
+                .padding(.bottom, 6)
+            VStack(spacing: 0) {
+                ForEach(Array(thermostats.enumerated()), id: \.element.id) { idx, thermostat in
+                    thermostatRow(thermostat)
+                    if idx < thermostats.count - 1 {
+                        Divider().overlay(Color.inkSoft.opacity(0.15)).padding(.leading, 16)
+                    }
+                }
+            }
+            .background(
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .fill(Color.familySurface)
+            )
+        }
+        .accessibilityIdentifier("house-climate")
+    }
+
+    private func thermostatRow(_ thermostat: NestThermostat) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .top, spacing: 12) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(thermostat.roomName)
+                        .font(.system(.body, design: .rounded).weight(.medium))
+                        .foregroundStyle(Color.ink)
+                        .lineLimit(1)
+                    HStack(spacing: 8) {
+                        modeChip(thermostat.mode)
+                        if let humidity = thermostat.humidityInt {
+                            Label("\(humidity)%", systemImage: "humidity")
+                                .font(.system(.caption, design: .rounded))
+                                .foregroundStyle(Color.inkSoft)
+                                .labelStyle(.titleAndIcon)
+                                .accessibilityIdentifier("house-thermostat-humidity-\(thermostat.deviceId)")
+                        }
+                    }
+                }
+                Spacer(minLength: 0)
+                // Big ambient temperature.
+                if let ambientF = thermostat.ambientF {
+                    Text(ambientLabel(ambientF))
+                        .font(.system(size: 34, weight: .semibold, design: .rounded))
+                        .foregroundStyle(Color.ink)
+                        .contentTransition(.numericText())
+                        .accessibilityIdentifier("house-thermostat-ambient-\(thermostat.deviceId)")
+                }
+            }
+            // Setpoint stepper(s): heat/cool → one; Heat·Cool → two; Off → a quiet note.
+            switch thermostat.mode {
+            case .heat:
+                setpointStepper(thermostat, kind: .heat, label: "Set to")
+            case .cool:
+                setpointStepper(thermostat, kind: .cool, label: "Set to")
+            case .heatCool:
+                setpointStepper(thermostat, kind: .heat, label: "Heat to")
+                setpointStepper(thermostat, kind: .cool, label: "Cool to")
+            case .off:
+                Text("Off — no setpoint")
+                    .font(.system(.caption, design: .rounded))
+                    .foregroundStyle(Color.inkSoft)
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .accessibilityIdentifier("house-thermostat-\(thermostat.deviceId)")
+    }
+
+    /// The mode chip — heat=terracotta / cool=sky / auto=bacanGreen / off=ink-soft.
+    private func modeChip(_ mode: NestMode) -> some View {
+        let color: Color = {
+            switch mode {
+            case .heat: return .terracotta
+            case .cool: return .sky
+            case .heatCool: return .bacanGreen
+            case .off: return .inkSoft
+            }
+        }()
+        return Text(mode.label.uppercased())
+            .font(.system(.caption2, design: .rounded).weight(.bold))
+            .foregroundStyle(color)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+            .background(Capsule(style: .continuous).fill(color.opacity(0.16)))
+            .accessibilityIdentifier("house-thermostat-mode-\(mode.rawValue)")
+    }
+
+    /// A labeled −/+ stepper for one setpoint (1 °F steps, optimistic; the reducer debounces the commit).
+    private func setpointStepper(_ thermostat: NestThermostat, kind: NestSetpointKind, label: String) -> some View {
+        let value = thermostat.setpointF(kind)
+        let tint: Color = kind == .heat ? .terracotta : .sky
+        return HStack(spacing: 12) {
+            Text(label)
+                .font(.system(.subheadline, design: .rounded))
+                .foregroundStyle(Color.inkSoft)
+            Spacer(minLength: 0)
+            stepperButton("minus", id: "house-thermostat-\(thermostat.deviceId)-\(kind.rawValue)-minus", tint: tint) {
+                store.send(.nestSetpointStepped(deviceName: thermostat.id, kind: kind, deltaF: -1))
+            }
+            Text(value.map { "\($0)°" } ?? "—")
+                .font(.system(.title3, design: .rounded).weight(.semibold))
+                .foregroundStyle(Color.ink)
+                .contentTransition(.numericText())
+                .monospacedDigit()
+                .frame(minWidth: 44)
+                .accessibilityIdentifier("house-thermostat-\(thermostat.deviceId)-\(kind.rawValue)-value")
+            stepperButton("plus", id: "house-thermostat-\(thermostat.deviceId)-\(kind.rawValue)-plus", tint: tint) {
+                store.send(.nestSetpointStepped(deviceName: thermostat.id, kind: kind, deltaF: 1))
+            }
+        }
+    }
+
+    private func stepperButton(_ systemName: String, id: String, tint: Color, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: systemName)
+                .font(.system(size: 15, weight: .bold))
+                .foregroundStyle(tint)
+                .frame(width: 38, height: 32)
+                .background(Capsule(style: .continuous).fill(tint.opacity(0.16)))
+        }
+        .buttonStyle(.pressable)
+        .accessibilityIdentifier(id)
+    }
+
+    /// Ambient label: whole degrees when it lands on one, else one decimal (e.g. "71.6°").
+    private func ambientLabel(_ f: Double) -> String {
+        let rounded = (f * 10).rounded() / 10
+        if rounded == rounded.rounded() {
+            return "\(Int(rounded))°"
+        }
+        return String(format: "%.1f°", rounded)
     }
 
     // MARK: Room row

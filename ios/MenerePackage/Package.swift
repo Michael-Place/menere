@@ -28,6 +28,7 @@ let package = Package(
         .library(name: "HueClient", targets: ["HueClient"]),
         .library(name: "LutronClient", targets: ["LutronClient"]),
         .library(name: "SonosClient", targets: ["SonosClient"]),
+        .library(name: "NestClient", targets: ["NestClient"]),
         .library(name: "IdentifyClient", targets: ["IdentifyClient"]),
         .library(name: "EnrichmentClient", targets: ["EnrichmentClient"]),
         .library(name: "CatalogClient", targets: ["CatalogClient"]),
@@ -119,6 +120,7 @@ let package = Package(
                 "HouseholdClient",
                 "HueClient",
                 "LutronClient",
+                "NestClient",
             ]
         ),
         .target(
@@ -135,6 +137,7 @@ let package = Package(
                 "HueClient",
                 "LutronClient",
                 "SonosClient",
+                "NestClient",
             ]
         ),
         .target(
@@ -279,6 +282,14 @@ let package = Package(
             ]
         ),
         .target(
+            name: "NestClient",
+            dependencies: [
+                .product(name: "Dependencies", package: "swift-dependencies"),
+                .product(name: "DependenciesMacros", package: "swift-dependencies"),
+                "FamilyDomain",
+            ]
+        ),
+        .target(
             name: "IdentifyClient",
             dependencies: [
                 .product(name: "Dependencies", package: "swift-dependencies"),
@@ -414,6 +425,7 @@ let package = Package(
                 "UserDomain",
                 "HueClient",
                 "LutronClient",
+                "NestClient",
                 "FamilyDomain",
             ]
         ),
@@ -451,6 +463,13 @@ let package = Package(
             ]
         ),
         .testTarget(
+            name: "NestClientTests",
+            dependencies: [
+                "NestClient",
+                "FamilyDomain",
+            ]
+        ),
+        .testTarget(
             name: "TodayFeatureTests",
             dependencies: [
                 .product(name: "ComposableArchitecture", package: "swift-composable-architecture"),
@@ -458,6 +477,7 @@ let package = Package(
                 "HueClient",
                 "LutronClient",
                 "SonosClient",
+                "NestClient",
                 "FamilyDomain",
             ]
         ),

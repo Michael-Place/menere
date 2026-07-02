@@ -56,6 +56,19 @@
 				<string>app-1-769612719019-ios-ad91eddc8fa508f7a9a8ee</string>
 			</array>
 		</dict>
+		<dict>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>CFBundleURLName</key>
+			<string>com.copoche.menere.nest</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<!-- Nest SDM OAuth (P15-C3) callback scheme for ASWebAuthenticationSession. The redirect
+				     URI com.copoche.menere.nest:/oauth2redirect must be registered on the Google OAuth
+				     client (see Michael's runbook). Mirrors the firebaseauth entry above. -->
+				<string>com.copoche.menere.nest</string>
+			</array>
+		</dict>
 	</array>
 	<key>UIApplicationSceneManifest</key>
 	<dict>

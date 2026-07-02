@@ -5,6 +5,7 @@ import HouseholdClient
 import HueClient
 import LutronClient
 import MenereUI
+import NestClient
 import PersistenceClient
 import SwiftUI
 import UserDomain
@@ -44,6 +45,15 @@ public struct SettingsReducer {
         /// Live reachability of the Lutron bridge (nil = still probing).
         var lutronReachable: Bool?
         @Presents var lutronPairing: LutronPairingReducer.State?
+
+        // MARK: Smart home (Nest thermostat, P15-C3)
+        /// The household's Nest config, or nil when never set up (→ the "Set up Nest" row).
+        var nestConfig: NestConfig?
+        /// Thermostat count from the first fetch (nil = not yet fetched / not connected).
+        var nestThermostatCount: Int?
+        /// True while the Remove-Nest confirmation dialog is up.
+        var confirmingNestRemove = false
+        @Presents var nestSetup: NestSetupReducer.State?
 
         public init() {}
 
@@ -95,6 +105,16 @@ public struct SettingsReducer {
         case setupLutronTapped
         case rePairLutronTapped
         case lutronPairing(PresentationAction<LutronPairingReducer.Action>)
+
+        // Smart home (Nest thermostat)
+        case nestConfigLoaded(NestConfig?)
+        case nestThermostatsProbed(Int?)
+        case setupNestTapped
+        case reconnectNestTapped
+        case removeNestTapped
+        case confirmRemoveNest
+        case cancelRemoveNest
+        case nestSetup(PresentationAction<NestSetupReducer.Action>)
     }
 
     public init() {}
@@ -151,6 +171,9 @@ public struct SettingsReducer {
                     // Lutron shades config (P15) — same load-then-probe pattern.
                     let lutron = try? await persistence.lutronConfig(hid)
                     await send(.lutronConfigLoaded(lutron ?? nil))
+                    // Nest thermostat config (P15-C3) — load, then (if connected) probe the count.
+                    let nest = try? await persistence.nestConfig(hid)
+                    await send(.nestConfigLoaded(nest ?? nil))
                 }
 
             case let .hueConfigLoaded(config):
@@ -285,6 +308,58 @@ public struct SettingsReducer {
             case .lutronPairing:
                 return .none
 
+            // MARK: Nest thermostat (P15-C3)
+
+            case let .nestConfigLoaded(config):
+                state.nestConfig = config
+                state.nestThermostatCount = nil
+                guard let config, config.isConnected else { return .none }
+                return .run { send in
+                    @Dependency(\.nest) var nest
+                    let thermostats = (try? await nest.thermostats(config)) ?? []
+                    await send(.nestThermostatsProbed(thermostats.isEmpty ? nil : thermostats.count))
+                }
+
+            case let .nestThermostatsProbed(count):
+                state.nestThermostatCount = count
+                return .none
+
+            case .setupNestTapped, .reconnectNestTapped:
+                @Shared(.user) var user
+                guard let hid = user?.householdId else { return .none }
+                state.nestSetup = NestSetupReducer.State(hid: hid, existingConfig: state.nestConfig)
+                return .none
+
+            case .removeNestTapped:
+                state.confirmingNestRemove = true
+                return .none
+
+            case .cancelRemoveNest:
+                state.confirmingNestRemove = false
+                return .none
+
+            case .confirmRemoveNest:
+                state.confirmingNestRemove = false
+                state.nestConfig = nil
+                state.nestThermostatCount = nil
+                @Shared(.user) var user
+                guard let hid = user?.householdId else { return .none }
+                return .run { _ in
+                    @Dependency(\.persistence) var persistence
+                    try? await persistence.deleteNestConfig(hid)
+                }
+
+            case let .nestSetup(.presented(.delegate(.finished(config)))):
+                state.nestSetup = nil
+                return .send(.nestConfigLoaded(config))
+
+            case .nestSetup(.presented(.delegate(.cancelled))):
+                state.nestSetup = nil
+                return .none
+
+            case .nestSetup:
+                return .none
+
             case let .householdLoaded(h):
                 state.isLoadingHousehold = false
                 state.household = h
@@ -352,6 +427,9 @@ public struct SettingsReducer {
         }
         .ifLet(\.$lutronPairing, action: \.lutronPairing) {
             LutronPairingReducer()
+        }
+        .ifLet(\.$nestSetup, action: \.nestSetup) {
+            NestSetupReducer()
         }
     }
 }
@@ -492,6 +570,7 @@ public struct SettingsView: View {
         .sheet(item: $store.scope(state: \.lutronPairing, action: \.lutronPairing)) { pairingStore in
             LutronPairingView(store: pairingStore)
         }
+        .modifier(NestSettingsPresentations(store: store))
         .sheet(isPresented: Binding(
             get: { store.huePickerRitual != nil },
             set: { if !$0 { store.send(.hueRitualTapped(nil)) } }
@@ -548,6 +627,8 @@ public struct SettingsView: View {
 
             // Lutron shades (P15-C1) — below the Hue bridge list.
             lutronRow
+            // Nest thermostat (P15-C3) — below the Lutron shades.
+            nestRow
         } header: {
             Text("Smart home")
         } footer: {
@@ -612,6 +693,67 @@ public struct SettingsView: View {
             }
         case .none:
             ProgressView().controlSize(.mini)
+        }
+    }
+
+    /// The Nest thermostat row (P15-C3): connected → status + thermostat count with Reconnect/Remove
+    /// swipe actions; not set up → "Set up Nest".
+    @ViewBuilder
+    private var nestRow: some View {
+        if let config = store.nestConfig, config.isConnected {
+            HStack(spacing: 12) {
+                Image(systemName: "thermometer.medium")
+                    .foregroundStyle(Color.bacanGreen)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Nest thermostat").foregroundStyle(Color.ink)
+                    Text(nestStatusLine).font(.caption).foregroundStyle(Color.inkSoft)
+                }
+                Spacer()
+                HStack(spacing: 6) {
+                    Circle().fill(Color.bacanGreen).frame(width: 8, height: 8)
+                    Text("Connected").font(.caption).foregroundStyle(Color.inkSoft)
+                }
+            }
+            .accessibilityIdentifier("nest-status-row")
+            .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                Button(role: .destructive) {
+                    store.send(.removeNestTapped)
+                } label: {
+                    Label("Remove", systemImage: "trash")
+                }
+                Button {
+                    store.send(.reconnectNestTapped)
+                } label: {
+                    Label("Reconnect", systemImage: "arrow.triangle.2.circlepath")
+                }
+                .tint(Color.bacanGreen)
+            }
+            .contextMenu {
+                Button { store.send(.reconnectNestTapped) } label: {
+                    Label("Reconnect", systemImage: "arrow.triangle.2.circlepath")
+                }
+                Button(role: .destructive) { store.send(.removeNestTapped) } label: {
+                    Label("Remove", systemImage: "trash")
+                }
+            }
+        } else {
+            Button {
+                store.send(.setupNestTapped)
+            } label: {
+                Label("Set up Nest", systemImage: "thermometer.medium")
+                    .foregroundStyle(Color.ink)
+            }
+            .accessibilityIdentifier("nest-setup-row")
+        }
+    }
+
+    /// The Nest status subtitle: the thermostat count once fetched, else a neutral "Connected".
+    private var nestStatusLine: String {
+        switch store.nestThermostatCount {
+        case let .some(count):
+            return "\(count) thermostat\(count == 1 ? "" : "s")"
+        case .none:
+            return "Connected"
         }
     }
 
@@ -829,5 +971,31 @@ public struct SettingsView: View {
         let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0"
         let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "1"
         return "\(version) (\(build))"
+    }
+}
+
+/// The Nest setup sheet + Remove confirmation, bundled into a modifier so they don't deepen the main
+/// `body` modifier chain (which the type-checker was struggling to solve within its budget).
+private struct NestSettingsPresentations: ViewModifier {
+    @Bindable var store: StoreOf<SettingsReducer>
+
+    func body(content: Content) -> some View {
+        content
+            .sheet(item: $store.scope(state: \.nestSetup, action: \.nestSetup)) { setupStore in
+                NestSetupView(store: setupStore)
+            }
+            .confirmationDialog(
+                "Remove Nest?",
+                isPresented: Binding(
+                    get: { store.confirmingNestRemove },
+                    set: { if !$0 { store.send(.cancelRemoveNest) } }
+                ),
+                titleVisibility: .visible
+            ) {
+                Button("Remove Nest", role: .destructive) { store.send(.confirmRemoveNest) }
+                Button("Cancel", role: .cancel) { store.send(.cancelRemoveNest) }
+            } message: {
+                Text("The thermostat drops off the house screen. Your Google registration stays put — reconnect any time.")
+            }
     }
 }
