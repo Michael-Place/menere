@@ -75,7 +75,7 @@ public struct ProfileEditView: View {
 
                 Section("Color") {
                     LazyVGrid(columns: columns, spacing: 12) {
-                        ForEach(MemberColor.allCases, id: \.self) { color in
+                        ForEach(MemberColor.pickerOrder, id: \.self) { color in
                             let rgb = color.rgb
                             Circle()
                                 .fill(Color(red: rgb.red, green: rgb.green, blue: rgb.blue))
@@ -84,6 +84,9 @@ public struct ProfileEditView: View {
                                     Circle().stroke(Color.ink, lineWidth: store.member.color == color ? 3 : 0)
                                 )
                                 .onTapGesture { store.member.color = color }
+                                .accessibilityElement()
+                                .accessibilityAddTraits(.isButton)
+                                .accessibilityIdentifier("color-\(color.rawValue)")
                         }
                     }
                     .padding(.vertical, 4)
