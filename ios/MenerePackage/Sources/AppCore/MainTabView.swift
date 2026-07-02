@@ -118,12 +118,14 @@ public struct MainTabView: View {
                 }
             }
         }
-        .tint(.wine)
+        .tint(.bacanGreen)
         .selectionHaptic(store.selectedTab)
         .sheet(isPresented: $store.showSettings) {
             NavigationStack {
                 SettingsView(store: store.scope(state: \.settings, action: \.settings))
             }
+            // Sheets don't inherit the TabView tint — re-apply the family accent explicitly.
+            .tint(.bacanGreen)
         }
     }
 

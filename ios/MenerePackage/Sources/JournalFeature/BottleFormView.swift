@@ -240,5 +240,7 @@ public struct BottleFormView: View {
                     .accessibilityIdentifier("cancel-bottle-button")
             }
         }
+        // Wine-stack screen: keep the parchment "Cellar & Candlelight" chrome.
+        .wineChrome()
     }
 }

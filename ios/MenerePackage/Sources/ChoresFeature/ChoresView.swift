@@ -17,11 +17,12 @@ public struct ChoresView: View {
                 Section("Recent Activity") {
                     ForEach(store.activity.prefix(5)) { item in
                         HStack(spacing: 10) {
-                            Image(systemName: item.systemImage).foregroundStyle(Color.wine)
+                            Image(systemName: item.systemImage).foregroundStyle(Color.bacanGreen)
                             Text(item.text).font(.callout).foregroundStyle(Color.ink)
                         }
                     }
                 }
+                .listRowBackground(Color.familySurface)
             }
 
             if !store.members.isEmpty {
@@ -30,6 +31,7 @@ public struct ChoresView: View {
                         leaderboardRow(row)
                     }
                 }
+                .listRowBackground(Color.familySurface)
             }
 
             Section("Chores") {
@@ -44,6 +46,7 @@ public struct ChoresView: View {
                     }
                 }
             }
+            .listRowBackground(Color.familySurface)
 
             Section {
                 ForEach(store.rewards) { reward in
@@ -59,9 +62,10 @@ public struct ChoresView: View {
             } footer: {
                 Text("Redeem spends the current member's XP.")
             }
+            .listRowBackground(Color.familySurface)
         }
         .scrollContentBackground(.hidden)
-        .background(Color.parchment)
+        .background(Color.familyCanvas)
         .navigationTitle("Chores")
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
@@ -126,7 +130,7 @@ public struct ChoresView: View {
         HStack(spacing: 12) {
             Button { store.send(.toggleComplete(chore)) } label: {
                 Image(systemName: chore.isCompleted ? "checkmark.circle.fill" : "circle")
-                    .foregroundStyle(chore.isCompleted ? Color.drinkNow : Color.inkSoft)
+                    .foregroundStyle(chore.isCompleted ? Color.bacanGreen : Color.inkSoft)
             }
             .buttonStyle(.borderless)
 
@@ -168,7 +172,7 @@ public struct ChoresView: View {
                     .disabled(stats.totalXP < reward.xpCost)
                 }
             } label: {
-                Text("Redeem").font(.caption).fontWeight(.semibold).foregroundStyle(Color.wine)
+                Text("Redeem").font(.caption).fontWeight(.semibold).foregroundStyle(Color.bacanGreen)
             }
         }
     }

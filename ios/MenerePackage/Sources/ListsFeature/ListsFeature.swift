@@ -168,6 +168,7 @@ public struct ListsView: View {
                     }
                 }
                 .accessibilityIdentifier("cellar-row")
+                .listRowBackground(Color.familySurface)
             }
 
             Section("Lists") {
@@ -195,9 +196,10 @@ public struct ListsView: View {
                     .onDelete { store.send(.deleteLists($0)) }
                 }
             }
+            .listRowBackground(Color.familySurface)
         }
         .scrollContentBackground(.hidden)
-        .background(Color.parchment)
+        .background(Color.familyCanvas)
         .navigationTitle("Lists")
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
@@ -214,6 +216,9 @@ public struct ListsView: View {
         .navigationDestination(
             item: $store.scope(state: \.cellar, action: \.cellar)
         ) { cellarStore in
+            // The seam: the wine stack keeps its parchment + wine "Cellar & Candlelight" chrome.
+            // Stepping from the cream Lists screen into the Cellar is meant to feel like walking
+            // into a wine cellar.
             CellarView(store: cellarStore)
                 .toolbar {
                     ToolbarItem(placement: .primaryAction) {
@@ -223,6 +228,7 @@ public struct ListsView: View {
                         .accessibilityIdentifier("scan-wine-button")
                     }
                 }
+                .wineChrome()
         }
         .fullScreenCover(
             isPresented: Binding(

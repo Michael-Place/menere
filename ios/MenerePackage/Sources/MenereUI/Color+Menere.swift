@@ -27,6 +27,26 @@ public extension UIColor {
             trait.userInterfaceStyle == .dark ? UIColor(hex: 0xF2EBE2) : UIColor(hex: 0x2A2422)
         }
     }
+
+    // MARK: Family identity ("record-sleeve boldness meets sunroom botanicals")
+    // Dynamic light/dark tokens for the NEW family chrome. The wine tokens above are untouched and
+    // stay pinned inside the Cellar stack. These `UIColor`s back the `Color` tokens below and the
+    // UIKit appearance proxy (`MenereAppearance`), keeping SwiftUI + UIKit chrome in sync.
+    static var familyCanvasUI: UIColor {
+        UIColor { trait in
+            trait.userInterfaceStyle == .dark ? UIColor(hex: 0x1B1916) : UIColor(hex: 0xFAF7F0)
+        }
+    }
+    static var familySurfaceUI: UIColor {
+        UIColor { trait in
+            trait.userInterfaceStyle == .dark ? UIColor(hex: 0x252220) : UIColor(hex: 0xFFFEFA)
+        }
+    }
+    static var bacanGreenUI: UIColor {
+        UIColor { trait in
+            trait.userInterfaceStyle == .dark ? UIColor(hex: 0x5FAE87) : UIColor(hex: 0x2F6D50)
+        }
+    }
 }
 
 public extension Color {
@@ -48,4 +68,21 @@ public extension Color {
     static let drinkNow = Color(uiColor: UIColor(hex: 0x6E8B6A))   // Sage
     static let hold = Color(uiColor: UIColor(hex: 0x5C6F86))       // Slate
     static let past = Color(uiColor: UIColor(hex: 0xA98C8C))       // Faded rose
+
+    // MARK: Family identity — "record-sleeve boldness meets sunroom botanicals"
+    // The family-hub palette: warm daylight cream (brighter/fresher than antique parchment),
+    // botanical green primary, terracotta + marigold + sky accents. `ink`/`inkSoft` above are shared
+    // text colors (they read well on cream too). Wine tokens stay for the Cellar stack.
+    static let familyCanvas = Color(uiColor: .familyCanvasUI)      // App background
+    static let familySurface = Color(uiColor: .familySurfaceUI)    // Cards, rows
+    static let bacanGreen = Color(uiColor: .bacanGreenUI)          // Primary / accent
+    static let terracotta = Color(uiColor: UIColor { trait in
+        trait.userInterfaceStyle == .dark ? UIColor(hex: 0xD97A5C) : UIColor(hex: 0xC05A3C)
+    })
+    static let marigold = Color(uiColor: UIColor { trait in
+        trait.userInterfaceStyle == .dark ? UIColor(hex: 0xEDB44E) : UIColor(hex: 0xE3A02F)
+    })
+    static let sky = Color(uiColor: UIColor { trait in
+        trait.userInterfaceStyle == .dark ? UIColor(hex: 0x6FB1DE) : UIColor(hex: 0x4E93C8)
+    })
 }

@@ -378,6 +378,8 @@ public struct TastingFormView: View {
                 pickerItems = []
             }
         }
+        // Wine-stack screen: keep the parchment "Cellar & Candlelight" chrome.
+        .wineChrome()
     }
 
     // MARK: - Subviews

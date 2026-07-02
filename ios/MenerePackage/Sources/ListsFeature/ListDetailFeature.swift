@@ -130,6 +130,7 @@ public struct ListDetailView: View {
                 }
                 .onDelete { store.send(.deleteItems($0)) }
             }
+            .listRowBackground(Color.familySurface)
 
             Section {
                 HStack {
@@ -138,13 +139,14 @@ public struct ListDetailView: View {
                         .accessibilityIdentifier("new-list-item-field")
                     Button { store.send(.addItem) } label: { Image(systemName: "plus.circle.fill") }
                         .buttonStyle(.borderless)
-                        .foregroundStyle(Color.wine)
+                        .foregroundStyle(Color.bacanGreen)
                         .disabled(store.newItemTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
             }
+            .listRowBackground(Color.familySurface)
         }
         .scrollContentBackground(.hidden)
-        .background(Color.parchment)
+        .background(Color.familyCanvas)
         .navigationTitle(store.list.title)
         .navigationBarTitleDisplayMode(.inline)
         .task { store.send(.task) }
@@ -155,7 +157,7 @@ public struct ListDetailView: View {
         HStack(spacing: 12) {
             Button { store.send(.toggle(item)) } label: {
                 Image(systemName: item.isCompleted ? "checkmark.circle.fill" : "circle")
-                    .foregroundStyle(item.isCompleted ? Color.drinkNow : Color.inkSoft)
+                    .foregroundStyle(item.isCompleted ? Color.bacanGreen : Color.inkSoft)
             }
             .buttonStyle(.borderless)
 

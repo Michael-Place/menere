@@ -75,6 +75,9 @@ public struct BottleCardView: View {
             NavigationStack { BottleFormView(store: formStore) }
         }
         .confirmationDialog($store.scope(state: \.confirmDelete, action: \.confirmDelete))
+        // Wine-stack screen: keep the parchment "Cellar & Candlelight" chrome (the global family
+        // appearance must not leak in here).
+        .wineChrome()
     }
 
     // MARK: - Actions

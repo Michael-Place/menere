@@ -186,7 +186,7 @@ public struct RecipeFormView: View {
                         TextField("Add ingredient", text: $store.newIngredient)
                             .onSubmit { store.send(.addIngredient) }
                         Button { store.send(.addIngredient) } label: { Image(systemName: "plus.circle.fill") }
-                            .buttonStyle(.borderless).foregroundStyle(Color.wine)
+                            .buttonStyle(.borderless).foregroundStyle(Color.bacanGreen)
                     }
                 }
 
@@ -199,7 +199,7 @@ public struct RecipeFormView: View {
                         TextField("Add step", text: $store.newInstruction, axis: .vertical)
                             .onSubmit { store.send(.addInstruction) }
                         Button { store.send(.addInstruction) } label: { Image(systemName: "plus.circle.fill") }
-                            .buttonStyle(.borderless).foregroundStyle(Color.wine)
+                            .buttonStyle(.borderless).foregroundStyle(Color.bacanGreen)
                     }
                 }
 
@@ -210,7 +210,7 @@ public struct RecipeFormView: View {
                 }
             }
             .scrollContentBackground(.hidden)
-            .background(Color.parchment)
+            .background(Color.familyCanvas)
             .navigationTitle(store.isEditing ? "Edit Recipe" : "New Recipe")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

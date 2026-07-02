@@ -213,6 +213,9 @@ public struct ScanView: View {
             ) {
                 ScanOnboardingView { store.send(.onboardingDismissed) }
             }
+            // Wine-stack screen: keep the parchment "Cellar & Candlelight" chrome (the global
+            // family appearance must not leak in here).
+            .wineChrome()
     }
 
     @ViewBuilder

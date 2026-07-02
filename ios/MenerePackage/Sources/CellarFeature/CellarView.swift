@@ -601,6 +601,9 @@ public struct CellarView: View {
                 // tasting id, matching the source row's `matchedTransitionSource` id.
                 .navigationTransition(.zoom(sourceID: detailStore.tasting.id, in: zoomNamespace))
         }
+        // Wine-stack screen: keep the parchment "Cellar & Candlelight" chrome (the global family
+        // appearance must not leak in here).
+        .wineChrome()
     }
 
     // MARK: Cellar segment

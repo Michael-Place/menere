@@ -152,7 +152,7 @@ public struct EventFormView: View {
                                     Text(member.name).foregroundStyle(Color.ink)
                                     Spacer()
                                     if store.event.assigneeIDs.contains(member.id) {
-                                        Image(systemName: "checkmark").foregroundStyle(Color.wine)
+                                        Image(systemName: "checkmark").foregroundStyle(Color.bacanGreen)
                                     }
                                 }
                             }
@@ -178,7 +178,7 @@ public struct EventFormView: View {
                 }
             }
             .scrollContentBackground(.hidden)
-            .background(Color.parchment)
+            .background(Color.familyCanvas)
             .navigationTitle(store.isEditing ? "Edit Event" : "New Event")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

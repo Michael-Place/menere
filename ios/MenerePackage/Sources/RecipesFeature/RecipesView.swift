@@ -24,7 +24,7 @@ public struct RecipesView: View {
             case .mealPlan: mealPlan
             }
         }
-        .background(Color.parchment)
+        .background(Color.familyCanvas)
         .navigationTitle("Kitchen")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
@@ -71,7 +71,7 @@ public struct RecipesView: View {
                             HStack {
                                 Button { store.send(.toggleFavorite(recipe)) } label: {
                                     Image(systemName: recipe.isFavorite ? "star.fill" : "star")
-                                        .foregroundStyle(recipe.isFavorite ? Color.candleGold : Color.inkSoft)
+                                        .foregroundStyle(recipe.isFavorite ? Color.marigold : Color.inkSoft)
                                 }
                                 .buttonStyle(.borderless)
                                 VStack(alignment: .leading, spacing: 2) {
@@ -108,7 +108,7 @@ public struct RecipesView: View {
                         VStack(alignment: .leading) {
                             Text(dayName(day)).foregroundStyle(Color.ink)
                             if let e = entry(for: day) {
-                                Text(e.recipeTitle).font(.caption).foregroundStyle(Color.wine)
+                                Text(e.recipeTitle).font(.caption).foregroundStyle(Color.bacanGreen)
                             } else {
                                 Text("No meal planned").font(.caption).foregroundStyle(Color.inkSoft)
                             }
@@ -123,7 +123,7 @@ public struct RecipesView: View {
                                 Button("Clear", role: .destructive) { store.send(.clearMeal(e)) }
                             }
                         } label: {
-                            Image(systemName: "pencil.circle").foregroundStyle(Color.wine)
+                            Image(systemName: "pencil.circle").foregroundStyle(Color.bacanGreen)
                         }
                         .disabled(store.recipes.isEmpty)
                     }
@@ -139,7 +139,7 @@ public struct RecipesView: View {
                     .frame(maxWidth: .infinity)
                     .padding()
             }
-            .background(Color.wine)
+            .background(Color.bacanGreen)
             .foregroundStyle(.white)
             .clipShape(RoundedRectangle(cornerRadius: 12))
             .padding()

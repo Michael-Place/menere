@@ -142,7 +142,7 @@ public struct ChoreFormView: View {
                 }
             }
             .scrollContentBackground(.hidden)
-            .background(Color.parchment)
+            .background(Color.familyCanvas)
             .navigationTitle(store.isEditing ? "Edit Chore" : "New Chore")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

@@ -19,7 +19,7 @@ public struct CalendarView: View {
             Divider()
             agenda
         }
-        .background(Color.parchment)
+        .background(Color.familyCanvas)
         .navigationTitle("Calendar")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
@@ -48,7 +48,7 @@ public struct CalendarView: View {
         }
         .padding(.horizontal)
         .padding(.vertical, 8)
-        .tint(.wine)
+        .tint(.bacanGreen)
     }
 
     private var weekdayHeader: some View {
@@ -89,14 +89,14 @@ public struct CalendarView: View {
                     .fontWeight(isToday ? .bold : .regular)
                     .foregroundStyle(inMonth ? (isSelected ? .white : Color.ink) : Color.inkSoft.opacity(0.5))
                 Circle()
-                    .fill(hasEvent ? (isSelected ? Color.white : Color.wine) : .clear)
+                    .fill(hasEvent ? (isSelected ? Color.white : Color.bacanGreen) : .clear)
                     .frame(width: 5, height: 5)
             }
             .frame(maxWidth: .infinity)
             .padding(.vertical, 6)
             .background(
                 RoundedRectangle(cornerRadius: 8)
-                    .fill(isSelected ? Color.wine : (isToday ? Color.wine.opacity(0.12) : .clear))
+                    .fill(isSelected ? Color.bacanGreen : (isToday ? Color.bacanGreen.opacity(0.12) : .clear))
             )
         }
         .buttonStyle(.plain)
@@ -149,7 +149,7 @@ public struct CalendarView: View {
                 Circle()
                     .fill(Color(red: rgb.red, green: rgb.green, blue: rgb.blue))
                     .frame(width: 16, height: 16)
-                    .overlay(Circle().stroke(Color.parchment, lineWidth: 1.5))
+                    .overlay(Circle().stroke(Color.familyCanvas, lineWidth: 1.5))
             }
         }
     }

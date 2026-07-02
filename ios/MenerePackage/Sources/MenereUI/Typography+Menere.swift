@@ -32,3 +32,21 @@ public extension View {
             .foregroundStyle(Color.inkSoft)
     }
 }
+
+/// The family identity type ramp — chunky SF Rounded, "record-label energy". Lives alongside the
+/// serif wine helpers above; family surfaces use these, the Cellar stack keeps the serif ones.
+public extension View {
+    /// Large rounded heavy display — greetings and section heroes.
+    func familyDisplay() -> some View {
+        self
+            .font(.system(.largeTitle, design: .rounded).weight(.heavy))
+            .foregroundStyle(Color.ink)
+    }
+
+    /// Rounded semibold header. Defaults to `.title3`; pass a style to scale it.
+    func familyTitle(_ style: Font.TextStyle = .title3) -> some View {
+        self
+            .font(.system(style, design: .rounded).weight(.semibold))
+            .foregroundStyle(Color.ink)
+    }
+}

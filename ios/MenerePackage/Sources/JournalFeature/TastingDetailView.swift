@@ -155,6 +155,8 @@ public struct TastingDetailView: View {
                 // Pairs with the thumbnail's `matchedTransitionSource(id:)` so the photo zooms open.
                 .navigationTransition(.zoom(sourceID: photo.url, in: photoZoom))
         }
+        // Wine-stack screen: keep the parchment "Cellar & Candlelight" chrome.
+        .wineChrome()
     }
 
     // MARK: - Sections

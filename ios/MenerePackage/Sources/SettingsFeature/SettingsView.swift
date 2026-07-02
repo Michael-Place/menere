@@ -237,7 +237,7 @@ public struct SettingsView: View {
                             } label: {
                                 Image(systemName: copied ? "checkmark" : "doc.on.doc")
                                     .contentTransition(.symbolEffect(.replace))
-                                    .foregroundStyle(copied ? Color.drinkNow : Color.wine)
+                                    .foregroundStyle(copied ? Color.marigold : Color.bacanGreen)
                             }
                             .buttonStyle(.borderless)
                             .accessibilityIdentifier("copy-invite-code-button")
@@ -276,7 +276,7 @@ public struct SettingsView: View {
             }
         }
         .scrollContentBackground(.hidden)
-        .background(Color.parchment)
+        .background(Color.familyCanvas)
         .navigationTitle("Profile")
         .navigationBarTitleDisplayMode(.inline)
         .alert("Sign Out", isPresented: $store.showSignOutConfirmation) {
@@ -324,7 +324,7 @@ public struct SettingsView: View {
                 }
             }
             .scrollContentBackground(.hidden)
-            .background(Color.parchment)
+            .background(Color.familyCanvas)
             .navigationTitle("Join a Household")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

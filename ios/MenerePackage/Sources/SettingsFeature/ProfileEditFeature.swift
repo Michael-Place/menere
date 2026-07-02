@@ -109,7 +109,7 @@ public struct ProfileEditView: View {
                 }
             }
             .scrollContentBackground(.hidden)
-            .background(Color.parchment)
+            .background(Color.familyCanvas)
             .navigationTitle("My Profile")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

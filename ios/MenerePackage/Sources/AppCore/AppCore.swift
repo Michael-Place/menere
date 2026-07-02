@@ -149,8 +149,9 @@ public struct AppView: View {
 
     public init(store: StoreOf<AppReducer>) {
         self.store = store
-        // Apply the brand chrome (parchment nav bar, ink titles) once at launch so no default
-        // white nav/status-bar seam shows above parchment content on any screen.
+        // Apply the family brand chrome (cream nav bar, rounded ink titles) once at launch so no
+        // default white nav/status-bar seam shows above the canvas on any screen. The wine stack
+        // pins its parchment chrome back per-screen.
         MenereAppearance.apply()
     }
 
@@ -175,11 +176,11 @@ public struct AppView: View {
             .animation(.easeInOut, value: store.state)
         } else {
             ZStack {
-                Color.parchment
+                Color.familyCanvas
                     .ignoresSafeArea()
                 ProgressView()
                     .controlSize(.large)
-                    .tint(.wine)
+                    .tint(.bacanGreen)
             }
         }
     }
