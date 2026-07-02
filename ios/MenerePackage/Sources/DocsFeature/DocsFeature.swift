@@ -70,6 +70,8 @@ public struct DocsReducer {
 
     public init() {}
 
+    private enum CancelID { case observeDocuments }
+
     @Dependency(\.persistence) var persistence
     @Dependency(\.storage) var storage
     @Dependency(\.docs) var docs
@@ -93,14 +95,30 @@ public struct DocsReducer {
             case .task:
                 guard let hid = hid() else { return .none }
                 state.isLoading = true
+                // Live library: a Firestore snapshot listener (mirrors ChoresFeature's stats stream).
+                // Every snapshot — uploads, deletes, and the async `processDocument` write-back —
+                // pushes straight into `state.documents` with no navigation required.
                 return .run { send in
-                    let docs = (try? await persistence.documents(hid)) ?? []
-                    await send(.documentsLoaded(docs))
+                    for try await docs in persistence.observeDocuments(hid) {
+                        await send(.documentsLoaded(docs))
+                    }
+                } catch: { _, _ in
+                    // Listener error (e.g. sign-out): stop quietly; re-entry restarts the stream.
                 }
+                .cancellable(id: CancelID.observeDocuments, cancelInFlight: true)
 
             case let .documentsLoaded(docs):
                 state.isLoading = false
                 state.documents = docs.sorted { $0.createdAt > $1.createdAt }
+                // Keep a presented detail fresh off the same stream: a pending→processed flip fills
+                // its fields live; a doc deleted elsewhere dismisses the detail gracefully.
+                if let detailID = state.detail?.doc.id {
+                    if let fresh = state.documents.first(where: { $0.id == detailID }) {
+                        state.detail?.applyUpdate(fresh)
+                    } else {
+                        state.detail = nil
+                    }
+                }
                 return .none
 
             case .scanTapped:
@@ -220,14 +238,11 @@ public struct DocsReducer {
                 return .none
 
             case let .processDocument(docId):
-                guard let hid = hid() else { return .none }
-                return .run { send in
-                    // Best-effort: on failure the row stays pending/failed (server marks .failed);
-                    // the user can retry via "Process again". Re-fetch either way so the row reflects
-                    // the server's latest state.
+                return .run { _ in
+                    // Best-effort trigger/retry: on failure the row stays pending/failed (server
+                    // marks .failed) and "Process again" re-invokes this. No re-fetch — the live
+                    // documents listener delivers the server's write-back on its own.
                     try? await docs.process(docId)
-                    let updated = (try? await persistence.documents(hid)) ?? []
-                    await send(.documentsLoaded(updated))
                 }
 
             case let .documentTapped(doc):

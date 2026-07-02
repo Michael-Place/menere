@@ -89,6 +89,11 @@ public struct PersistenceClient: Sendable {
     // MARK: Family-Brain documents
     /// All documents in a household (order is not guaranteed; callers sort newest-first).
     public var documents: @Sendable (_ hid: String) async throws -> [Document]
+    /// Live stream of documents, newest-first (updates as `processDocument` writes back and as
+    /// uploads/deletes land). Mirrors `observeMemberStats`; the leaderboard's live-listener twin.
+    public var observeDocuments: @Sendable (_ hid: String) -> AsyncThrowingStream<[Document], Error> = { _ in
+        AsyncThrowingStream { $0.finish() }
+    }
     public var saveDocument: @Sendable (_ hid: String, _ doc: Document) async throws -> Void
     public var deleteDocument: @Sendable (_ hid: String, _ docID: String) async throws -> Void
 
@@ -332,6 +337,23 @@ extension PersistenceClient: DependencyKey {
             documents: { hid in
                 let snapshot = try await households().document(hid).collection("documents").getDocuments()
                 return try snapshot.documents.map { try Firestore.Decoder().decode(Document.self, from: $0.data()) }
+            },
+            observeDocuments: { hid in
+                AsyncThrowingStream { continuation in
+                    let listener = households().document(hid).collection("documents")
+                        .order(by: "createdAt", descending: true)
+                        .addSnapshotListener { snapshot, error in
+                            if let error {
+                                continuation.finish(throwing: error)
+                                return
+                            }
+                            let docs = snapshot?.documents.compactMap {
+                                try? Firestore.Decoder().decode(Document.self, from: $0.data())
+                            } ?? []
+                            continuation.yield(docs)
+                        }
+                    continuation.onTermination = { _ in listener.remove() }
+                }
             },
             saveDocument: { hid, doc in
                 try await households().document(hid).collection("documents").document(doc.id).setData(

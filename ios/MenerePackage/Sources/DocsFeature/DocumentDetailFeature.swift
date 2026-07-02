@@ -35,6 +35,20 @@ public struct DocumentDetailReducer {
             self.titleDraft = doc.title
         }
 
+        /// Merge a fresh copy delivered by the parent's live documents listener (pending→processed
+        /// fills the fields in place). Edit-stomp guard: while the rename alert is open we keep the
+        /// local title and let only the other fields update, so a mid-edit snapshot can't clobber
+        /// the in-flight rename.
+        mutating func applyUpdate(_ fresh: FamilyDomain.Document) {
+            if isEditingTitle {
+                var merged = fresh
+                merged.title = doc.title
+                doc = merged
+            } else {
+                doc = fresh
+            }
+        }
+
         /// Whether an all-day event with this doc's title already sits on the `dueDate` day.
         var onCalendar: Bool {
             guard let due = doc.dueDate else { return false }
