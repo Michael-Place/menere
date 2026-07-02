@@ -251,6 +251,15 @@ shimmer-skeleton card that hides silently on failure; bonus: "Plan dinner" lands
 Kitchen's Meal Plan segment (public `showMealPlan`). Display name is now **¡Bacán!**.
 Leftover ideas: live listeners for dashboard data (currently one-shot + re-select
 refresh); weather on the greeting (WeatherKit, pairs with P9 yard care).
+**P6.1 + P6.2 (2026-07-02, commits 54b1e6f + 557385c, Michael's requests):** meal-plan
+entries support **eating out** — MKLocalSearchCompleter place sheet (name/address/
+coords, decode-safe on MealPlanEntry), optional reservationAt, grocery generation
+skips restaurant nights; Today's dinner card shows "Out tonight — {name} · 7:30",
+address, traffic-aware MKDirections drive line ("≈25 min drive — leave by 6:58",
+5-min buffer, terracotta "time to go" when past), and idempotent "Add to calendar"
+(FamilyEvent at the reservation with the address). New `LocationClient` module
+(when-in-use, graceful denial). Known deprecation: MKPlacemark path (iOS 26) —
+functional, migrate someday.
 New first tab. Time-of-day greeting ("Tuesday morning at the Place house"), then
 stacked cards, each tappable through to its module:
 - **Today's events** (calendar, member color dots) · **Dinner tonight** (meal plan)

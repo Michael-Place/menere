@@ -25,7 +25,7 @@
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>NSCameraUsageDescription</key>
-	<string>Menere uses the camera to scan wine bottle labels and barcodes.</string>
+	<string>Bacán uses the camera to scan wine labels and family documents.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>Bacán uses your location to estimate drive times to dinner.</string>
 	<key>CFBundleURLTypes</key>
