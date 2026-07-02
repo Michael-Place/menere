@@ -119,6 +119,9 @@ let package = Package(
                 "FamilyDomain",
                 "PersistenceClient",
                 "UserDomain",
+                "CellarFeature",
+                "ScanFeature",
+                "WineDomain",
             ]
         ),
         .target(

@@ -22,11 +22,14 @@ sit alongside as `web/`. Run `git` from the root; run Firebase/Xcode tooling fro
   `ios/MenerePackage`. **After editing `project.yml`, run `xcodegen generate`** (from `ios/`).
 
 ## App shell (tabs)
-`MainTabView` (in `AppCore`) — family features are primary tabs; wine + kitchen fall into the
-system **More** menu:
-**Calendar · Lists · Chores · Family** (primary), then **Kitchen (Recipes/Meal) · Wine** (More).
-Wine is one tab (`WineTabView`): Cellar is home, Scan is a full-screen modal (camera toolbar
-button / Cellar empty-state), driven by `showScan` in `MainTabReducer`.
+`MainTabView` (in `AppCore`) — four primary tabs, no **More** menu:
+**Calendar · Lists · Chores · Kitchen**. **Family** (`SettingsFeature`) is no longer a tab — it's a
+`person.crop.circle` toolbar button (top-leading on every tab) that presents `SettingsView` as a
+sheet, driven by `showSettings` in `MainTabReducer`.
+Wine is re-homed **under the Lists tab** as a pinned "Cellar" collection row (not a tab): tapping it
+pushes `CellarView` (the full wine stack), and Scan is a full-screen modal over it (camera toolbar
+button / Cellar empty-state). The wine state (`cellar`/`scan`/`showScan`) now lives in
+`ListsReducer`; the wine domain code is otherwise unchanged.
 
 ## Feature domains
 - **Calendar** (`CalendarFeature`) — month grid + agenda, event form, **client-side** recurrence.

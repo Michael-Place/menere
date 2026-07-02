@@ -1,7 +1,9 @@
+import CellarFeature
 import ComposableArchitecture
 import FamilyDomain
 import MenereUI
 import PersistenceClient
+import ScanFeature
 import SwiftUI
 import UserDomain
 
@@ -16,6 +18,12 @@ public struct ListsReducer {
         var newTitle = ""
         @Presents var detail: ListDetailReducer.State?
 
+        // Wine cellar is re-homed here as a pinned "collection" entry. Pushing the Cellar
+        // presents the full wine stack; Scan is a full-screen modal over it (as before).
+        @Presents var cellar: CellarReducer.State?
+        var showScan = false
+        var scan = ScanReducer.State()
+
         public init() {}
     }
 
@@ -28,6 +36,11 @@ public struct ListsReducer {
         case deleteLists(IndexSet)
         case listTapped(FamilyList)
         case detail(PresentationAction<ListDetailReducer.Action>)
+        case cellarTapped
+        case cellar(PresentationAction<CellarReducer.Action>)
+        case scan(ScanReducer.Action)
+        case scanRequested
+        case scanDismissed
         case binding(BindingAction<State>)
     }
 
@@ -40,6 +53,7 @@ public struct ListsReducer {
 
     public var body: some ReducerOf<Self> {
         BindingReducer()
+        Scope(state: \.scan, action: \.scan, child: ScanReducer.init)
         Reduce { state, action in
             switch action {
             case .task:
@@ -95,12 +109,34 @@ public struct ListsReducer {
             case .detail:
                 return .none
 
+            case .cellarTapped:
+                state.cellar = CellarReducer.State()
+                return .none
+
+            case .cellar(.presented(.delegate(.requestScan))), .scanRequested:
+                state.showScan = true
+                return .none
+
+            case .cellar:
+                return .none
+
+            case .scanDismissed:
+                state.showScan = false
+                // Refresh the cellar so a just-scanned bottle appears.
+                return .send(.cellar(.presented(.task)))
+
+            case .scan:
+                return .none
+
             case .binding:
                 return .none
             }
         }
         .ifLet(\.$detail, action: \.detail) {
             ListDetailReducer()
+        }
+        .ifLet(\.$cellar, action: \.cellar) {
+            CellarReducer()
         }
     }
 }
@@ -113,17 +149,36 @@ public struct ListsView: View {
     }
 
     public var body: some View {
-        Group {
-            if store.lists.isEmpty, store.isLoading {
-                ProgressView()
-            } else if store.lists.isEmpty {
-                ContentUnavailableView(
-                    "No lists yet",
-                    systemImage: "checklist",
-                    description: Text("Tap + to start a shared family list.")
-                )
-            } else {
-                List {
+        List {
+            // Pinned collection: the wine cellar lives here as a specialized "list".
+            Section {
+                Button {
+                    store.send(.cellarTapped)
+                } label: {
+                    HStack {
+                        Label {
+                            Text("Cellar").foregroundStyle(Color.ink)
+                        } icon: {
+                            Image(systemName: "wineglass").foregroundStyle(Color.wine)
+                        }
+                        Spacer()
+                        Image(systemName: "chevron.right")
+                            .font(.footnote.weight(.semibold))
+                            .foregroundStyle(.tertiary)
+                    }
+                }
+                .accessibilityIdentifier("cellar-row")
+            }
+
+            Section("Lists") {
+                if store.lists.isEmpty {
+                    if store.isLoading {
+                        ProgressView()
+                    } else {
+                        Text("No lists yet. Tap + to start a shared family list.")
+                            .foregroundStyle(.secondary)
+                    }
+                } else {
                     ForEach(store.lists) { list in
                         Button {
                             store.send(.listTapped(list))
@@ -139,9 +194,9 @@ public struct ListsView: View {
                     }
                     .onDelete { store.send(.deleteLists($0)) }
                 }
-                .scrollContentBackground(.hidden)
             }
         }
+        .scrollContentBackground(.hidden)
         .background(Color.parchment)
         .navigationTitle("Lists")
         .toolbar {
@@ -155,6 +210,34 @@ public struct ListsView: View {
             item: $store.scope(state: \.detail, action: \.detail)
         ) { detailStore in
             ListDetailView(store: detailStore)
+        }
+        .navigationDestination(
+            item: $store.scope(state: \.cellar, action: \.cellar)
+        ) { cellarStore in
+            CellarView(store: cellarStore)
+                .toolbar {
+                    ToolbarItem(placement: .primaryAction) {
+                        Button { store.send(.scanRequested) } label: {
+                            Image(systemName: "camera.viewfinder")
+                        }
+                        .accessibilityIdentifier("scan-wine-button")
+                    }
+                }
+        }
+        .fullScreenCover(
+            isPresented: Binding(
+                get: { store.showScan },
+                set: { if !$0 { store.send(.scanDismissed) } }
+            )
+        ) {
+            NavigationStack {
+                ScanView(store: store.scope(state: \.scan, action: \.scan))
+                    .toolbar {
+                        ToolbarItem(placement: .cancellationAction) {
+                            Button("Done") { store.send(.scanDismissed) }
+                        }
+                    }
+            }
         }
         .alert("New List", isPresented: $store.showAddSheet) {
             TextField("List name", text: $store.newTitle)

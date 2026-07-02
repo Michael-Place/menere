@@ -1,24 +1,29 @@
-import CellarFeature
 import ComposableArchitecture
-import WineDomain
 import XCTest
 
 @testable import AppCore
 
-/// `TestStore` coverage for `MainTabReducer`'s cross-tab routing: child `.delegate` actions
-/// bubble up to switch the selected tab.
-///
-/// Child Scopes run first (delegate handlers return `.none`, no `.task`), so there are no
-/// additional effects to drain on the request-scan path.
+/// `TestStore` coverage for `MainTabReducer`'s shell routing: tab selection and the Family
+/// (settings) sheet toggle. The wine/scan flow now lives in `ListsReducer`, not here.
 @MainActor
 final class MainTabReducerTests: XCTestCase {
-    func testCellarRequestScanSwitchesToScanTab() async {
+    func testTabSelectionUpdatesSelectedTab() async {
         let store = TestStore(initialState: MainTabReducer.State()) {
             MainTabReducer()
         }
 
-        await store.send(.cellar(.delegate(.requestScan))) {
-            $0.selectedTab = .scan
+        await store.send(.tabSelected(.recipes)) {
+            $0.selectedTab = .recipes
+        }
+    }
+
+    func testFamilySheetTogglesViaBinding() async {
+        let store = TestStore(initialState: MainTabReducer.State()) {
+            MainTabReducer()
+        }
+
+        await store.send(.binding(.set(\.showSettings, true))) {
+            $0.showSettings = true
         }
     }
 }
