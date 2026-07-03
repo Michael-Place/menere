@@ -114,6 +114,84 @@ public struct PetSuggestion: Equatable, Identifiable, Sendable {
     ]
 }
 
+/// The eight well-defined plant-care task types offered in the plant form's "Add care task" picker
+/// (P19-C1). Each pre-fills a new ``CareTask``'s title + cadence and carries a badge symbol; the
+/// symbol is re-derived from an arbitrary task title by ``symbol(forTitle:)`` so the plant DETAIL
+/// screen can glyph *every* task without a model change (``CareTask`` stays symbol-free — this is
+/// presets + UI only). Everything stays editable after the tap.
+public enum PlantCarePreset: String, CaseIterable, Equatable, Sendable, Identifiable {
+    case water, fertilize, repot, prune, rotate, mist, cleanLeaves, pestCheck
+
+    public var id: String { rawValue }
+
+    /// The task title seeded into the new ``CareTask`` (and matched by the detail's symbol/verb helpers).
+    public var title: String {
+        switch self {
+        case .water: "Water"
+        case .fertilize: "Fertilize"
+        case .repot: "Re-pot"
+        case .prune: "Prune"
+        case .rotate: "Rotate"
+        case .mist: "Mist"
+        case .cleanLeaves: "Clean leaves"
+        case .pestCheck: "Pest check"
+        }
+    }
+
+    /// A sensible default cadence in days (Water 7 · Fertilize 30 · Re-pot 365 · Prune 90 · Rotate 7 ·
+    /// Mist 3 · Clean leaves 30 · Pest check 14).
+    public var intervalDays: Int {
+        switch self {
+        case .water: 7
+        case .fertilize: 30
+        case .repot: 365
+        case .prune: 90
+        case .rotate: 7
+        case .mist: 3
+        case .cleanLeaves: 30
+        case .pestCheck: 14
+        }
+    }
+
+    /// The SF Symbol badged on the preset in the picker and on the plant DETAIL task rows.
+    public var symbol: String {
+        switch self {
+        case .water: "drop.fill"
+        case .fertilize: "leaf.fill"
+        case .repot: "shippingbox.fill"
+        case .prune: "scissors"
+        case .rotate: "arrow.clockwise"
+        case .mist: "humidity.fill"
+        case .cleanLeaves: "sparkles"
+        case .pestCheck: "ladybug.fill"
+        }
+    }
+
+    /// A short caption ("Every 7 days") for the picker row.
+    var cadenceCaption: String { CareItem.intervalLabel(intervalDays) }
+
+    /// The preset whose title best matches an arbitrary task title (substring, case-insensitive) — so a
+    /// renamed/edited task still resolves to the right glyph on the detail screen. `nil` when nothing
+    /// matches (a fully custom task).
+    static func matching(_ title: String) -> PlantCarePreset? {
+        let t = title.lowercased()
+        if t.contains("water") { return .water }
+        if t.contains("fertil") { return .fertilize }
+        if t.contains("re-pot") || t.contains("repot") { return .repot }
+        if t.contains("prune") { return .prune }
+        if t.contains("rotate") { return .rotate }
+        if t.contains("mist") { return .mist }
+        if t.contains("clean") || t.contains("wipe") { return .cleanLeaves }
+        if t.contains("pest") { return .pestCheck }
+        return nil
+    }
+
+    /// The badge symbol for a task title — a matched preset's glyph, else a soft leaf default.
+    static func symbol(forTitle title: String) -> String {
+        matching(title)?.symbol ?? "leaf.fill"
+    }
+}
+
 @Reducer
 public struct CareItemFormReducer {
     @ObservableState
@@ -155,6 +233,7 @@ public struct CareItemFormReducer {
         case saveTapped
         case deleteTapped
         case addTaskTapped
+        case addPresetTask(PlantCarePreset)
         case removeTask(id: String)
         case photoPicked(Data)
         case photoLoaded(Data?)
@@ -277,6 +356,12 @@ public struct CareItemFormReducer {
             case .addTaskTapped:
                 let interval = CareItem.intervalChoices(for: state.item.kind).first(where: { $0 != nil }) ?? 30
                 state.item.tasks.append(CareTask(title: "", intervalDays: interval))
+                return .none
+
+            case let .addPresetTask(preset):
+                // P19-C1: a plant-care preset seeds title + cadence (still editable). No dedupe — a
+                // plant may legitimately carry two of the same kind on different schedules.
+                state.item.tasks.append(CareTask(title: preset.title, intervalDays: preset.intervalDays))
                 return .none
 
             case let .removeTask(id):
@@ -449,15 +534,22 @@ public struct CareItemFormView: View {
                     .onDelete { indexSet in
                         for i in indexSet { store.send(.removeTask(id: store.item.tasks[i].id)) }
                     }
-                    Button {
-                        store.send(.addTaskTapped)
-                    } label: {
-                        Label("Add a task", systemImage: "plus")
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .contentShape(Rectangle())
+                    // Plants get a preset picker (P19-C1) — Water, Fertilize, Re-pot, Prune, Rotate,
+                    // Mist, Clean leaves, Pest check, each pre-filling title + cadence + glyph. Other
+                    // kinds keep the plain blank-task add.
+                    if store.isPlant {
+                        addCareTaskMenu
+                    } else {
+                        Button {
+                            store.send(.addTaskTapped)
+                        } label: {
+                            Label("Add a task", systemImage: "plus")
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.pressable)
+                        .accessibilityIdentifier("add-care-task-button")
                     }
-                    .buttonStyle(.pressable)
-                    .accessibilityIdentifier("add-care-task-button")
                 }
 
                 if store.isEditing {
@@ -522,6 +614,30 @@ public struct CareItemFormView: View {
         if store.isPlant { return "Delete plant" }
         if store.isPet { return "Delete pet" }
         return "Delete"
+    }
+
+    // MARK: Plant care-task presets (P19-C1)
+
+    /// The plant "Add care task" affordance — a menu of the eight well-defined presets. Each pre-fills
+    /// title + cadence + glyph (still editable in the task row above).
+    @ViewBuilder
+    private var addCareTaskMenu: some View {
+        Menu {
+            ForEach(PlantCarePreset.allCases) { preset in
+                Button {
+                    store.send(.addPresetTask(preset))
+                } label: {
+                    Label("\(preset.title) · \(preset.cadenceCaption.lowercased())", systemImage: preset.symbol)
+                }
+                .accessibilityIdentifier("care-preset-\(preset.rawValue)")
+            }
+        } label: {
+            Label("Add care task", systemImage: "plus")
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.pressable)
+        .accessibilityIdentifier("add-care-task-button")
     }
 
     // MARK: Plant photo

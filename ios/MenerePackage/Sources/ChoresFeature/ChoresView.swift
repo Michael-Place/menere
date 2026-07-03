@@ -27,6 +27,10 @@ public struct ChoresView: View {
     /// `NavigationLink` since it seeds ``HouseView`` from the loaded config).
     enum Destination: Hashable {
         case choresRewards, houseCare, plants, yard, pets, activity
+        /// P19-C1 — a single plant's rich DETAIL page (hero, overview, care-task list), pushed when a
+        /// plant row is tapped. Carries the plant's id; the screen re-derives the live ``CareItem`` from
+        /// the store so mark-done reflects immediately.
+        case plantDetail(id: String)
     }
 
     public var body: some View {
@@ -81,6 +85,7 @@ public struct ChoresView: View {
             case .choresRewards: ChoresRewardsDetailView(store: store)
             case .houseCare: HouseCareDetailView(store: store)
             case .plants: PlantsDetailView(store: store)
+            case let .plantDetail(id): PlantDetailView(store: store, plantID: id)
             case .yard: YardDetailView(store: store)
             case .pets: PetsDetailView(store: store)
             case .activity: ActivityDetailView(store: store)
@@ -860,6 +865,10 @@ private struct PlantsDetailView: View {
 
     var body: some View {
         List {
+            // SEAM (P19-C2): plant triage + room grouping lands here — a TRIAGE HEADER ("5 need water ·
+            // 2 fertilize this week · rest happy") and plants grouped by room/location with a per-room
+            // "water this room / mark all watered" batch action. The flat single "Plants" section below
+            // is the seam it splits; the roster already reads `item.location`, so C2 groups on that.
             Section("Plants") {
                 if plantItems.isEmpty {
                     plantsEmptyCard
@@ -869,7 +878,6 @@ private struct PlantsDetailView: View {
                             item: item,
                             members: store.members,
                             photo: item.photoPath.flatMap { store.carePhotos[$0] },
-                            onEdit: { store.send(.editCareItemTapped(item)) },
                             onMarkDone: { taskID in
                                 store.send(.markCareTaskDone(itemID: item.id, taskID: taskID))
                             }
@@ -911,6 +919,400 @@ private struct PlantsDetailView: View {
         }
         .buttonStyle(.pressable)
         .accessibilityIdentifier("add-plant-button")
+    }
+}
+
+// MARK: - Plant detail (P19-C1)
+
+/// A single plant's own little page: a full-width hero photo, a warm TOP OVERVIEW (health glance +
+/// the soonest upcoming tasks), the FULL care-task list with inline ``LeafUnfurl`` mark-done, and the
+/// plant's details. Bound to the SAME ``ChoresReducer`` store as the roster and re-derives the live
+/// ``CareItem`` by id — so a mark-done here routes through ``CareCompletion``/`writeCareDone` (server-
+/// consistent, logs activity with the right verb) and updates in place. The Edit button opens the
+/// existing ``CareItemFormView`` (the edit path is unchanged; this screen is the new tap target).
+private struct PlantDetailView: View {
+    @Bindable var store: StoreOf<ChoresReducer>
+    let plantID: String
+
+    /// Re-derived live from the store so mark-done reflects immediately (and the page empties
+    /// gracefully if the plant is deleted from the edit form).
+    private var plant: CareItem? { store.careItems.first { $0.id == plantID } }
+
+    var body: some View {
+        ScrollView {
+            if let plant {
+                VStack(spacing: 16) {
+                    hero(plant)
+                    overviewCard(plant)
+                    careTasksCard(plant)
+                    detailsCard(plant)
+                    troubleshootSeam(plant)
+                }
+                .padding(.horizontal)
+                .padding(.vertical, 12)
+            } else {
+                ContentUnavailableView("Plant not found", systemImage: "leaf")
+                    .padding(.top, 60)
+            }
+        }
+        .scrollContentBackground(.hidden)
+        .background(Color.familyCanvas)
+        .navigationTitle(plant?.name ?? "Plant")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            if let plant {
+                ToolbarItem(placement: .primaryAction) {
+                    Button("Edit") { store.send(.editCareItemTapped(plant)) }
+                        .accessibilityIdentifier("plant-detail-edit")
+                }
+            }
+        }
+    }
+
+    // MARK: Hero
+
+    @ViewBuilder
+    private func hero(_ plant: CareItem) -> some View {
+        VStack(spacing: 12) {
+            heroPhoto(plant)
+                .frame(height: 200)
+                .frame(maxWidth: .infinity)
+                .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+            VStack(spacing: 6) {
+                Text(plant.name)
+                    .familyTitle(.title2)
+                if let species = heroSpecies(plant) {
+                    Text(species).italic()
+                        .font(.system(.subheadline, design: .rounded))
+                        .foregroundStyle(Color.inkSoft)
+                }
+                if let light = plant.lightLevel, !light.isEmpty {
+                    lightChip(light)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func heroPhoto(_ plant: CareItem) -> some View {
+        if let path = plant.photoPath, let data = store.carePhotos[path], let img = UIImage(data: data) {
+            Image(uiImage: img).resizable().scaledToFill()
+        } else {
+            LinearGradient(
+                colors: [Color.bacanGreen.opacity(0.35), Color.bacanGreen.opacity(0.12)],
+                startPoint: .topLeading, endPoint: .bottomTrailing
+            )
+            .overlay {
+                Image(systemName: "leaf.fill")
+                    .font(.system(size: 60))
+                    .foregroundStyle(Color.bacanGreen.opacity(0.6))
+            }
+        }
+    }
+
+    /// The botanical name (rendered italic) when set, else the common name.
+    private func heroSpecies(_ plant: CareItem) -> String? {
+        if let latin = plant.speciesLatin, !latin.isEmpty { return latin }
+        if let species = plant.species, !species.isEmpty { return species }
+        return nil
+    }
+
+    private func lightChip(_ light: String) -> some View {
+        Label(light, systemImage: "sun.max.fill")
+            .font(.caption.weight(.medium))
+            .foregroundStyle(Color.marigold)
+            .padding(.horizontal, 10).padding(.vertical, 5)
+            .background(Capsule().fill(Color.marigold.opacity(0.18)))
+    }
+
+    // MARK: Overview (the glance)
+
+    @ViewBuilder
+    private func overviewCard(_ plant: CareItem) -> some View {
+        let status = overviewStatus(plant)
+        let upcoming = intervalTasksSoonestFirst(plant).prefix(2)
+        card {
+            HStack(spacing: 12) {
+                ZStack {
+                    Circle().fill(status.tint.opacity(0.15))
+                    Image(systemName: status.symbol).font(.title3).foregroundStyle(status.tint)
+                }
+                .frame(width: 44, height: 44)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(status.headline).familyTitle(.headline)
+                    Text(status.subhead)
+                        .font(.system(.subheadline, design: .rounded))
+                        .foregroundStyle(Color.inkSoft)
+                }
+                Spacer(minLength: 4)
+            }
+            if !upcoming.isEmpty {
+                FlowChips(tasks: Array(upcoming), chip: dueChip)
+            }
+        }
+    }
+
+    /// The plant's one-line health glance: overdue (terracotta) → due-today (green) → all-caught-up.
+    private func overviewStatus(_ plant: CareItem) -> (headline: String, subhead: String, symbol: String, tint: Color) {
+        let overdue = plant.tasks.filter { $0.isOverdue() }
+            .sorted { ($0.daysUntilDue() ?? 0) < ($1.daysUntilDue() ?? 0) }
+        if let worst = overdue.first, let d = worst.daysUntilDue() {
+            let n = -d
+            return ("\(worst.title) is overdue", "By \(n) day\(n == 1 ? "" : "s") — give it some love.",
+                    PlantCarePreset.symbol(forTitle: worst.title), .terracotta)
+        }
+        let dueToday = plant.tasks.filter { ($0.daysUntilDue() ?? 1) == 0 }
+        if let today = dueToday.first {
+            let extra = dueToday.count - 1
+            let sub = extra > 0 ? "And \(extra) more due today." : "Right on schedule — mark it when it's done."
+            return ("Needs \(today.title.lowercased()) today", sub,
+                    PlantCarePreset.symbol(forTitle: today.title), .bacanGreen)
+        }
+        if let next = intervalTasksSoonestFirst(plant).first, let d = next.daysUntilDue() {
+            return ("All caught up", "Next up: \(next.title.lowercased()) in \(d) day\(d == 1 ? "" : "s").",
+                    "checkmark.seal.fill", .bacanGreen)
+        }
+        return ("All caught up", "This one's low-maintenance right now.", "checkmark.seal.fill", .bacanGreen)
+    }
+
+    /// Interval (auto-due) tasks, soonest-first (overdue first). Manual/seasonal tasks are excluded from
+    /// the overview's "next up" glance since they never come due on their own.
+    private func intervalTasksSoonestFirst(_ plant: CareItem) -> [CareTask] {
+        plant.tasks
+            .filter { $0.intervalDays != nil }
+            .sorted { ($0.daysUntilDue() ?? Int.max) < ($1.daysUntilDue() ?? Int.max) }
+    }
+
+    private func dueChip(_ task: CareTask) -> some View {
+        let overdue = task.isOverdue()
+        let days = task.daysUntilDue()
+        let tint: Color = overdue ? .terracotta : ((days ?? 1) <= 0 ? .bacanGreen : .inkSoft)
+        return Label(dueChipText(task), systemImage: PlantCarePreset.symbol(forTitle: task.title))
+            .font(.caption.weight(.medium))
+            .foregroundStyle(tint)
+            .padding(.horizontal, 10).padding(.vertical, 6)
+            .background(Capsule().fill(tint.opacity(0.12)))
+    }
+
+    private func dueChipText(_ task: CareTask) -> String {
+        guard let d = task.daysUntilDue() else { return "\(task.title) · anytime" }
+        if d < 0 { return "\(task.title) overdue \(-d)d" }
+        if d == 0 { return "\(task.title) today" }
+        return "\(task.title) in \(d) day\(d == 1 ? "" : "s")"
+    }
+
+    // MARK: Care tasks (every task, inline mark-done)
+
+    @ViewBuilder
+    private func careTasksCard(_ plant: CareItem) -> some View {
+        card {
+            Text("Care tasks").familyTitle(.headline)
+            if plant.tasks.isEmpty {
+                Text("No care tasks yet — tap Edit to add watering, fertilizing and more.")
+                    .font(.caption).foregroundStyle(Color.inkSoft)
+            } else {
+                VStack(spacing: 14) {
+                    ForEach(plant.tasks) { task in
+                        PlantTaskRow(
+                            task: task,
+                            members: store.members,
+                            onMarkDone: {
+                                store.send(.markCareTaskDone(itemID: plant.id, taskID: task.id))
+                            }
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    // MARK: Details
+
+    @ViewBuilder
+    private func detailsCard(_ plant: CareItem) -> some View {
+        let waterTask = plant.tasks.first { PlantCarePreset.matching($0.title) == .water }
+        let hasAny = (plant.location?.isEmpty == false)
+            || (plant.careNotes?.isEmpty == false)
+            || (waterTask?.lastDoneAt != nil)
+        card {
+            Text("Details").familyTitle(.headline)
+            if !hasAny {
+                Text("No details yet — add a location and care notes from Edit.")
+                    .font(.caption).foregroundStyle(Color.inkSoft)
+            } else {
+                if let location = plant.location, !location.isEmpty {
+                    detailRow("Location", location, symbol: "mappin.and.ellipse")
+                }
+                if let notes = plant.careNotes, !notes.isEmpty {
+                    detailRow("Care notes", notes, symbol: "note.text")
+                }
+                if let water = waterTask, let last = water.lastDoneAt {
+                    detailRow("Last watered", lastDonePhrase(water, last: last), symbol: "drop.fill")
+                }
+            }
+        }
+    }
+
+    private func detailRow(_ label: String, _ value: String, symbol: String) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: symbol)
+                .font(.subheadline).foregroundStyle(Color.bacanGreen)
+                .frame(width: 22)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(label).font(.caption).foregroundStyle(Color.inkSoft)
+                Text(value).foregroundStyle(Color.ink)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 0)
+        }
+    }
+
+    /// "Jul 2 by Migueluh" — the completed-water date and who did it.
+    private func lastDonePhrase(_ task: CareTask, last: Date) -> String {
+        let date = last.formatted(.dateTime.month(.abbreviated).day())
+        if let by = task.lastDoneBy, let name = store.members.first(where: { $0.id == by })?.name {
+            return "\(date) by \(name)"
+        }
+        return date
+    }
+
+    // MARK: SEAM (P19-C3) — context-aware AI troubleshooting
+
+    /// SEAM (P19-C3): context-aware adaptive care + AI troubleshooting lands here — a per-plant CONTEXT
+    /// field (pot type / soil / indoor-outdoor / light exposure) that FEEDS care-interval adjustment,
+    /// plus a "Troubleshoot / Ask about this plant" flow (Claude + optional problem photo + species +
+    /// context → diagnosis / fix / optional interval change). Shipped now as a **disabled placeholder**
+    /// so the entry point + layout are settled; C3 fills the action and the context editor.
+    @ViewBuilder
+    private func troubleshootSeam(_ plant: CareItem) -> some View {
+        Button {} label: {
+            HStack(spacing: 12) {
+                ZStack {
+                    Circle().fill(Color.sky.opacity(0.15))
+                    Image(systemName: "stethoscope").font(.title3).foregroundStyle(Color.sky)
+                }
+                .frame(width: 44, height: 44)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Troubleshoot this plant").familyTitle(.headline)
+                    Text("Drooping? Spots? Pests? Ask — coming soon.")
+                        .font(.caption).foregroundStyle(Color.inkSoft)
+                }
+                Spacer(minLength: 4)
+            }
+            .padding(16)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(RoundedRectangle(cornerRadius: 18, style: .continuous).fill(Color.familySurface))
+        }
+        .buttonStyle(.plain)
+        .disabled(true)
+        .opacity(0.7)
+        .accessibilityIdentifier("plant-troubleshoot-seam")
+    }
+
+    // MARK: Card scaffold
+
+    private func card<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 12, content: content)
+            .padding(16)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(RoundedRectangle(cornerRadius: 18, style: .continuous).fill(Color.familySurface))
+    }
+}
+
+/// One row in the plant DETAIL's care-task list: a kind glyph (derived from the task title via
+/// ``PlantCarePreset/symbol(forTitle:)``), the task title, a due line ("Due today" / "Overdue by 2
+/// days" / "Fertilized Jun 20 by Migueluh"), and an inline mark-done button that plays the shared
+/// ``LeafUnfurl`` motion. Mark-done routes through the parent's `markCareTaskDone` →
+/// ``CareCompletion``/`writeCareDone` path (server-consistent, logs activity with the right verb).
+private struct PlantTaskRow: View {
+    let task: CareTask
+    let members: [HouseholdMember]
+    let onMarkDone: () -> Void
+
+    @State private var unfurlOn = false
+
+    var body: some View {
+        HStack(spacing: 12) {
+            ZStack {
+                Circle().fill(Color.bacanGreen.opacity(0.15))
+                Image(systemName: PlantCarePreset.symbol(forTitle: task.title))
+                    .font(.subheadline).foregroundStyle(Color.bacanGreen)
+            }
+            .frame(width: 38, height: 38)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(task.title).foregroundStyle(Color.ink)
+                dueLine
+            }
+
+            Spacer(minLength: 4)
+
+            Button {
+                onMarkDone()
+                unfurlOn = true
+                Task { try? await Task.sleep(for: .milliseconds(800)); unfurlOn = false }
+            } label: {
+                Image(systemName: "checkmark.circle.fill")
+                    .font(.title3)
+                    .foregroundStyle(Color.bacanGreen)
+                    .leafUnfurl(isOn: unfurlOn, color: .bacanGreen)
+            }
+            .buttonStyle(.pressable)
+            .accessibilityLabel("Mark \(task.title) done")
+            .accessibilityIdentifier("plant-task-done-\(task.id)")
+        }
+    }
+
+    /// Due copy + color, mirroring the roster row's voice but scoped to this one task.
+    @ViewBuilder
+    private var dueLine: some View {
+        let days = task.daysUntilDue()
+        if let d = days, d < 0 {
+            Text("Overdue by \(-d) day\(-d == 1 ? "" : "s")")
+                .font(.caption).fontWeight(.semibold).foregroundStyle(Color.terracotta)
+        } else if days == 0 {
+            Text("Due today")
+                .font(.caption).fontWeight(.semibold).foregroundStyle(Color.bacanGreen)
+        } else if let d = days {
+            if task.lastDoneAt != nil {
+                Text(doneText).font(.caption).foregroundStyle(Color.inkSoft)
+            } else {
+                Text("Due in \(d) day\(d == 1 ? "" : "s")")
+                    .font(.caption).foregroundStyle(Color.inkSoft)
+            }
+        } else {
+            // Manual / seasonal (no cadence).
+            if task.lastDoneAt != nil {
+                Text(doneText).font(.caption).foregroundStyle(Color.inkSoft)
+            } else {
+                Text("Mark it when you do it").font(.caption).foregroundStyle(Color.inkSoft)
+            }
+        }
+    }
+
+    /// "Fertilized Jun 20 by Migueluh" — the completed task's title picks the past-tense verb.
+    private var doneText: String {
+        guard let last = task.lastDoneAt else { return "" }
+        let date = last.formatted(.dateTime.month(.abbreviated).day())
+        let verb = ActivityItem.careVerb(forTask: task.title).capitalizedFirst
+        if let by = task.lastDoneBy, let name = members.first(where: { $0.id == by })?.name {
+            return "\(verb) \(date) by \(name)"
+        }
+        return "\(verb) \(date)"
+    }
+}
+
+/// A tiny left-aligned wrapping row of due chips for the overview's "next up" glance. Two chips fit a
+/// line on every device we target; this wraps defensively if a title runs long.
+private struct FlowChips<Chip: View>: View {
+    let tasks: [CareTask]
+    let chip: (CareTask) -> Chip
+
+    var body: some View {
+        HStack(spacing: 8) {
+            ForEach(tasks) { task in chip(task) }
+            Spacer(minLength: 0)
+        }
     }
 }
 
@@ -1170,13 +1572,14 @@ private struct ActivityDetailView: View {
 /// A single Plants row: circular photo thumbnail (or a leaf fallback), name, species, the soonest
 /// task's due line (task-title-driven verb wording — "Water due today" / "Watered Jul 2 by …"), and
 /// a water-drop mark-done affordance that plays the ``LeafUnfurl`` motion. Routes through the same
-/// `markCareTaskDone` → ``CareCompletion``/`writeCareDone` path as House care.
+/// `markCareTaskDone` → ``CareCompletion``/`writeCareDone` path as House care. Tapping the row
+/// (thumbnail/name area) now pushes the plant DETAIL page (P19-C1) — the mark-done drop still acts in
+/// place, so it sits *outside* the navigating region.
 private struct PlantRow: View {
     let item: CareItem
     let members: [HouseholdMember]
     /// Cached photo bytes for `item.photoPath`, if loaded. `nil` ⇒ leaf fallback.
     let photo: Data?
-    let onEdit: () -> Void
     let onMarkDone: (_ taskID: String) -> Void
 
     @State private var unfurlOn = false
@@ -1185,18 +1588,21 @@ private struct PlantRow: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            thumbnail
-                .frame(width: 44, height: 44)
-                .clipShape(Circle())
-
-            Button(action: onEdit) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(item.name).foregroundStyle(Color.ink)
-                    speciesLine
-                    dueLine
+            NavigationLink(value: ChoresView.Destination.plantDetail(id: item.id)) {
+                HStack(spacing: 12) {
+                    thumbnail
+                        .frame(width: 44, height: 44)
+                        .clipShape(Circle())
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(item.name).foregroundStyle(Color.ink)
+                        speciesLine
+                        dueLine
+                    }
                 }
+                .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .accessibilityIdentifier("plant-row-\(item.id)")
 
             Spacer()
 

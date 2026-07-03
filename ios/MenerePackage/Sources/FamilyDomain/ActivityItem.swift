@@ -41,8 +41,10 @@ public struct ActivityItem: Codable, Equatable, Identifiable, Sendable {
 
     /// A care task was marked done. `name` is the actor's first-name-friendly name; `item` is the
     /// care item's name ("HVAC filter", "Monstera"); `task` is the completed task's title, which
-    /// picks a natural verb (water→"watered", feed→"fed", mist→"misted", else "took care of") so
-    /// plants read "Migueluh watered "Monstera"". `symbol` defaults to a house glyph but callers
+    /// picks a natural verb (water→"watered", fertilize→"fertilized", re-pot→"repotted", prune→
+    /// "pruned", rotate→"rotated", mist→"misted", clean leaves→"wiped down", pest check→"checked",
+    /// feed→"fed", else "took care of") so plants read "Migueluh fertilized "Monstera"". `symbol`
+    /// defaults to a house glyph but callers
     /// pass the item's own icon. Purely additive — activity docs are plain text, so old ones decode.
     public static func careDone(
         item: String, task: String? = nil, by name: String?, actorID: String?, symbol: String = "house.fill"
@@ -58,8 +60,17 @@ public struct ActivityItem: Codable, Equatable, Identifiable, Sendable {
     public static func careVerb(forTask task: String?) -> String {
         guard let t = task?.lowercased() else { return "took care of" }
         if t.contains("water") { return "watered" }
-        if t.contains("feed") || t.contains("fertil") { return "fed" }
+        // Plant care (P19-C1). Order matters: "fertil" before "feed" so "Fertilize" reads "fertilized"
+        // (the richer plant verb) while a house/pet "feed" still reads "fed". "leaves"/"wipe" is
+        // deliberately narrow so the house "Deep clean" task keeps the warm "took care of".
+        if t.contains("fertil") { return "fertilized" }
+        if t.contains("feed") { return "fed" }
+        if t.contains("re-pot") || t.contains("repot") { return "repotted" }
+        if t.contains("prune") { return "pruned" }
+        if t.contains("rotate") { return "rotated" }
         if t.contains("mist") { return "misted" }
+        if t.contains("leaves") || t.contains("wipe") { return "wiped down" }
+        if t.contains("pest") { return "checked" }
         // Pet care (P10). The composed line is "{name} {verb} \"{pet}\"", so "trimmed nails for"
         // reads "Migueluh trimmed nails for \"Fajita\"". Clinical med verbs are deliberately skipped
         // (heartworm/flea-tick fall to the warm "took care of"). "bath" only — "wash" would misfire on

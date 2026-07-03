@@ -318,8 +318,10 @@ public struct CareItem: Codable, Equatable, Identifiable, Sendable {
     /// existing call sites; new code should prefer ``intervalChoices(for:)``.
     public static let intervalChoices: [Int?] = [7, 14, 30, 60, 90, 180, nil]
 
-    /// Plant watering-ish cadences — tighter intervals than house upkeep.
-    public static let plantIntervalChoices: [Int?] = [2, 3, 5, 7, 10, 14, 30, nil]
+    /// Plant care cadences — tight watering-ish intervals up front, plus the longer prune/re-pot
+    /// windows (90 = quarterly, 365 = yearly) so every P19-C1 care-task preset (Prune 90d, Re-pot 365d)
+    /// is representable in the form's cadence picker.
+    public static let plantIntervalChoices: [Int?] = [2, 3, 5, 7, 10, 14, 30, 90, 365, nil]
 
     /// Yard cadences (P9-C3) — seasonal windows measured in months, plus a `nil` "seasonal / manual"
     /// for one-off jobs you only mark when you do them.
