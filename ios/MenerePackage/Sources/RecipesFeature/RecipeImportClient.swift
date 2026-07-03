@@ -35,10 +35,13 @@ extension RecipeImportClient: DependencyKey {
             }
             let instructions = (r["instructions"] as? [String] ?? []).filter { !$0.isEmpty }
 
+            let imageURL = (r["imageURL"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+
             return Recipe(
                 title: title,
                 servings: max(1, servings),
                 sourceURL: (r["sourceURL"] as? String) ?? url,
+                imageURL: imageURL,
                 ingredients: ingredients,
                 instructions: instructions
             )

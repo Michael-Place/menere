@@ -13,11 +13,12 @@ public struct RecipesView: View {
 
     public var body: some View {
         VStack(spacing: 0) {
-            Picker("View", selection: $store.segment) {
-                ForEach(RecipesReducer.Segment.allCases, id: \.self) { Text($0.rawValue).tag($0) }
-            }
-            .pickerStyle(.segmented)
+            FamilySegmentedControl(
+                selection: $store.segment,
+                options: RecipesReducer.Segment.allCases.map { ($0, $0.rawValue) }
+            )
             .padding()
+            .selectionHaptic(store.segment)
 
             switch store.segment {
             case .recipes: recipesList
@@ -76,24 +77,28 @@ public struct RecipesView: View {
                 List {
                     ForEach(store.recipes) { recipe in
                         Button { store.send(.editTapped(recipe)) } label: {
-                            HStack {
-                                Button { store.send(.toggleFavorite(recipe)) } label: {
-                                    Image(systemName: recipe.isFavorite ? "star.fill" : "star")
-                                        .foregroundStyle(recipe.isFavorite ? Color.marigold : Color.inkSoft)
-                                }
-                                .buttonStyle(.borderless)
+                            HStack(spacing: 12) {
+                                RecipeThumbnail(imageURL: recipe.imageURL)
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text(recipe.title).foregroundStyle(Color.ink)
                                     Text("\(recipe.ingredients.count) ingredients · serves \(recipe.servings)")
                                         .font(.caption).foregroundStyle(Color.inkSoft)
                                 }
+                                Spacer(minLength: 0)
+                                Button { store.send(.toggleFavorite(recipe)) } label: {
+                                    Image(systemName: recipe.isFavorite ? "star.fill" : "star")
+                                        .foregroundStyle(recipe.isFavorite ? Color.marigold : Color.inkSoft)
+                                }
+                                .buttonStyle(.borderless)
                             }
                         }
                         .buttonStyle(.plain)
+                        .listRowBackground(Color.familyCanvas)
                     }
                 }
                 .listStyle(.plain)
                 .scrollContentBackground(.hidden)
+                .background(Color.familyCanvas)
             }
         }
     }
@@ -154,10 +159,12 @@ public struct RecipesView: View {
                             Image(systemName: "pencil.circle").foregroundStyle(Color.bacanGreen)
                         }
                     }
+                    .listRowBackground(Color.familyCanvas)
                 }
             }
             .listStyle(.plain)
             .scrollContentBackground(.hidden)
+            .background(Color.familyCanvas)
 
             Button {
                 store.send(.generateGroceryList)
@@ -185,5 +192,47 @@ public struct RecipesView: View {
         let name = entry.restaurantName ?? ""
         if let time = entry.reservationTimeShort { return "\(name) · \(time)" }
         return name
+    }
+}
+
+/// A small rounded leading square for a recipe row: loads the recipe photo when there is one,
+/// shows a warm placeholder while it loads, and falls back to a tinted food glyph when the recipe
+/// has no image (or the URL fails to load).
+struct RecipeThumbnail: View {
+    let imageURL: String?
+    var size: CGFloat = 52
+
+    var body: some View {
+        Group {
+            if let imageURL, let url = URL(string: imageURL) {
+                AsyncImage(url: url) { phase in
+                    switch phase {
+                    case let .success(image):
+                        image.resizable().scaledToFill()
+                    case .empty:
+                        placeholder(showsSpinner: true)
+                    default:
+                        placeholder(showsSpinner: false)
+                    }
+                }
+            } else {
+                placeholder(showsSpinner: false)
+            }
+        }
+        .frame(width: size, height: size)
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+    }
+
+    private func placeholder(showsSpinner: Bool) -> some View {
+        ZStack {
+            Color.bacanGreen.opacity(0.14)
+            if showsSpinner {
+                ProgressView()
+            } else {
+                Image(systemName: "fork.knife")
+                    .font(.system(size: size * 0.4, weight: .medium))
+                    .foregroundStyle(Color.bacanGreen)
+            }
+        }
     }
 }

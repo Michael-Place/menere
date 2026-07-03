@@ -96,6 +96,7 @@ public struct RecipeFormReducer {
                 state.recipe.ingredients = imported.ingredients
                 state.recipe.instructions = imported.instructions
                 if let src = imported.sourceURL { state.recipe.sourceURL = src }
+                if let img = imported.imageURL { state.recipe.imageURL = img }
                 return .none
 
             case let .importResponse(.failure(failure)):
@@ -146,6 +147,30 @@ public struct RecipeFormView: View {
     public var body: some View {
         NavigationStack {
             Form {
+                if let imageURL = store.recipe.imageURL, let url = URL(string: imageURL) {
+                    Section {
+                        AsyncImage(url: url) { phase in
+                            switch phase {
+                            case let .success(image):
+                                image.resizable().scaledToFill()
+                            case .empty:
+                                ZStack { Color.bacanGreen.opacity(0.12); ProgressView() }
+                            default:
+                                ZStack {
+                                    Color.bacanGreen.opacity(0.12)
+                                    Image(systemName: "fork.knife")
+                                        .font(.largeTitle).foregroundStyle(Color.bacanGreen)
+                                }
+                            }
+                        }
+                        .frame(height: 200)
+                        .frame(maxWidth: .infinity)
+                        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                        .listRowInsets(EdgeInsets())
+                        .listRowBackground(Color.clear)
+                    }
+                }
+
                 Section {
                     TextField("Title", text: $store.recipe.title)
                         .accessibilityIdentifier("recipe-title-field")

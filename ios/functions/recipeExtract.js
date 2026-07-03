@@ -8,7 +8,7 @@
  *   2. Claude fallback — structured tool-use extraction when no JSON-LD is present.
  *
  * No rate limiting (Menere is a private family app). Returns Menere-shaped recipe fields:
- * { title, servings, ingredients: [{name, quantity, unit}], instructions: [string], sourceURL }.
+ * { title, servings, ingredients: [{name, quantity, unit}], instructions: [string], imageURL, sourceURL }.
  */
 
 const Anthropic = require("@anthropic-ai/sdk");
@@ -37,8 +37,12 @@ const RECIPE_EXTRACTION_TOOL = {
             },
           },
           instructions: { type: "array", items: { type: "string" } },
+          imageURL: {
+            type: ["string", "null"],
+            description: "URL of the recipe's photo (og:image or lead image), or null if none.",
+          },
         },
-        required: ["title", "servings", "ingredients", "instructions"],
+        required: ["title", "servings", "ingredients", "instructions", "imageURL"],
       },
     },
     required: ["recipe"],
@@ -78,7 +82,43 @@ function parseSchemaRecipe(schema) {
     servings: parseServings(schema.recipeYield),
     ingredients: (schema.recipeIngredient || []).map(parseIngredientString),
     instructions: parseInstructions(schema.recipeInstructions),
+    imageURL: parseImage(schema.image),
   };
+}
+
+/**
+ * Normalize schema.org Recipe `image` into a single URL string (or null).
+ * Handles a plain string, an array of strings/objects, or an ImageObject `{ url }`.
+ */
+function parseImage(image) {
+  if (!image) return null;
+  if (typeof image === "string") return image.trim() || null;
+  if (Array.isArray(image)) {
+    for (const item of image) {
+      const url = parseImage(item);
+      if (url) return url;
+    }
+    return null;
+  }
+  if (typeof image === "object") {
+    if (typeof image.url === "string") return image.url.trim() || null;
+    if (Array.isArray(image.url)) return parseImage(image.url);
+  }
+  return null;
+}
+
+/** Fallback lead image: the page's og:image (or twitter:image) meta tag. */
+function extractOgImage(html) {
+  const patterns = [
+    /<meta[^>]+property\s*=\s*["']og:image["'][^>]+content\s*=\s*["']([^"']+)["']/i,
+    /<meta[^>]+content\s*=\s*["']([^"']+)["'][^>]+property\s*=\s*["']og:image["']/i,
+    /<meta[^>]+name\s*=\s*["']twitter:image["'][^>]+content\s*=\s*["']([^"']+)["']/i,
+  ];
+  for (const re of patterns) {
+    const m = html.match(re);
+    if (m && m[1]) return m[1].trim();
+  }
+  return null;
 }
 
 function parseServings(y) {
@@ -161,20 +201,28 @@ async function callClaudeForRecipeExtraction(apiKey, content) {
  */
 async function extractRecipe({ url, text, apiKey }) {
   let content = text || "";
+  let ogImage = null;
   if (url) {
     const response = await fetch(url, {
       headers: { "User-Agent": "Mozilla/5.0 (compatible; MenereBot/1.0; recipe-extraction)" },
     });
     content = await response.text();
+    ogImage = extractOgImage(content);
     const jsonLd = extractFromJsonLD(content);
-    if (jsonLd) return { recipe: { ...jsonLd, sourceURL: url }, source: "json-ld" };
+    if (jsonLd) {
+      // JSON-LD Recipe `image` wins; fall back to the page's og:image when absent.
+      const imageURL = jsonLd.imageURL || ogImage || null;
+      return { recipe: { ...jsonLd, imageURL, sourceURL: url }, source: "json-ld" };
+    }
   }
   if (!content.trim()) {
     throw new Error("No content to extract from");
   }
   const extracted = await callClaudeForRecipeExtraction(apiKey, content.substring(0, 12000));
   if (!extracted) throw new Error("Could not extract a recipe from the content");
-  return { recipe: { ...extracted, sourceURL: url || null }, source: "claude" };
+  // Claude may return an imageURL from inline content; prefer og:image when it didn't.
+  const imageURL = extracted.imageURL || ogImage || null;
+  return { recipe: { ...extracted, imageURL, sourceURL: url || null }, source: "claude" };
 }
 
 module.exports = { extractRecipe };

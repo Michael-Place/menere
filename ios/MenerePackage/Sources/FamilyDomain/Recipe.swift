@@ -36,6 +36,9 @@ public struct Recipe: Codable, Equatable, Identifiable, Sendable {
     public var title: String
     public var servings: Int
     public var sourceURL: String?
+    /// The recipe's photo (from JSON-LD `image` / `og:image` on import). Optional and decode-safe:
+    /// bulk-imported docs carry it, hand-added/older recipes omit it (fall back to a food glyph).
+    public var imageURL: String?
     public var ingredients: [Ingredient]
     public var instructions: [String]
     public var isFavorite: Bool
@@ -47,6 +50,7 @@ public struct Recipe: Codable, Equatable, Identifiable, Sendable {
         title: String,
         servings: Int = 4,
         sourceURL: String? = nil,
+        imageURL: String? = nil,
         ingredients: [Ingredient] = [],
         instructions: [String] = [],
         isFavorite: Bool = false,
@@ -57,11 +61,17 @@ public struct Recipe: Codable, Equatable, Identifiable, Sendable {
         self.title = title
         self.servings = servings
         self.sourceURL = sourceURL
+        self.imageURL = imageURL
         self.ingredients = ingredients
         self.instructions = instructions
         self.isFavorite = isFavorite
         self.createdAt = createdAt
         self.updatedAt = updatedAt
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, title, servings, sourceURL, imageURL
+        case ingredients, instructions, isFavorite, createdAt, updatedAt
     }
 
     public init(from decoder: Decoder) throws {
@@ -70,11 +80,28 @@ public struct Recipe: Codable, Equatable, Identifiable, Sendable {
         title = try c.decode(String.self, forKey: .title)
         servings = try c.decodeIfPresent(Int.self, forKey: .servings) ?? 4
         sourceURL = try c.decodeIfPresent(String.self, forKey: .sourceURL)
+        imageURL = try c.decodeIfPresent(String.self, forKey: .imageURL)
         ingredients = try c.decodeIfPresent([Ingredient].self, forKey: .ingredients) ?? []
         instructions = try c.decodeIfPresent([String].self, forKey: .instructions) ?? []
         isFavorite = try c.decodeIfPresent(Bool.self, forKey: .isFavorite) ?? false
         createdAt = try c.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
         updatedAt = try c.decodeIfPresent(Date.self, forKey: .updatedAt) ?? Date()
+    }
+
+    /// Encode-safe mirror: a nil `imageURL` is omitted (never written as null), so hand-added
+    /// recipes stay lean and imported ones keep their photo.
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encode(title, forKey: .title)
+        try c.encode(servings, forKey: .servings)
+        try c.encodeIfPresent(sourceURL, forKey: .sourceURL)
+        try c.encodeIfPresent(imageURL, forKey: .imageURL)
+        try c.encode(ingredients, forKey: .ingredients)
+        try c.encode(instructions, forKey: .instructions)
+        try c.encode(isFavorite, forKey: .isFavorite)
+        try c.encode(createdAt, forKey: .createdAt)
+        try c.encode(updatedAt, forKey: .updatedAt)
     }
 }
 
