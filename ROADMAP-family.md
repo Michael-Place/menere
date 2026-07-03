@@ -567,6 +567,19 @@ tools. **Recommended order (Michael to confirm):**
    documented; OCPP 1.6J fallback). House-card line: "Truck · 82% · ~230 mi ·
    charging — full by 6:20am". Composes with P6.2 drive-times + P14 ("charged
    enough for the weekend trip?").
+7. **Apple HomeKit bridge (Path B, 2026-07-02) → P15-C7.** ✅ **SHIPPED** — Michael's Refoss
+   garage turned out HomeKit-paired + never cloud-registered (Meross LAN key locked; `MerossClient`
+   stays as the alternate path). Integrated **Apple HomeKit directly** (`HomeKitClient` wraps
+   `HMHomeManager`; entitlement `com.apple.developer.homekit` + `NSHomeKitUsageDescription`): local,
+   keyless, and it absorbs EVERY HomeKit accessory. Async `inventory()` returns a Sendable snapshot
+   (`HKInventory`→`HKAccessory`→`HKService`→`HKCharacteristicSnapshot`); `setCharacteristic` writes
+   garage/lock/power/brightness. House "Garage" section is **HomeKit-sourced when the Home has a
+   garage opener, else Meross fallback** (precedence documented in `HouseReducer`); a new **HomeKit**
+   section adds door locks (unlock confirmation-gated), plugs/switches (toggle), and temp/contact
+   sensors (read-only) — **lights excluded** (Hue owns them). An "All HomeKit devices" inventory
+   surface reveals the rest of the Home. Settings "Smart home" gains a HomeKit row (Connect / denied
+   deep-link / Connected · {home} · N). **Shipped snapshot+refresh** (no delegate `changes()` stream
+   this chunk). Mock via `config/homekit {mock:true}`.
 These are the "layered signals" Michael predicted (2026-07-02) — real automations
 (shades+lights+thermostat+presence+truck) emerge once several are in.
 

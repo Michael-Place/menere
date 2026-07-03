@@ -28,6 +28,8 @@
 	<string>Bacán uses the camera to scan wine labels and family documents.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>Bacán uses your location to estimate drive times to dinner.</string>
+	<key>NSHomeKitUsageDescription</key>
+	<string>Bacán connects to your Home accessories — the garage, locks, and sensors — right on your network.</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Bacán talks to your family's home devices — shades, speakers, and bridges — on your home Wi-Fi.</string>
 	<key>NSBonjourServices</key>

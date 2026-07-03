@@ -1,5 +1,6 @@
 import ComposableArchitecture
 import FamilyDomain
+import HomeKitClient
 import HubspaceClient
 import HueClient
 import LutronClient
@@ -22,7 +23,8 @@ public struct HouseView: View {
         config: HueConfig, members: [HouseholdMember], bridges: [BridgeSnapshot],
         lutronConfig: LutronConfig? = nil, shades: [LutronShade] = [],
         sonosConfig: SonosConfig? = nil, nestConfig: NestConfig? = nil,
-        hubspaceConfig: HubspaceConfig? = nil, merossConfig: MerossConfig? = nil
+        hubspaceConfig: HubspaceConfig? = nil, merossConfig: MerossConfig? = nil,
+        homekitConfig: HomeKitConfig? = nil
     ) {
         _store = Bindable(
             wrappedValue: Store(
@@ -32,7 +34,8 @@ public struct HouseView: View {
                     sonosConfig: sonosConfig,
                     nestConfig: nestConfig,
                     hubspaceConfig: hubspaceConfig,
-                    merossConfig: merossConfig
+                    merossConfig: merossConfig,
+                    homekitConfig: homekitConfig
                 )
             ) { HouseReducer() }
         )
@@ -70,10 +73,17 @@ public struct HouseView: View {
                 if !store.spigots.isEmpty {
                     waterSection(store.spigots)
                 }
-                // Garage section (P15-C5) — one row per Meross/Refoss door, below Water. Renders nothing
-                // when there's no door (not set up / unreachable) — silent degrade.
+                // Garage section (P15-C5 / P15-C7) — one row per door, below Water. HomeKit powers this
+                // when the authorized Home has a garage opener; else the Meross/Refoss fallback. Renders
+                // nothing when there's no door — silent degrade.
                 if !store.garageDoors.isEmpty {
                     garageSection(store.garageDoors)
+                }
+                // HomeKit section (P15-C7) — locks / plugs / sensors NOT covered by the native
+                // integrations (lights excluded — Hue owns them). Plus the "All HomeKit devices" inventory
+                // affordance. Renders when the authorized/mock Home has controllable accessories.
+                if let inventory = store.homekitInventory {
+                    homekitSection(inventory)
                 }
             }
             .padding(.horizontal)
@@ -116,6 +126,21 @@ public struct HouseView: View {
             Button("Cancel", role: .cancel) { store.send(.cancelGarageOpen) }
         } message: {
             Text("This opens the garage door.")
+        }
+        // Unlocking a HomeKit door is a security action → always confirm (mirrors garage open). Locking is
+        // safe and commits directly.
+        .confirmationDialog(
+            "Unlock the door?",
+            isPresented: Binding(
+                get: { store.confirmingHomeKitUnlock != nil },
+                set: { if !$0 { store.send(.cancelHomeKitUnlock) } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("Unlock", role: .destructive) { store.send(.confirmHomeKitUnlock) }
+            Button("Cancel", role: .cancel) { store.send(.cancelHomeKitUnlock) }
+        } message: {
+            Text("This unlocks the door.")
         }
     }
 
@@ -719,6 +744,212 @@ public struct HouseView: View {
         return door.isOpen ? Color.terracotta : Color.bacanGreen
     }
 
+    // MARK: HomeKit section (P15-C7)
+
+    @ViewBuilder
+    private func homekitSection(_ inventory: HKInventory) -> some View {
+        let locks = inventory.lockAccessories
+        let plugs = inventory.powerAccessories
+        let sensors = inventory.sensorAccessories
+        if !locks.isEmpty || !plugs.isEmpty || !sensors.isEmpty || !inventory.accessories.isEmpty {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("HomeKit".uppercased())
+                    .font(.system(.caption, design: .rounded).weight(.semibold))
+                    .foregroundStyle(Color.inkSoft)
+
+                if !locks.isEmpty {
+                    homekitCard(locks.map { lockRow($0) })
+                }
+                if !plugs.isEmpty {
+                    homekitCard(plugs.map { plugRow($0) })
+                }
+                if !sensors.isEmpty {
+                    homekitCard(sensors.map { sensorRow($0) })
+                }
+                // "All HomeKit devices" — the superpower-discovery surface (read-only, every accessory).
+                homekitCard([AnyView(inventoryLinkRow(count: inventory.accessories.count))])
+            }
+            .accessibilityIdentifier("house-homekit")
+        }
+    }
+
+    /// A rounded card wrapping a set of already-built rows with dividers between them.
+    private func homekitCard(_ rows: [AnyView]) -> some View {
+        VStack(spacing: 0) {
+            ForEach(Array(rows.enumerated()), id: \.offset) { idx, row in
+                row
+                if idx < rows.count - 1 {
+                    Divider().overlay(Color.inkSoft.opacity(0.15)).padding(.leading, 16)
+                }
+            }
+        }
+        .background(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .fill(Color.familySurface)
+        )
+    }
+
+    /// A door-lock row: state (green shield when locked / terracotta when unlocked) + a Lock/Unlock button.
+    /// Unlock routes through the confirmation dialog; Lock commits directly.
+    private func lockRow(_ accessory: HKAccessory) -> AnyView {
+        let locked = accessory.lockIsLocked ?? true
+        return AnyView(
+            HStack(spacing: 12) {
+                Image(systemName: locked ? "lock.fill" : "lock.open.fill")
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundStyle(locked ? Color.bacanGreen : Color.terracotta)
+                    .frame(width: 26)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(accessory.name)
+                        .font(.system(.body, design: .rounded).weight(.medium))
+                        .foregroundStyle(Color.ink)
+                        .lineLimit(1)
+                    Text(locked ? "Locked" : "Unlocked")
+                        .font(.system(.caption, design: .rounded))
+                        .foregroundStyle(locked ? Color.bacanGreen : Color.terracotta)
+                        .accessibilityIdentifier("house-homekit-lock-status-\(accessory.id)")
+                }
+                Spacer(minLength: 0)
+                if locked {
+                    homekitPill("Unlock", systemImage: "lock.open", tint: .terracotta,
+                                id: "house-homekit-unlock-\(accessory.id)") {
+                        store.send(.homekitUnlockRequested(accessoryId: accessory.id))
+                    }
+                } else {
+                    homekitPill("Lock", systemImage: "lock", tint: .bacanGreen,
+                                id: "house-homekit-lock-\(accessory.id)") {
+                        store.send(.homekitLockRequested(accessoryId: accessory.id))
+                    }
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+            .accessibilityIdentifier("house-homekit-lock-\(accessory.id)-row")
+        )
+    }
+
+    /// A smart-plug / switch row: name + on/off status + a power toggle.
+    private func plugRow(_ accessory: HKAccessory) -> AnyView {
+        let on = accessory.powerIsOn ?? false
+        return AnyView(
+            HStack(spacing: 12) {
+                Image(systemName: "powerplug.fill")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(on ? Color.bacanGreen : Color.inkSoft)
+                    .frame(width: 22)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(accessory.name)
+                        .font(.system(.body, design: .rounded).weight(.medium))
+                        .foregroundStyle(Color.ink)
+                        .lineLimit(1)
+                    Text(on ? "On" : "Off")
+                        .font(.system(.caption, design: .rounded))
+                        .foregroundStyle(on ? Color.bacanGreen : Color.inkSoft)
+                        .accessibilityIdentifier("house-homekit-plug-status-\(accessory.id)")
+                }
+                Spacer(minLength: 0)
+                Toggle("", isOn: Binding(
+                    get: { on },
+                    set: { _ in store.send(.homekitToggleOutlet(accessoryId: accessory.id)) }
+                ))
+                .labelsHidden()
+                .tint(Color.bacanGreen)
+                .accessibilityIdentifier("house-homekit-plug-toggle-\(accessory.id)")
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+            .accessibilityIdentifier("house-homekit-plug-\(accessory.id)-row")
+        )
+    }
+
+    /// A read-only sensor row: temperature (°F) or contact (open/closed).
+    private func sensorRow(_ accessory: HKAccessory) -> AnyView {
+        AnyView(
+            HStack(spacing: 12) {
+                Image(systemName: accessory.hasService(.contactSensor) ? "sensor.fill" : "thermometer.medium")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(Color.inkSoft)
+                    .frame(width: 22)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(accessory.name)
+                        .font(.system(.body, design: .rounded).weight(.medium))
+                        .foregroundStyle(Color.ink)
+                        .lineLimit(1)
+                    Text(accessory.room ?? "HomeKit")
+                        .font(.system(.caption, design: .rounded))
+                        .foregroundStyle(Color.inkSoft)
+                }
+                Spacer(minLength: 0)
+                Text(sensorReading(accessory))
+                    .font(.system(.title3, design: .rounded).weight(.semibold))
+                    .foregroundStyle(Color.ink)
+                    .monospacedDigit()
+                    .accessibilityIdentifier("house-homekit-sensor-value-\(accessory.id)")
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+            .accessibilityIdentifier("house-homekit-sensor-\(accessory.id)-row")
+        )
+    }
+
+    private func sensorReading(_ accessory: HKAccessory) -> String {
+        if let f = accessory.temperatureF {
+            return "\(Int(f.rounded()))°"
+        }
+        if let closed = accessory.contactIsClosed {
+            return closed ? "Closed" : "Open"
+        }
+        return "—"
+    }
+
+    private func inventoryLinkRow(count: Int) -> AnyView {
+        AnyView(
+            NavigationLink {
+                HomeKitInventoryView(store: store)
+            } label: {
+                HStack(spacing: 12) {
+                    Image(systemName: "square.grid.2x2.fill")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(Color.bacanGreen)
+                        .frame(width: 22)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("All HomeKit devices")
+                            .font(.system(.body, design: .rounded).weight(.medium))
+                            .foregroundStyle(Color.ink)
+                        Text("\(count) accessor\(count == 1 ? "y" : "ies")")
+                            .font(.system(.caption, design: .rounded))
+                            .foregroundStyle(Color.inkSoft)
+                    }
+                    Spacer(minLength: 0)
+                    Image(systemName: "chevron.right")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(Color.inkSoft.opacity(0.6))
+                }
+                .contentShape(Rectangle())
+                .padding(.horizontal, 16)
+                .padding(.vertical, 12)
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("house-homekit-all-devices")
+        )
+    }
+
+    private func homekitPill(_ title: String, systemImage: String, tint: Color, id: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 4) {
+                Image(systemName: systemImage)
+                Text(title)
+            }
+            .font(.system(size: 14, weight: .semibold, design: .rounded))
+            .foregroundStyle(tint)
+            .padding(.horizontal, 12)
+            .frame(height: 32)
+            .background(Capsule(style: .continuous).fill(tint.opacity(0.14)))
+        }
+        .buttonStyle(.pressable)
+        .accessibilityIdentifier(id)
+    }
+
     // MARK: Room row
 
     private func lightsInRoom(_ roomId: String, bridgeId: String) -> [HueLight] {
@@ -953,6 +1184,79 @@ struct RoomDetailView: View {
                 RoundedRectangle(cornerRadius: 18, style: .continuous)
                     .fill(Color.familySurface)
             )
+    }
+}
+
+// MARK: - HomeKit inventory (P15-C7)
+
+/// The read-only "All HomeKit devices" list — EVERY accessory in the Home (name, room, category,
+/// reachability), no controls. This is the superpower-discovery surface: on Michael's real phone it
+/// reveals whatever HomeKit accessories the Home app has paired (the app can't know until it looks).
+struct HomeKitInventoryView: View {
+    let store: StoreOf<HouseReducer>
+
+    private var accessories: [HKAccessory] {
+        (store.homekitInventory?.accessories ?? []).sorted {
+            ($0.room ?? "~", $0.name) < ($1.room ?? "~", $1.name)
+        }
+    }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                if accessories.isEmpty {
+                    Text("No HomeKit accessories found.")
+                        .font(.system(.subheadline, design: .rounded))
+                        .foregroundStyle(Color.inkSoft)
+                        .padding()
+                } else {
+                    VStack(spacing: 0) {
+                        ForEach(Array(accessories.enumerated()), id: \.element.id) { idx, accessory in
+                            row(accessory)
+                            if idx < accessories.count - 1 {
+                                Divider().overlay(Color.inkSoft.opacity(0.15)).padding(.leading, 16)
+                            }
+                        }
+                    }
+                    .background(
+                        RoundedRectangle(cornerRadius: 18, style: .continuous)
+                            .fill(Color.familySurface)
+                    )
+                }
+            }
+            .padding(.horizontal)
+            .padding(.vertical, 12)
+        }
+        .background(Color.familyCanvas)
+        .navigationTitle(store.homekitInventory?.homeName ?? "All devices")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+
+    private func row(_ accessory: HKAccessory) -> some View {
+        HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(accessory.name)
+                    .font(.system(.body, design: .rounded).weight(.medium))
+                    .foregroundStyle(Color.ink)
+                    .lineLimit(1)
+                Text([accessory.room, accessory.category.displayName].compactMap { $0 }.joined(separator: " · "))
+                    .font(.system(.caption, design: .rounded))
+                    .foregroundStyle(Color.inkSoft)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 0)
+            HStack(spacing: 6) {
+                Circle()
+                    .fill(accessory.isReachable ? Color.bacanGreen : Color.inkSoft)
+                    .frame(width: 8, height: 8)
+                Text(accessory.isReachable ? "Reachable" : "Unreachable")
+                    .font(.system(.caption, design: .rounded))
+                    .foregroundStyle(Color.inkSoft)
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .accessibilityIdentifier("house-homekit-inventory-\(accessory.id)")
     }
 }
 

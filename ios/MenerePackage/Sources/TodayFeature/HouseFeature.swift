@@ -1,6 +1,7 @@
 import ComposableArchitecture
 import FamilyDomain
 import Foundation
+import HomeKitClient
 import HubspaceClient
 import HueClient
 import LutronClient
@@ -78,13 +79,33 @@ public struct HouseReducer {
         /// security action → always confirmed; closing is not.
         public var confirmingGarageOpen: Int?
 
+        // MARK: Apple HomeKit (P15-C7)
+        /// The household's OPTIONAL HomeKit config (nil is fine — HomeKit reads the live local Home once
+        /// authorized; the doc only forces the mock). Stable for the screen's lifetime.
+        public var homekitConfig: HomeKitConfig?
+        /// The app's HomeKit authorization (drives whether the live Home is read). Loaded on `.task`.
+        public var homekitAuth: HKAuthStatus = .notDetermined
+        /// The snapshot of the live (or mock) Home — powers the HomeKit section (locks/plugs/sensors) and,
+        /// when it contains a garage, the Garage section. Nil until loaded / not authorized.
+        public var homekitInventory: HKInventory?
+        /// Which integration powers the Garage section. **HomeKit takes precedence** when the authorized
+        /// Home contains a garage-door opener; otherwise the Meross/Refoss config is the fallback.
+        public var garageSource: GarageSource = .meross
+        /// channel → HomeKit accessory id, populated when the Garage section is HomeKit-sourced (so
+        /// `commitGarage` knows which accessory to write).
+        public var garageHomeKitAccessoryIds: [Int: String] = [:]
+        /// The accessory id awaiting an UNLOCK confirmation (drives the "Unlock the front door?" dialog).
+        /// Unlocking is a security action → always confirmed; locking is not (mirrors garage open/close).
+        public var confirmingHomeKitUnlock: String?
+
         public init(
             config: HueConfig, members: [HouseholdMember] = [], bridges: [BridgeSnapshot] = [],
             lutronConfig: LutronConfig? = nil, shades: [LutronShade] = [],
             sonosConfig: SonosConfig? = nil, sonosGroups: [SonosGroup] = [],
             nestConfig: NestConfig? = nil, thermostats: [NestThermostat] = [],
             hubspaceConfig: HubspaceConfig? = nil, spigots: [HubspaceSpigot] = [],
-            merossConfig: MerossConfig? = nil, garageDoors: [GarageDoor] = []
+            merossConfig: MerossConfig? = nil, garageDoors: [GarageDoor] = [],
+            homekitConfig: HomeKitConfig? = nil
         ) {
             self.config = config
             self.members = members
@@ -99,10 +120,14 @@ public struct HouseReducer {
             self.spigots = spigots
             self.merossConfig = merossConfig
             self.garageDoors = garageDoors
+            self.homekitConfig = homekitConfig
         }
 
         /// The transitional display state of a moving garage door.
         public enum GarageTransition: Equatable, Sendable { case opening, closing }
+
+        /// Which integration powers the Garage section (HomeKit wins when a HomeKit garage exists).
+        public enum GarageSource: Equatable, Sendable { case meross, homeKit }
 
         /// Shades grouped by area/room name, each group's shades sorted by name — the House "Shades"
         /// sections. Areas are alphabetical for a stable layout.
@@ -216,6 +241,26 @@ public struct HouseReducer {
         case garageSettleElapsed(channel: Int)
         /// A single garage state re-read (after settle / after a failed write). Silent degrade.
         case garagePoll
+
+        // Apple HomeKit (P15-C7)
+        /// Load HomeKit authorization + inventory (on `.task`/`.refresh`, and as a silent re-read after a
+        /// failed write). In mock mode auth is treated as authorized and the fixture Home is served.
+        case homekitLoad
+        case homekitAuthLoaded(HKAuthStatus)
+        case homekitInventoryLoaded(HKInventory?)
+        /// Toggle a smart plug/switch's power (optimistic). P14 seam over `setCharacteristic`.
+        case homekitToggleOutlet(accessoryId: String)
+        /// Lock (secure) a door — safe, commits directly (no confirmation). P14 seam over `setCharacteristic`.
+        case homekitLockRequested(accessoryId: String)
+        /// A tap to UNLOCK — routes through the confirmation dialog (unlocking is a security action).
+        case homekitUnlockRequested(accessoryId: String)
+        /// The user confirmed the pending unlock → actually unlocks.
+        case confirmHomeKitUnlock
+        /// The user dismissed the unlock confirmation.
+        case cancelHomeKitUnlock
+        /// The shared commit that secures/unsecures a lock (optimistic). P14 seam over `setCharacteristic`.
+        /// NOTE: the agent harness must gate `secured == false` (unlock) behind its OWN confirmation.
+        case commitHomeKitLock(accessoryId: String, secured: Bool)
     }
 
     public init() {}
@@ -226,6 +271,7 @@ public struct HouseReducer {
     @Dependency(\.nest) var nest
     @Dependency(\.hubspace) var hubspace
     @Dependency(\.meross) var meross
+    @Dependency(\.homekit) var homekit
     @Dependency(\.continuousClock) var clock
 
     /// ≥150ms between slider PUTs (the required floor). One quiescent tick, then one write.
@@ -250,6 +296,7 @@ public struct HouseReducer {
         case waterRefresh
         case garageRefresh
         case garageSettle(Int)
+        case homekitRefresh
     }
 
     public var body: some ReducerOf<Self> {
@@ -312,7 +359,10 @@ public struct HouseReducer {
                         let doors = (try? await meross.garageState(merossConfig)) ?? []
                         await send(.garageReloaded(doors))
                     }
-                    .cancellable(id: CancelID.garageRefresh, cancelInFlight: true)
+                    .cancellable(id: CancelID.garageRefresh, cancelInFlight: true),
+                    // HomeKit loads independently (P15-C7) — auth + inventory. Powers the HomeKit section
+                    // and (when the Home has a garage) takes over the Garage section from Meross.
+                    .send(.homekitLoad)
                 )
 
             case let .houseReloaded(snapshots):
@@ -467,6 +517,9 @@ public struct HouseReducer {
             // MARK: Meross/Refoss garage opener (P15-C5)
 
             case let .garageReloaded(doors):
+                // Meross-sourced re-read. If HomeKit has claimed the Garage section (precedence), ignore
+                // the Meross truth so the two sources never fight over `garageDoors`.
+                guard state.garageSource == .meross else { return .none }
                 state.garageDoors = doors
                 return .none
 
@@ -489,35 +542,153 @@ public struct HouseReducer {
                 return .send(.commitGarage(channel: channel, open: false))
 
             case let .commitGarage(channel, open):
-                guard let config = state.merossConfig,
-                      let di = state.garageDoors.firstIndex(where: { $0.channel == channel }) else { return .none }
+                guard let di = state.garageDoors.firstIndex(where: { $0.channel == channel }) else { return .none }
                 // Optimistic: flip the door + show the transitional state (garage doors are slow).
                 state.garageDoors[di] = state.garageDoors[di].setting(open: open)
                 state.garageSettling[channel] = open ? .opening : .closing
-                return .run { send in
-                    do { try await meross.setGarage(config, channel, open) }
-                    catch {
-                        // Write failed — restore truth immediately (clear settling + re-read).
-                        await send(.garageSettleElapsed(channel: channel))
-                        return
+                // Route the write to whichever integration owns the Garage section. HomeKit precedence:
+                // when the authorized Home has a garage opener it powers this section; else Meross.
+                switch state.garageSource {
+                case .meross:
+                    guard let config = state.merossConfig else {
+                        state.garageSettling[channel] = nil
+                        return .none
                     }
-                    // Let the door travel, then re-read its true resting state.
-                    try? await clock.sleep(for: Self.garageSettleDuration)
-                    await send(.garageSettleElapsed(channel: channel))
+                    return .run { send in
+                        do { try await meross.setGarage(config, channel, open) }
+                        catch {
+                            // Write failed — restore truth immediately (clear settling + re-read).
+                            await send(.garageSettleElapsed(channel: channel))
+                            return
+                        }
+                        // Let the door travel, then re-read its true resting state.
+                        try? await clock.sleep(for: Self.garageSettleDuration)
+                        await send(.garageSettleElapsed(channel: channel))
+                    }
+                    .cancellable(id: CancelID.garageSettle(channel), cancelInFlight: true)
+                case .homeKit:
+                    guard let accessoryId = state.garageHomeKitAccessoryIds[channel] else {
+                        state.garageSettling[channel] = nil
+                        return .none
+                    }
+                    let config = state.homekitConfig
+                    // HomeKit garage target door state: 0 == open, 1 == closed.
+                    let target = HKCharacteristicValue.int(open ? 0 : 1)
+                    return .run { send in
+                        do { try await homekit.setCharacteristic(config, accessoryId, .garageDoorOpener, .targetDoorState, target) }
+                        catch {
+                            await send(.garageSettleElapsed(channel: channel))
+                            return
+                        }
+                        try? await clock.sleep(for: Self.garageSettleDuration)
+                        await send(.garageSettleElapsed(channel: channel))
+                    }
+                    .cancellable(id: CancelID.garageSettle(channel), cancelInFlight: true)
                 }
-                .cancellable(id: CancelID.garageSettle(channel), cancelInFlight: true)
 
             case let .garageSettleElapsed(channel):
                 state.garageSettling[channel] = nil
                 return .send(.garagePoll)
 
             case .garagePoll:
-                guard let config = state.merossConfig, config.isConnected else { return .none }
-                return .run { send in
-                    let doors = (try? await meross.garageState(config)) ?? []
-                    await send(.garageReloaded(doors))
+                switch state.garageSource {
+                case .meross:
+                    guard let config = state.merossConfig, config.isConnected else { return .none }
+                    return .run { send in
+                        let doors = (try? await meross.garageState(config)) ?? []
+                        await send(.garageReloaded(doors))
+                    }
+                    .cancellable(id: CancelID.garageRefresh, cancelInFlight: true)
+                case .homeKit:
+                    // HomeKit garage re-read = reload the whole inventory (also refreshes the HomeKit
+                    // section); `homekitInventoryLoaded` re-derives the garage rows.
+                    return .send(.homekitLoad)
                 }
-                .cancellable(id: CancelID.garageRefresh, cancelInFlight: true)
+
+            // MARK: Apple HomeKit (P15-C7)
+
+            case .homekitLoad:
+                let config = state.homekitConfig
+                return .run { send in
+                    // Mock mode is always "authorized" and serves the fixture Home — it never touches the
+                    // live HMHomeManager (so it never triggers the permission prompt). Live mode reads the
+                    // real status; the FIRST such read is what surfaces the system prompt.
+                    let status: HKAuthStatus = config?.isMock == true ? .authorized : await homekit.authorizationStatus()
+                    await send(.homekitAuthLoaded(status))
+                    guard status == .authorized else { return }
+                    let inventory = await homekit.inventory(config)
+                    await send(.homekitInventoryLoaded(inventory))
+                }
+                .cancellable(id: CancelID.homekitRefresh, cancelInFlight: true)
+
+            case let .homekitAuthLoaded(status):
+                state.homekitAuth = status
+                return .none
+
+            case let .homekitInventoryLoaded(inventory):
+                state.homekitInventory = inventory
+                guard let inventory else { return .none }
+                // GARAGE PRECEDENCE (P15-C7): a HomeKit garage-door opener takes over the Garage section
+                // from the Meross fallback. When present, derive the door rows from HomeKit and remember
+                // each channel's accessory id for writes; when absent, leave the Meross-sourced rows alone.
+                let garages = inventory.garageAccessories
+                if !garages.isEmpty {
+                    state.garageSource = .homeKit
+                    var map: [Int: String] = [:]
+                    var doors: [GarageDoor] = []
+                    for (i, accessory) in garages.enumerated() {
+                        map[i] = accessory.id
+                        doors.append(GarageDoor(channel: i, name: accessory.name, isOpen: accessory.garageIsOpen ?? false))
+                    }
+                    state.garageHomeKitAccessoryIds = map
+                    // Don't clobber an in-flight optimistic/settling door with a stale re-read.
+                    for i in doors.indices where state.garageSettling[doors[i].channel] != nil {
+                        if let live = state.garageDoors.first(where: { $0.channel == doors[i].channel }) {
+                            doors[i] = live
+                        }
+                    }
+                    state.garageDoors = doors
+                }
+                return .none
+
+            case let .homekitToggleOutlet(accessoryId):
+                guard let inventory = state.homekitInventory,
+                      let accessory = inventory.accessories.first(where: { $0.id == accessoryId }) else { return .none }
+                let newOn = !(accessory.powerIsOn ?? false)
+                let serviceType: HKServiceType = accessory.hasService(.outlet) ? .outlet : .switch
+                Self.optimisticallySet(&state.homekitInventory, accessoryId: accessoryId, type: .powerState, value: .bool(newOn))
+                let config = state.homekitConfig
+                return .run { send in
+                    do { try await homekit.setCharacteristic(config, accessoryId, serviceType, .powerState, .bool(newOn)) }
+                    catch { await send(.homekitLoad) }   // silent truth-restore
+                }
+
+            case let .homekitLockRequested(accessoryId):
+                // Locking (securing) is safe — no confirmation.
+                return .send(.commitHomeKitLock(accessoryId: accessoryId, secured: true))
+
+            case let .homekitUnlockRequested(accessoryId):
+                // Unlocking is a security action — always route through the confirmation dialog.
+                state.confirmingHomeKitUnlock = accessoryId
+                return .none
+
+            case .cancelHomeKitUnlock:
+                state.confirmingHomeKitUnlock = nil
+                return .none
+
+            case .confirmHomeKitUnlock:
+                guard let accessoryId = state.confirmingHomeKitUnlock else { return .none }
+                state.confirmingHomeKitUnlock = nil
+                return .send(.commitHomeKitLock(accessoryId: accessoryId, secured: false))
+
+            case let .commitHomeKitLock(accessoryId, secured):
+                // Optimistic: reflect the new lock state locally (currentLockState: 1 secured / 0 unsecured).
+                Self.optimisticallySet(&state.homekitInventory, accessoryId: accessoryId, type: .currentLockState, value: .int(secured ? 1 : 0))
+                let config = state.homekitConfig
+                return .run { send in
+                    do { try await homekit.setCharacteristic(config, accessoryId, .lockMechanism, .targetLockState, .int(secured ? 1 : 0)) }
+                    catch { await send(.homekitLoad) }   // silent truth-restore
+                }
 
             case let .toggleRoom(bridgeId, roomId):
                 guard let bi = state.bridges.firstIndex(where: { $0.bridge.bridgeId == bridgeId }),
@@ -619,6 +790,29 @@ public struct HouseReducer {
                 return .none
             }
         }
+    }
+
+    /// Optimistically rewrite one characteristic's value across every matching service on a HomeKit
+    /// accessory (value types are immutable, so we rebuild in place). Used so a plug toggle / lock action
+    /// reflects instantly before the write lands; a failed write silently re-reads truth.
+    static func optimisticallySet(_ inventory: inout HKInventory?, accessoryId: String, type: HKCharacteristicType, value: HKCharacteristicValue) {
+        guard var inv = inventory,
+              let ai = inv.accessories.firstIndex(where: { $0.id == accessoryId }) else { return }
+        let accessory = inv.accessories[ai]
+        let services = accessory.services.map { service -> HKService in
+            guard service.characteristics.contains(where: { $0.type == type }) else { return service }
+            let chars = service.characteristics.map { ch in
+                ch.type == type
+                    ? HKCharacteristicSnapshot(id: ch.id, type: ch.type, value: value, isWritable: ch.isWritable)
+                    : ch
+            }
+            return HKService(id: service.id, type: service.type, name: service.name, characteristics: chars)
+        }
+        inv.accessories[ai] = HKAccessory(
+            id: accessory.id, name: accessory.name, room: accessory.room,
+            category: accessory.category, services: services, isReachable: accessory.isReachable
+        )
+        inventory = inv
     }
 
     /// Recompute every room's `anyOn` in a bridge from its member lights — keeps room rows honest

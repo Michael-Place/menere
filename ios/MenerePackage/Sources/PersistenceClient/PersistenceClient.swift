@@ -170,6 +170,13 @@ public struct PersistenceClient: Sendable {
     /// disappears.
     public var deleteMerossConfig: @Sendable (_ hid: String) async throws -> Void
 
+    // MARK: Smart home (Apple HomeKit) config (P15-C7)
+    /// The household's OPTIONAL HomeKit config at `households/{hid}/config/homekit`, or nil when absent.
+    /// Unlike Hue/Meross, an absent doc does NOT hide HomeKit — the live local Home is read once the user
+    /// grants permission; the doc exists only to force the mock (`mock: true`). Decode-safe (an empty `{}`
+    /// still resolves).
+    public var homekitConfig: @Sendable (_ hid: String) async throws -> HomeKitConfig?
+
     // MARK: Activity feed
     /// Recent activity, newest first (capped at 50).
     public var activity: @Sendable (_ hid: String) async throws -> [ActivityItem]
@@ -515,6 +522,11 @@ extension PersistenceClient: DependencyKey {
             },
             deleteMerossConfig: { hid in
                 try await households().document(hid).collection("config").document("meross").delete()
+            },
+            homekitConfig: { hid in
+                let s = try await households().document(hid).collection("config").document("homekit").getDocument()
+                guard let d = s.data() else { return nil }
+                return try Firestore.Decoder().decode(HomeKitConfig.self, from: d)
             },
             activity: { hid in
                 let snapshot = try await households().document(hid).collection("activity")

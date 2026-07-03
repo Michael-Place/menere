@@ -8,6 +8,8 @@
 	<array>
 		<string>Default</string>
 	</array>
+	<key>com.apple.developer.homekit</key>
+	<true/>
 	<key>keychain-access-groups</key>
 	<array>
 		<string>$(AppIdentifierPrefix)com.copoche.menere.firebase</string>

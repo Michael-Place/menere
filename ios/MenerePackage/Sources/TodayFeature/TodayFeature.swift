@@ -117,6 +117,9 @@ public struct TodayReducer {
         /// The household's Meross/Refoss garage config (P15-C5), loaded independently alongside the house
         /// card. Passed into `HouseView`, which loads live door state on appear. Nil = garage not set up.
         var merossConfig: MerossConfig?
+        /// The household's OPTIONAL HomeKit config (P15-C7) — nil is fine (HomeKit reads the live local
+        /// Home once authorized; the doc only forces the mock). Passed into `HouseView`.
+        var homekitConfig: HomeKitConfig?
         /// The ritual key whose scene recall is in flight (drives the button's pending state).
         var recallingRitual: String?
         /// The ritual key that just succeeded — drives the checkmark morph + success haptic until
@@ -185,6 +188,9 @@ public struct TodayReducer {
         /// Load the Meross/Refoss garage config (independent, non-blocking). Absent → the Garage section hides.
         case loadMerossConfig
         case merossConfigLoaded(MerossConfig?)
+        /// Load the OPTIONAL HomeKit config (independent, non-blocking). Absent → HomeKit still reads live.
+        case loadHomeKitConfig
+        case homekitConfigLoaded(HomeKitConfig?)
         /// Recall a ritual's scene (Bedtime / Dinner's ready).
         case recallRitual(HueRitual)
         case ritualRecallFinished(key: String)
@@ -281,6 +287,8 @@ public struct TodayReducer {
                     .send(.loadHubspaceConfig),
                     // Meross/Refoss garage config (P15-C5) — for HouseView's Garage section.
                     .send(.loadMerossConfig),
+                    // HomeKit config (P15-C7) — OPTIONAL; only forces the mock. HouseView reads live HomeKit.
+                    .send(.loadHomeKitConfig),
                     // Ask once so tonight's drive time can resolve (idempotent; no-op if determined).
                     .run { _ in
                         @Dependency(\.location) var location
@@ -501,6 +509,18 @@ public struct TodayReducer {
 
             case let .merossConfigLoaded(config):
                 state.merossConfig = config
+                return .none
+
+            case .loadHomeKitConfig:
+                guard let hid = hid() else { return .none }
+                return .run { send in
+                    @Dependency(\.persistence) var persistence
+                    let config = try? await persistence.homekitConfig(hid)
+                    await send(.homekitConfigLoaded(config ?? nil))
+                }
+
+            case let .homekitConfigLoaded(config):
+                state.homekitConfig = config
                 return .none
 
             case let .recallRitual(ritual):

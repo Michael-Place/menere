@@ -1,6 +1,7 @@
 import AuthenticationDomain
 import ComposableArchitecture
 import FamilyDomain
+import HomeKitClient
 import HouseholdClient
 import HubspaceClient
 import HueClient
@@ -74,6 +75,14 @@ public struct SettingsReducer {
         /// True while the Remove-garage confirmation dialog is up.
         var confirmingMerossRemove = false
         @Presents var merossSetup: MerossSetupReducer.State?
+
+        // MARK: Smart home (Apple HomeKit, P15-C7)
+        /// The app's HomeKit authorization — drives the row (Connect / denied+deep-link / Connected).
+        var homekitAuth: HKAuthStatus = .notDetermined
+        /// The primary Home's name once authorized (for the "Connected · {home}" line).
+        var homekitHomeName: String?
+        /// The accessory count once authorized.
+        var homekitAccessoryCount: Int?
 
         public init() {}
 
@@ -155,6 +164,15 @@ public struct SettingsReducer {
         case confirmRemoveMeross
         case cancelRemoveMeross
         case merossSetup(PresentationAction<MerossSetupReducer.Action>)
+
+        // Smart home (Apple HomeKit)
+        /// Load HomeKit auth + (if authorized) the home name/accessory count. The first live read creates
+        /// `HMHomeManager` and surfaces the system permission prompt.
+        case loadHomeKit
+        case homekitStatusLoaded(HKAuthStatus)
+        case homekitInventoryProbed(homeName: String?, count: Int?)
+        /// The "Connect to HomeKit" button — (re)triggers the permission read/prompt.
+        case connectHomeKitTapped
     }
 
     public init() {}
@@ -510,6 +528,30 @@ public struct SettingsReducer {
             case .merossSetup:
                 return .none
 
+            // MARK: Apple HomeKit (P15-C7)
+
+            case .loadHomeKit:
+                return .run { send in
+                    @Dependency(\.homekit) var homekit
+                    let status = await homekit.authorizationStatus()
+                    await send(.homekitStatusLoaded(status))
+                    guard status == .authorized else { return }
+                    let inventory = await homekit.inventory(nil)
+                    await send(.homekitInventoryProbed(homeName: inventory.homeName, count: inventory.accessories.count))
+                }
+
+            case let .homekitStatusLoaded(status):
+                state.homekitAuth = status
+                return .none
+
+            case let .homekitInventoryProbed(homeName, count):
+                state.homekitHomeName = homeName
+                state.homekitAccessoryCount = count
+                return .none
+
+            case .connectHomeKitTapped:
+                return .send(.loadHomeKit)
+
             case let .householdLoaded(h):
                 state.isLoadingHousehold = false
                 state.household = h
@@ -592,6 +634,9 @@ public struct SettingsReducer {
 
 public struct SettingsView: View {
     @Bindable var store: StoreOf<SettingsReducer>
+
+    /// Deep-links to the Settings app when HomeKit access was denied.
+    @Environment(\.openURL) private var openURL
 
     /// Drives the copy-button glyph swap (doc → checkmark) for ~1.5s after a copy.
     @State private var copied = false
@@ -752,6 +797,9 @@ public struct SettingsView: View {
             Text("Its rituals and room thermometers will be forgotten. Your other bridges stay put.")
         }
         .task { store.send(.task) }
+        // HomeKit (P15-C7) loads on appear from the VIEW (not the `.task` reducer action) so it reflects
+        // true authorization on every open — the first live read surfaces the system permission prompt.
+        .task { store.send(.loadHomeKit) }
     }
 
     // MARK: - Smart home (Hue, P12-C3 — multi-bridge)
@@ -791,6 +839,8 @@ public struct SettingsView: View {
             hubspaceRow
             // Meross/Refoss garage opener (P15-C5) — below the Hubspace spigot.
             merossRow
+            // Apple HomeKit (P15-C7) — below the garage. Local, keyless; pairing lives in Apple's Home app.
+            homekitRow
         } header: {
             Text("Smart home")
         } footer: {
@@ -1029,6 +1079,69 @@ public struct SettingsView: View {
             }
             .accessibilityIdentifier("meross-setup-row")
         }
+    }
+
+    /// The HomeKit row (P15-C7): not-determined → "Connect to HomeKit"; denied/restricted → explain +
+    /// deep-link to the Settings app; authorized → "Connected · {home} · N accessories". There is NO
+    /// pairing flow — HomeKit pairing lives in Apple's Home app.
+    @ViewBuilder
+    private var homekitRow: some View {
+        switch store.homekitAuth {
+        case .authorized:
+            HStack(spacing: 12) {
+                Image(systemName: "homekit")
+                    .foregroundStyle(Color.bacanGreen)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Apple HomeKit").foregroundStyle(Color.ink)
+                    Text(homekitStatusLine).font(.caption).foregroundStyle(Color.inkSoft)
+                    Text("Pair new accessories in Apple's Home app — they show up here.")
+                        .font(.caption2).foregroundStyle(Color.inkSoft)
+                }
+                Spacer()
+                HStack(spacing: 6) {
+                    Circle().fill(Color.bacanGreen).frame(width: 8, height: 8)
+                    Text("Connected").font(.caption).foregroundStyle(Color.inkSoft)
+                }
+            }
+            .accessibilityIdentifier("homekit-status-row")
+        case .denied, .restricted:
+            Button {
+                if let url = URL(string: UIApplication.openSettingsURLString) { openURL(url) }
+            } label: {
+                HStack(spacing: 12) {
+                    Image(systemName: "homekit").foregroundStyle(Color.terracotta)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("HomeKit access is off").foregroundStyle(Color.ink)
+                        Text("Turn on HomeKit for Bacán in Settings to control your Home.")
+                            .font(.caption).foregroundStyle(Color.inkSoft)
+                    }
+                    Spacer()
+                    Image(systemName: "arrow.up.right.square").foregroundStyle(Color.inkSoft)
+                }
+            }
+            .accessibilityIdentifier("homekit-denied-row")
+        case .notDetermined:
+            Button {
+                store.send(.connectHomeKitTapped)
+            } label: {
+                VStack(alignment: .leading, spacing: 2) {
+                    Label("Connect to HomeKit", systemImage: "homekit")
+                        .foregroundStyle(Color.ink)
+                    Text("Pair new accessories in Apple's Home app — they show up here.")
+                        .font(.caption2).foregroundStyle(Color.inkSoft)
+                }
+            }
+            .accessibilityIdentifier("homekit-connect-row")
+        }
+    }
+
+    /// The HomeKit status subtitle: "Connected · {home}", plus the accessory count once probed.
+    private var homekitStatusLine: String {
+        let base = store.homekitHomeName.map { "Connected · \($0)" } ?? "Connected"
+        if let count = store.homekitAccessoryCount {
+            return "\(base) · \(count) accessor\(count == 1 ? "y" : "ies")"
+        }
+        return base
     }
 
     /// The Meross status subtitle: "Connected · {name}", plus the door count once fetched.
