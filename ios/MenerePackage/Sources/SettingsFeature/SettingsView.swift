@@ -40,6 +40,8 @@ public struct SettingsReducer {
         var huePickerRitual: HueRitual?
         /// The bridge pending a Remove confirmation (nil = none).
         var removingBridge: HueBridgeConfig?
+        /// True while the "Remove all Hue" confirmation dialog is up (forgets every bridge + ritual).
+        var confirmingHueRemoveAll = false
         @Presents var huePairing: HuePairingReducer.State?
 
         // MARK: Smart home (Lutron shades, P15-C1)
@@ -47,6 +49,8 @@ public struct SettingsReducer {
         var lutronConfig: LutronConfig?
         /// Live reachability of the Lutron bridge (nil = still probing).
         var lutronReachable: Bool?
+        /// True while the Remove-Lutron confirmation dialog is up.
+        var confirmingLutronRemove = false
         @Presents var lutronPairing: LutronPairingReducer.State?
 
         // MARK: Smart home (Nest thermostat, P15-C3)
@@ -83,6 +87,12 @@ public struct SettingsReducer {
         var homekitHomeName: String?
         /// The accessory count once authorized.
         var homekitAccessoryCount: Int?
+        /// The household's optional HomeKit config doc — its only live purpose here is the `mock` flag,
+        /// which surfaces a demo-labeled, clearable row (Michael's TestFlight-11 feedback: no invisible
+        /// mocks). Nil when absent (the normal live-HomeKit path).
+        var homekitConfig: HomeKitConfig?
+        /// True while the Clear-demo-data (HomeKit) confirmation dialog is up.
+        var confirmingHomeKitRemove = false
 
         public init() {}
 
@@ -123,6 +133,9 @@ public struct SettingsReducer {
         case removeBridgeTapped(HueBridgeConfig)
         case confirmRemoveBridge(String)
         case cancelRemoveBridge
+        case removeAllHueTapped
+        case confirmRemoveAllHue
+        case cancelRemoveAllHue
         case hueRitualTapped(HueRitual?)
         case hueSceneChosen(ritual: HueRitual, scene: HueScene)
         case hueConfigResaved(HueConfig)
@@ -133,6 +146,9 @@ public struct SettingsReducer {
         case lutronReachabilityProbed(Bool)
         case setupLutronTapped
         case rePairLutronTapped
+        case removeLutronTapped
+        case confirmRemoveLutron
+        case cancelRemoveLutron
         case lutronPairing(PresentationAction<LutronPairingReducer.Action>)
 
         // Smart home (Nest thermostat)
@@ -173,6 +189,11 @@ public struct SettingsReducer {
         case homekitInventoryProbed(homeName: String?, count: Int?)
         /// The "Connect to HomeKit" button — (re)triggers the permission read/prompt.
         case connectHomeKitTapped
+        /// The HomeKit config doc (mock flag) loaded from Firestore.
+        case homekitConfigLoaded(HomeKitConfig?)
+        case removeHomeKitTapped
+        case confirmRemoveHomeKit
+        case cancelRemoveHomeKit
     }
 
     public init() {}
@@ -238,6 +259,9 @@ public struct SettingsReducer {
                     // Meross/Refoss garage config (P15-C5) — load, then (if connected) probe the count.
                     let meross = try? await persistence.merossConfig(hid)
                     await send(.merossConfigLoaded(meross ?? nil))
+                    // HomeKit config (P15-C7) — only carries the `mock` flag; drives the demo-labeled row.
+                    let homekit = try? await persistence.homekitConfig(hid)
+                    await send(.homekitConfigLoaded(homekit ?? nil))
                 }
 
             case let .hueConfigLoaded(config):
@@ -292,15 +316,47 @@ public struct SettingsReducer {
                 config.sensorLabels.removeValue(forKey: bridgeId)
                 config.sensorNames?.removeValue(forKey: bridgeId)
                 if config.sensorNames?.isEmpty == true { config.sensorNames = nil }
-                state.hueConfig = config
                 state.hueBridgeReachable[bridgeId] = nil
                 state.hueScenesByBridge[bridgeId] = nil
                 @Shared(.user) var user
-                guard let hid = user?.householdId else { return .none }
+                guard let hid = user?.householdId else {
+                    state.hueConfig = config
+                    return .none
+                }
+                // Removing the LAST bridge clears the whole config doc (rather than persisting an empty
+                // shell), returning the row to its "Set up" state.
+                if config.bridges.isEmpty {
+                    state.hueConfig = nil
+                    return .run { _ in
+                        @Dependency(\.persistence) var persistence
+                        try? await persistence.deleteHueConfig(hid)
+                    }
+                }
+                state.hueConfig = config
                 return .run { [config] send in
                     @Dependency(\.persistence) var persistence
                     try? await persistence.saveHueConfig(hid, config)
                     await send(.hueConfigResaved(config))
+                }
+
+            case .removeAllHueTapped:
+                state.confirmingHueRemoveAll = true
+                return .none
+
+            case .cancelRemoveAllHue:
+                state.confirmingHueRemoveAll = false
+                return .none
+
+            case .confirmRemoveAllHue:
+                state.confirmingHueRemoveAll = false
+                state.hueConfig = nil
+                state.hueBridgeReachable = [:]
+                state.hueScenesByBridge = [:]
+                @Shared(.user) var user
+                guard let hid = user?.householdId else { return .none }
+                return .run { _ in
+                    @Dependency(\.persistence) var persistence
+                    try? await persistence.deleteHueConfig(hid)
                 }
 
             case let .hueRitualTapped(ritual):
@@ -360,6 +416,25 @@ public struct SettingsReducer {
                 guard let hid = user?.householdId else { return .none }
                 state.lutronPairing = LutronPairingReducer.State(hid: hid, existingConfig: state.lutronConfig)
                 return .none
+
+            case .removeLutronTapped:
+                state.confirmingLutronRemove = true
+                return .none
+
+            case .cancelRemoveLutron:
+                state.confirmingLutronRemove = false
+                return .none
+
+            case .confirmRemoveLutron:
+                state.confirmingLutronRemove = false
+                state.lutronConfig = nil
+                state.lutronReachable = nil
+                @Shared(.user) var user
+                guard let hid = user?.householdId else { return .none }
+                return .run { _ in
+                    @Dependency(\.persistence) var persistence
+                    try? await persistence.deleteLutronConfig(hid)
+                }
 
             case let .lutronPairing(.presented(.delegate(.finished(config)))):
                 state.lutronPairing = nil
@@ -551,6 +626,28 @@ public struct SettingsReducer {
 
             case .connectHomeKitTapped:
                 return .send(.loadHomeKit)
+
+            case let .homekitConfigLoaded(config):
+                state.homekitConfig = config
+                return .none
+
+            case .removeHomeKitTapped:
+                state.confirmingHomeKitRemove = true
+                return .none
+
+            case .cancelRemoveHomeKit:
+                state.confirmingHomeKitRemove = false
+                return .none
+
+            case .confirmRemoveHomeKit:
+                state.confirmingHomeKitRemove = false
+                state.homekitConfig = nil
+                @Shared(.user) var user
+                guard let hid = user?.householdId else { return .none }
+                return .run { _ in
+                    @Dependency(\.persistence) var persistence
+                    try? await persistence.deleteHomeKitConfig(hid)
+                }
 
             case let .householdLoaded(h):
                 state.isLoadingHousehold = false
@@ -768,12 +865,12 @@ public struct SettingsView: View {
         .sheet(item: $store.scope(state: \.huePairing, action: \.huePairing)) { pairingStore in
             HuePairingView(store: pairingStore)
         }
-        .sheet(item: $store.scope(state: \.lutronPairing, action: \.lutronPairing)) { pairingStore in
-            LutronPairingView(store: pairingStore)
-        }
+        .modifier(LutronSettingsPresentations(store: store))
         .modifier(NestSettingsPresentations(store: store))
         .modifier(HubspaceSettingsPresentations(store: store))
         .modifier(MerossSettingsPresentations(store: store))
+        .modifier(HueRemoveAllPresentation(store: store))
+        .modifier(HomeKitRemovePresentation(store: store))
         .sheet(isPresented: Binding(
             get: { store.huePickerRitual != nil },
             set: { if !$0 { store.send(.hueRitualTapped(nil)) } }
@@ -789,12 +886,12 @@ public struct SettingsView: View {
             titleVisibility: .visible,
             presenting: store.removingBridge
         ) { bridge in
-            Button("Remove \(bridge.displayName)", role: .destructive) {
+            Button(bridge.isMock ? "Clear demo data" : "Remove \(bridge.displayName)", role: .destructive) {
                 store.send(.confirmRemoveBridge(bridge.bridgeId))
             }
             Button("Cancel", role: .cancel) { store.send(.cancelRemoveBridge) }
         } message: { _ in
-            Text("Its rituals and room thermometers will be forgotten. Your other bridges stay put.")
+            Text("Bacán forgets this bridge — its rituals and room thermometers go with it. Your other bridges and your actual Hue lights are untouched.")
         }
         .task { store.send(.task) }
         // HomeKit (P15-C7) loads on appear from the VIEW (not the `.task` reducer action) so it reflects
@@ -821,6 +918,13 @@ public struct SettingsView: View {
                 ForEach(hueRitualStates(config), id: \.id) { ritual in
                     hueRitualRow(ritual, showBridge: config.bridges.count > 1)
                 }
+                Button(role: .destructive) {
+                    store.send(.removeAllHueTapped)
+                } label: {
+                    Label(config.isMock ? "Clear demo data" : "Remove all Hue", systemImage: "trash")
+                        .foregroundStyle(Color.terracotta)
+                }
+                .accessibilityIdentifier("hue-remove-all-row")
             } else {
                 Button {
                     store.send(.setupHueTapped)
@@ -861,12 +965,18 @@ public struct SettingsView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(config.displayName).foregroundStyle(Color.ink)
                     Text("Lutron shades").font(.caption).foregroundStyle(Color.inkSoft)
+                    if config.isMock { demoDataTag }
                 }
                 Spacer()
                 lutronReachabilityDot
             }
             .accessibilityIdentifier("lutron-bridge-row")
             .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                Button(role: .destructive) {
+                    store.send(.removeLutronTapped)
+                } label: {
+                    Label(config.isMock ? "Clear demo data" : "Remove", systemImage: "trash")
+                }
                 Button {
                     store.send(.rePairLutronTapped)
                 } label: {
@@ -878,6 +988,9 @@ public struct SettingsView: View {
                 Button { store.send(.rePairLutronTapped) } label: {
                     Label("Re-pair", systemImage: "arrow.triangle.2.circlepath")
                 }
+                Button(role: .destructive) { store.send(.removeLutronTapped) } label: {
+                    Label(config.isMock ? "Clear demo data" : "Remove", systemImage: "trash")
+                }
             }
         } else {
             Button {
@@ -888,6 +1001,15 @@ public struct SettingsView: View {
             }
             .accessibilityIdentifier("lutron-setup-row")
         }
+    }
+
+    /// The explicit "(demo data)" marker rendered under any row whose config carries `mock == true`.
+    /// Michael's TestFlight-11 feedback: no invisible mocks — a demo config must always announce itself.
+    private var demoDataTag: some View {
+        Text("(demo data)")
+            .font(.caption2)
+            .foregroundStyle(Color.inkSoft)
+            .accessibilityIdentifier("demo-data-tag")
     }
 
     @ViewBuilder
@@ -919,6 +1041,7 @@ public struct SettingsView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Nest thermostat").foregroundStyle(Color.ink)
                     Text(nestStatusLine).font(.caption).foregroundStyle(Color.inkSoft)
+                    if config.isMock { demoDataTag }
                 }
                 Spacer()
                 HStack(spacing: 6) {
@@ -931,7 +1054,7 @@ public struct SettingsView: View {
                 Button(role: .destructive) {
                     store.send(.removeNestTapped)
                 } label: {
-                    Label("Remove", systemImage: "trash")
+                    Label(config.isMock ? "Clear demo data" : "Remove", systemImage: "trash")
                 }
                 Button {
                     store.send(.reconnectNestTapped)
@@ -945,7 +1068,7 @@ public struct SettingsView: View {
                     Label("Reconnect", systemImage: "arrow.triangle.2.circlepath")
                 }
                 Button(role: .destructive) { store.send(.removeNestTapped) } label: {
-                    Label("Remove", systemImage: "trash")
+                    Label(config.isMock ? "Clear demo data" : "Remove", systemImage: "trash")
                 }
             }
         } else {
@@ -980,6 +1103,7 @@ public struct SettingsView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Hubspace spigot").foregroundStyle(Color.ink)
                     Text(hubspaceStatusLine).font(.caption).foregroundStyle(Color.inkSoft)
+                    if config.isMock { demoDataTag }
                 }
                 Spacer()
                 HStack(spacing: 6) {
@@ -992,7 +1116,7 @@ public struct SettingsView: View {
                 Button(role: .destructive) {
                     store.send(.removeHubspaceTapped)
                 } label: {
-                    Label("Remove", systemImage: "trash")
+                    Label(config.isMock ? "Clear demo data" : "Remove", systemImage: "trash")
                 }
                 Button {
                     store.send(.reconnectHubspaceTapped)
@@ -1006,7 +1130,7 @@ public struct SettingsView: View {
                     Label("Reconnect", systemImage: "arrow.triangle.2.circlepath")
                 }
                 Button(role: .destructive) { store.send(.removeHubspaceTapped) } label: {
-                    Label("Remove", systemImage: "trash")
+                    Label(config.isMock ? "Clear demo data" : "Remove", systemImage: "trash")
                 }
             }
         } else {
@@ -1041,6 +1165,7 @@ public struct SettingsView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Garage (Refoss)").foregroundStyle(Color.ink)
                     Text(merossStatusLine).font(.caption).foregroundStyle(Color.inkSoft)
+                    if config.isMock { demoDataTag }
                 }
                 Spacer()
                 HStack(spacing: 6) {
@@ -1053,7 +1178,7 @@ public struct SettingsView: View {
                 Button(role: .destructive) {
                     store.send(.removeMerossTapped)
                 } label: {
-                    Label("Remove", systemImage: "trash")
+                    Label(config.isMock ? "Clear demo data" : "Remove", systemImage: "trash")
                 }
                 Button {
                     store.send(.reconnectMerossTapped)
@@ -1067,7 +1192,7 @@ public struct SettingsView: View {
                     Label("Reconnect", systemImage: "arrow.triangle.2.circlepath")
                 }
                 Button(role: .destructive) { store.send(.removeMerossTapped) } label: {
-                    Label("Remove", systemImage: "trash")
+                    Label(config.isMock ? "Clear demo data" : "Remove", systemImage: "trash")
                 }
             }
         } else {
@@ -1086,6 +1211,43 @@ public struct SettingsView: View {
     /// pairing flow — HomeKit pairing lives in Apple's Home app.
     @ViewBuilder
     private var homekitRow: some View {
+        // A mock config doc overrides the live auth path entirely — it exists only to carry the demo
+        // Home, so it presents as a demo-labeled, clearable "Connected" row (no invisible mocks).
+        if store.homekitConfig?.isMock == true {
+            HStack(spacing: 12) {
+                Image(systemName: "homekit")
+                    .foregroundStyle(Color.bacanGreen)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Apple HomeKit").foregroundStyle(Color.ink)
+                    Text("Connected").font(.caption).foregroundStyle(Color.inkSoft)
+                    demoDataTag
+                }
+                Spacer()
+                HStack(spacing: 6) {
+                    Circle().fill(Color.bacanGreen).frame(width: 8, height: 8)
+                    Text("Connected").font(.caption).foregroundStyle(Color.inkSoft)
+                }
+            }
+            .accessibilityIdentifier("homekit-status-row")
+            .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                Button(role: .destructive) {
+                    store.send(.removeHomeKitTapped)
+                } label: {
+                    Label("Clear demo data", systemImage: "trash")
+                }
+            }
+            .contextMenu {
+                Button(role: .destructive) { store.send(.removeHomeKitTapped) } label: {
+                    Label("Clear demo data", systemImage: "trash")
+                }
+            }
+        } else {
+            liveHomeKitRow
+        }
+    }
+
+    @ViewBuilder
+    private var liveHomeKitRow: some View {
         switch store.homekitAuth {
         case .authorized:
             HStack(spacing: 12) {
@@ -1162,6 +1324,7 @@ public struct SettingsView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(bridge.displayName).foregroundStyle(Color.ink)
                 Text(bridge.bridgeId).font(.caption).foregroundStyle(Color.inkSoft)
+                if bridge.isMock { demoDataTag }
             }
             Spacer()
             hueReachabilityDot(bridge.bridgeId)
@@ -1171,7 +1334,7 @@ public struct SettingsView: View {
             Button(role: .destructive) {
                 store.send(.removeBridgeTapped(bridge))
             } label: {
-                Label("Remove", systemImage: "trash")
+                Label(bridge.isMock ? "Clear demo data" : "Remove", systemImage: "trash")
             }
             Button {
                 store.send(.rePairBridgeTapped(bridge.bridgeId))
@@ -1185,7 +1348,7 @@ public struct SettingsView: View {
                 Label("Re-pair", systemImage: "arrow.triangle.2.circlepath")
             }
             Button(role: .destructive) { store.send(.removeBridgeTapped(bridge)) } label: {
-                Label("Remove", systemImage: "trash")
+                Label(bridge.isMock ? "Clear demo data" : "Remove", systemImage: "trash")
             }
         }
     }
@@ -1382,14 +1545,16 @@ private struct NestSettingsPresentations: ViewModifier {
                 NestSetupView(store: setupStore)
             }
             .confirmationDialog(
-                "Remove Nest?",
+                store.nestConfig?.isMock == true ? "Clear demo data?" : "Remove Nest?",
                 isPresented: Binding(
                     get: { store.confirmingNestRemove },
                     set: { if !$0 { store.send(.cancelRemoveNest) } }
                 ),
                 titleVisibility: .visible
             ) {
-                Button("Remove Nest", role: .destructive) { store.send(.confirmRemoveNest) }
+                Button(store.nestConfig?.isMock == true ? "Clear demo data" : "Remove Nest", role: .destructive) {
+                    store.send(.confirmRemoveNest)
+                }
                 Button("Cancel", role: .cancel) { store.send(.cancelRemoveNest) }
             } message: {
                 Text("The thermostat drops off the house screen. Your Google registration stays put — reconnect any time.")
@@ -1408,14 +1573,16 @@ private struct HubspaceSettingsPresentations: ViewModifier {
                 HubspaceSetupView(store: setupStore)
             }
             .confirmationDialog(
-                "Remove Hubspace?",
+                store.hubspaceConfig?.isMock == true ? "Clear demo data?" : "Remove Hubspace?",
                 isPresented: Binding(
                     get: { store.confirmingHubspaceRemove },
                     set: { if !$0 { store.send(.cancelRemoveHubspace) } }
                 ),
                 titleVisibility: .visible
             ) {
-                Button("Remove Hubspace", role: .destructive) { store.send(.confirmRemoveHubspace) }
+                Button(store.hubspaceConfig?.isMock == true ? "Clear demo data" : "Remove Hubspace", role: .destructive) {
+                    store.send(.confirmRemoveHubspace)
+                }
                 Button("Cancel", role: .cancel) { store.send(.cancelRemoveHubspace) }
             } message: {
                 Text("The spigot drops off the house screen. Sign in again any time to reconnect.")
@@ -1434,17 +1601,96 @@ private struct MerossSettingsPresentations: ViewModifier {
                 MerossSetupView(store: setupStore)
             }
             .confirmationDialog(
-                "Remove garage?",
+                store.merossConfig?.isMock == true ? "Clear demo data?" : "Remove garage?",
                 isPresented: Binding(
                     get: { store.confirmingMerossRemove },
                     set: { if !$0 { store.send(.cancelRemoveMeross) } }
                 ),
                 titleVisibility: .visible
             ) {
-                Button("Remove garage", role: .destructive) { store.send(.confirmRemoveMeross) }
+                Button(store.merossConfig?.isMock == true ? "Clear demo data" : "Remove garage", role: .destructive) {
+                    store.send(.confirmRemoveMeross)
+                }
                 Button("Cancel", role: .cancel) { store.send(.cancelRemoveMeross) }
             } message: {
                 Text("The garage drops off the house screen. Set it up again any time.")
+            }
+    }
+}
+
+/// The Lutron shades setup sheet + Remove confirmation, bundled into a modifier (P15-C8) so they don't
+/// deepen the main `body` modifier chain (the type-checker's budget).
+private struct LutronSettingsPresentations: ViewModifier {
+    @Bindable var store: StoreOf<SettingsReducer>
+
+    func body(content: Content) -> some View {
+        let isMock = store.lutronConfig?.isMock == true
+        return content
+            .sheet(item: $store.scope(state: \.lutronPairing, action: \.lutronPairing)) { pairingStore in
+                LutronPairingView(store: pairingStore)
+            }
+            .confirmationDialog(
+                isMock ? "Clear demo data?" : "Remove Lutron shades?",
+                isPresented: Binding(
+                    get: { store.confirmingLutronRemove },
+                    set: { if !$0 { store.send(.cancelRemoveLutron) } }
+                ),
+                titleVisibility: .visible
+            ) {
+                Button(isMock ? "Clear demo data" : "Remove", role: .destructive) {
+                    store.send(.confirmRemoveLutron)
+                }
+                Button("Cancel", role: .cancel) { store.send(.cancelRemoveLutron) }
+            } message: {
+                Text("Bacán forgets this bridge; your shades are untouched. Pair again any time.")
+            }
+    }
+}
+
+/// The "Remove all Hue" confirmation (P15-C8) — forgets every paired bridge and all rituals at once.
+private struct HueRemoveAllPresentation: ViewModifier {
+    @Bindable var store: StoreOf<SettingsReducer>
+
+    func body(content: Content) -> some View {
+        let isMock = store.hueConfig?.isMock == true
+        return content
+            .confirmationDialog(
+                isMock ? "Clear demo data?" : "Remove all Hue bridges?",
+                isPresented: Binding(
+                    get: { store.confirmingHueRemoveAll },
+                    set: { if !$0 { store.send(.cancelRemoveAllHue) } }
+                ),
+                titleVisibility: .visible
+            ) {
+                Button(isMock ? "Clear demo data" : "Remove everything", role: .destructive) {
+                    store.send(.confirmRemoveAllHue)
+                }
+                Button("Cancel", role: .cancel) { store.send(.cancelRemoveAllHue) }
+            } message: {
+                Text("Bacán forgets ALL your bridges and every ritual (Bedtime, Dinner…). Your actual Hue lights are untouched — you can pair again any time.")
+            }
+    }
+}
+
+/// The HomeKit "Clear demo data" confirmation (P15-C8) — deletes the mock config doc. The live local
+/// Home is never stored here, so it's untouched.
+private struct HomeKitRemovePresentation: ViewModifier {
+    @Bindable var store: StoreOf<SettingsReducer>
+
+    func body(content: Content) -> some View {
+        content
+            .confirmationDialog(
+                "Clear demo data?",
+                isPresented: Binding(
+                    get: { store.confirmingHomeKitRemove },
+                    set: { if !$0 { store.send(.cancelRemoveHomeKit) } }
+                ),
+                titleVisibility: .visible
+            ) {
+                Button("Clear demo data", role: .destructive) { store.send(.confirmRemoveHomeKit) }
+                Button("Cancel", role: .cancel) { store.send(.cancelRemoveHomeKit) }
+            } message: {
+                Text("Removes the demo HomeKit devices. Your real Home in Apple's Home app is untouched.")
             }
     }
 }

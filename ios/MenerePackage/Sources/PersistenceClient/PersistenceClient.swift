@@ -116,6 +116,9 @@ public struct PersistenceClient: Sendable {
     /// `households/{hid}/config/hue` doc is replaced, so fields dropped since a prior write (e.g. a
     /// `mock` flag from the C1 fixture) actually clear.
     public var saveHueConfig: @Sendable (_ hid: String, _ config: HueConfig) async throws -> Void
+    /// Remove the Hue config doc entirely (Settings "Remove all Hue"). Forgets every paired bridge and
+    /// all rituals + sensor maps at once; the house's Hue lights + rituals then disappear.
+    public var deleteHueConfig: @Sendable (_ hid: String) async throws -> Void
 
     // MARK: Smart home (Lutron) config (P15)
     /// The household's Lutron config at `households/{hid}/config/lutron`, or nil when absent (never
@@ -125,6 +128,9 @@ public struct PersistenceClient: Sendable {
     /// Full-document write of the Lutron config (P15-C1 pairing / re-pairing). Not a merge — the whole
     /// `households/{hid}/config/lutron` doc is replaced, so a dropped `mock` flag actually clears.
     public var saveLutronConfig: @Sendable (_ hid: String, _ config: LutronConfig) async throws -> Void
+    /// Remove the Lutron config doc entirely (Settings "Remove"). The House "Shades" section then
+    /// silently disappears.
+    public var deleteLutronConfig: @Sendable (_ hid: String) async throws -> Void
 
     // MARK: Smart home (Sonos) config (P15-C2)
     /// The household's optional Sonos config at `households/{hid}/config/sonos`, or nil when absent.
@@ -176,6 +182,9 @@ public struct PersistenceClient: Sendable {
     /// grants permission; the doc exists only to force the mock (`mock: true`). Decode-safe (an empty `{}`
     /// still resolves).
     public var homekitConfig: @Sendable (_ hid: String) async throws -> HomeKitConfig?
+    /// Remove the HomeKit config doc entirely (Settings "Clear demo data"). Only meaningful for a mock
+    /// doc — the live local Home is unaffected (it isn't stored here).
+    public var deleteHomeKitConfig: @Sendable (_ hid: String) async throws -> Void
 
     // MARK: Money — expenses + budgets (P13)
     /// All expenses in a household at `households/{hid}/expenses` (order not guaranteed; callers sort
@@ -479,6 +488,9 @@ extension PersistenceClient: DependencyKey {
                     Firestore.Encoder().encode(config)
                 )
             },
+            deleteHueConfig: { hid in
+                try await households().document(hid).collection("config").document("hue").delete()
+            },
             lutronConfig: { hid in
                 let s = try await households().document(hid).collection("config").document("lutron").getDocument()
                 guard let d = s.data() else { return nil }
@@ -489,6 +501,9 @@ extension PersistenceClient: DependencyKey {
                 try await households().document(hid).collection("config").document("lutron").setData(
                     Firestore.Encoder().encode(config)
                 )
+            },
+            deleteLutronConfig: { hid in
+                try await households().document(hid).collection("config").document("lutron").delete()
             },
             sonosConfig: { hid in
                 let s = try await households().document(hid).collection("config").document("sonos").getDocument()
@@ -541,6 +556,9 @@ extension PersistenceClient: DependencyKey {
                 let s = try await households().document(hid).collection("config").document("homekit").getDocument()
                 guard let d = s.data() else { return nil }
                 return try Firestore.Decoder().decode(HomeKitConfig.self, from: d)
+            },
+            deleteHomeKitConfig: { hid in
+                try await households().document(hid).collection("config").document("homekit").delete()
             },
             expenses: { hid in
                 let snapshot = try await households().document(hid).collection("expenses").getDocuments()

@@ -1,4 +1,5 @@
 import ComposableArchitecture
+import FamilyDomain
 import HouseholdClient
 import PersistenceClient
 import UserDomain
@@ -117,6 +118,168 @@ final class SettingsReducerTests: XCTestCase {
                 $0.joinError = "No household found for that code"
             }
             XCTAssertTrue(store.state.showJoinSheet)
+        }
+    }
+
+    // MARK: - Smart-home RESET affordances (P15-C8)
+    //
+    // Each integration's Remove/Clear-demo-data flow must (a) gate on a confirmation dialog and
+    // (b) delete the config doc + return the row to its set-up state.
+
+    /// Builds a store with the shared user seeded to a household (the delete effects guard on it).
+    private func makeStore(_ state: SettingsReducer.State) -> TestStoreOf<SettingsReducer> {
+        @Shared(.user) var user
+        $user.withLock { $0 = User(id: "u", displayName: "Tester", householdId: "hid-1") }
+        return TestStore(initialState: state) { SettingsReducer() }
+    }
+
+    func testRemoveLutron() async {
+        let deleted = LockIsolated(false)
+        await withDependencies {
+            $0.defaultFileStorage = .inMemory
+            $0.persistence.deleteLutronConfig = { hid in
+                XCTAssertEqual(hid, "hid-1"); deleted.setValue(true)
+            }
+        } operation: {
+            var state = SettingsReducer.State()
+            state.lutronConfig = LutronConfig(bridgeIP: "1.2.3.4", mock: true)
+            state.lutronReachable = true
+            let store = makeStore(state)
+
+            await store.send(.removeLutronTapped) { $0.confirmingLutronRemove = true }
+            await store.send(.confirmRemoveLutron) {
+                $0.confirmingLutronRemove = false
+                $0.lutronConfig = nil
+                $0.lutronReachable = nil
+            }
+            XCTAssertTrue(deleted.value)
+        }
+    }
+
+    func testRemoveNest() async {
+        let deleted = LockIsolated(false)
+        await withDependencies {
+            $0.defaultFileStorage = .inMemory
+            $0.persistence.deleteNestConfig = { _ in deleted.setValue(true) }
+        } operation: {
+            var state = SettingsReducer.State()
+            state.nestConfig = NestConfig(projectId: "p", oauthClientId: "c", mock: true)
+            state.nestThermostatCount = 2
+            let store = makeStore(state)
+
+            await store.send(.removeNestTapped) { $0.confirmingNestRemove = true }
+            await store.send(.confirmRemoveNest) {
+                $0.confirmingNestRemove = false
+                $0.nestConfig = nil
+                $0.nestThermostatCount = nil
+            }
+            XCTAssertTrue(deleted.value)
+        }
+    }
+
+    func testRemoveHubspace() async {
+        let deleted = LockIsolated(false)
+        await withDependencies {
+            $0.defaultFileStorage = .inMemory
+            $0.persistence.deleteHubspaceConfig = { _ in deleted.setValue(true) }
+        } operation: {
+            var state = SettingsReducer.State()
+            state.hubspaceConfig = HubspaceConfig(mock: true)
+            state.hubspaceSpigotCount = 1
+            let store = makeStore(state)
+
+            await store.send(.removeHubspaceTapped) { $0.confirmingHubspaceRemove = true }
+            await store.send(.confirmRemoveHubspace) {
+                $0.confirmingHubspaceRemove = false
+                $0.hubspaceConfig = nil
+                $0.hubspaceSpigotCount = nil
+            }
+            XCTAssertTrue(deleted.value)
+        }
+    }
+
+    func testRemoveMeross() async {
+        let deleted = LockIsolated(false)
+        await withDependencies {
+            $0.defaultFileStorage = .inMemory
+            $0.persistence.deleteMerossConfig = { _ in deleted.setValue(true) }
+        } operation: {
+            var state = SettingsReducer.State()
+            state.merossConfig = MerossConfig(name: "Garage", mock: true)
+            state.merossDoorCount = 1
+            let store = makeStore(state)
+
+            await store.send(.removeMerossTapped) { $0.confirmingMerossRemove = true }
+            await store.send(.confirmRemoveMeross) {
+                $0.confirmingMerossRemove = false
+                $0.merossConfig = nil
+                $0.merossDoorCount = nil
+            }
+            XCTAssertTrue(deleted.value)
+        }
+    }
+
+    func testRemoveHomeKitDemo() async {
+        let deleted = LockIsolated(false)
+        await withDependencies {
+            $0.defaultFileStorage = .inMemory
+            $0.persistence.deleteHomeKitConfig = { _ in deleted.setValue(true) }
+        } operation: {
+            var state = SettingsReducer.State()
+            state.homekitConfig = HomeKitConfig(mock: true)
+            let store = makeStore(state)
+
+            await store.send(.removeHomeKitTapped) { $0.confirmingHomeKitRemove = true }
+            await store.send(.confirmRemoveHomeKit) {
+                $0.confirmingHomeKitRemove = false
+                $0.homekitConfig = nil
+            }
+            XCTAssertTrue(deleted.value)
+        }
+    }
+
+    func testRemoveAllHue() async {
+        let deleted = LockIsolated(false)
+        await withDependencies {
+            $0.defaultFileStorage = .inMemory
+            $0.persistence.deleteHueConfig = { _ in deleted.setValue(true) }
+        } operation: {
+            var state = SettingsReducer.State()
+            state.hueConfig = HueConfig(bridgeId: "ab12", bridgeIP: "1.2.3.4", applicationKey: "k", mock: true)
+            state.hueBridgeReachable = ["ab12": true]
+            let store = makeStore(state)
+
+            await store.send(.removeAllHueTapped) { $0.confirmingHueRemoveAll = true }
+            await store.send(.confirmRemoveAllHue) {
+                $0.confirmingHueRemoveAll = false
+                $0.hueConfig = nil
+                $0.hueBridgeReachable = [:]
+            }
+            XCTAssertTrue(deleted.value)
+        }
+    }
+
+    /// Removing the LAST Hue bridge deletes the whole config doc (rather than persisting an empty shell).
+    func testRemoveLastHueBridgeDeletesDoc() async {
+        let deleted = LockIsolated(false)
+        let saved = LockIsolated(false)
+        await withDependencies {
+            $0.defaultFileStorage = .inMemory
+            $0.persistence.deleteHueConfig = { _ in deleted.setValue(true) }
+            $0.persistence.saveHueConfig = { _, _ in saved.setValue(true) }
+        } operation: {
+            let bridge = HueBridgeConfig(bridgeId: "ab12", bridgeIP: "1.2.3.4", applicationKey: "k")
+            var state = SettingsReducer.State()
+            state.hueConfig = HueConfig(bridges: [bridge])
+            state.removingBridge = bridge
+            let store = makeStore(state)
+
+            await store.send(.confirmRemoveBridge("ab12")) {
+                $0.removingBridge = nil
+                $0.hueConfig = nil
+            }
+            XCTAssertTrue(deleted.value)
+            XCTAssertFalse(saved.value)
         }
     }
 }
