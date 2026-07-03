@@ -85,4 +85,9 @@ public extension Color {
     static let sky = Color(uiColor: UIColor { trait in
         trait.userInterfaceStyle == .dark ? UIColor(hex: 0x6FB1DE) : UIColor(hex: 0x4E93C8)
     })
+    // Muted botanical sage — a quieter companion to `bacanGreen` (used for neutral Money bars and
+    // the "Money" pinned row). Shares the drink-window sage hue, promoted to a named family token.
+    static let sage = Color(uiColor: UIColor { trait in
+        trait.userInterfaceStyle == .dark ? UIColor(hex: 0x88A97F) : UIColor(hex: 0x6E8B6A)
+    })
 }
