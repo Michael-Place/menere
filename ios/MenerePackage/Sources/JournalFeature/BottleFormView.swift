@@ -232,8 +232,7 @@ public struct BottleFormView: View {
         .scrollContentBackground(.hidden)
         .background(Color.parchment)
         .successHaptic(store.savedTick)
-        .navigationTitle(store.editingID == nil ? "Add to cellar" : "Edit bottle")
-        .navigationBarTitleDisplayMode(.inline)
+        .wineNavTitle(store.editingID == nil ? "Add to cellar" : "Edit bottle")
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {
                 Button("Cancel") { store.send(.cancelTapped) }

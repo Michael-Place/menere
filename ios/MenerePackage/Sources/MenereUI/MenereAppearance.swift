@@ -55,4 +55,27 @@ public extension View {
             .toolbarBackgroundVisibility(.visible, for: .navigationBar)
             .tint(.wine)
     }
+
+    /// A wine-stack nav title in New York serif. The global family appearance
+    /// (`MenereAppearance.apply()`) pins ALL nav titles to chunky SF Rounded — the family identity's
+    /// chrome — which otherwise leaks into the Cellar stack. This restores the "Cellar & Candlelight"
+    /// serif per-screen by hiding the native (rounded) title and rendering the title as a serif
+    /// `principal` toolbar item instead. `navigationTitle` is kept for the back-button label +
+    /// accessibility; the display mode is forced inline so the rounded large title never shows.
+    /// Overriding the shared `UINavigationBar` large-title font per-screen would leak into the family
+    /// screens sharing the same nav stack, so an inline serif title is the safe, contained choice.
+    /// Pair with `.wineChrome()`.
+    func wineNavTitle(_ title: String) -> some View {
+        self
+            .navigationTitle(title)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .principal) {
+                    Text(title)
+                        .font(.system(.headline, design: .serif).weight(.semibold))
+                        .foregroundStyle(Color.ink)
+                        .accessibilityAddTraits(.isHeader)
+                }
+            }
+    }
 }

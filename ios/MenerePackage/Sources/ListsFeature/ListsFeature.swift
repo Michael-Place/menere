@@ -335,6 +335,9 @@ public struct ListsView: View {
                         }
                     }
             }
+            // The Scan modal is part of the wine stack: pin the wine tint so the "Done" button (added
+            // here, outside ScanView's own `.wineChrome()` tint scope) doesn't stay bacanGreen.
+            .tint(.wine)
         }
         .alert("New list", isPresented: $store.showAddSheet) {
             TextField("Groceries, Costco, projects…", text: $store.newTitle)

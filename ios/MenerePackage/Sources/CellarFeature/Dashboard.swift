@@ -168,7 +168,7 @@ struct StatTile: View {
                 .foregroundStyle(.secondary)
                 .symbolEffect(.bounce, value: value)
             Text("\(value)")
-                .font(.largeTitle.bold().monospacedDigit())
+                .font(.system(.largeTitle, design: .serif).weight(.bold).monospacedDigit())
                 .contentTransition(.numericText())
                 .animation(.menereSnappy, value: value)
             Text(caption)

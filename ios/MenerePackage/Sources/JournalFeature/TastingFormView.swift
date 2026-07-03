@@ -354,8 +354,7 @@ public struct TastingFormView: View {
         .background(Color.parchment)
         .selectionHaptic(store.ratingStars)
         .successHaptic(store.savedTick)
-        .navigationTitle(store.editingID == nil ? "Log a tasting" : "Edit tasting")
-        .navigationBarTitleDisplayMode(.inline)
+        .wineNavTitle(store.editingID == nil ? "Log a tasting" : "Edit tasting")
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {
                 Button("Cancel") { store.send(.cancelTapped) }

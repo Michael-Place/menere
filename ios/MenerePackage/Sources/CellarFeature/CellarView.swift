@@ -565,7 +565,7 @@ public struct CellarView: View {
                 historyContent
             }
         }
-        .navigationTitle(store.segment == .history ? "History" : "Cellar")
+        .wineNavTitle(store.segment == .history ? "History" : "Cellar")
         .searchable(text: $store.searchText)
         .searchToolbarBehavior(.minimize)
         .toolbar {

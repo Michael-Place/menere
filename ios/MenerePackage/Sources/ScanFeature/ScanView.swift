@@ -191,6 +191,13 @@ public struct ScanView: View {
         UIImagePickerController.isSourceTypeAvailable(.camera)
     }
 
+    /// True once catalog resolution has succeeded and the bottle card is on screen — drives the
+    /// scan-success impact haptic (fires only on the false → true edge).
+    private var isResolved: Bool {
+        if case .resolved = store.status { return true }
+        return false
+    }
+
     public init(store: StoreOf<ScanReducer>) {
         self.store = store
     }
@@ -199,9 +206,12 @@ public struct ScanView: View {
         content
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(Color.parchment)
-            .animation(.default, value: store.status)
+            .animation(.menereSnappy, value: store.status)
             .impactHaptic(captureTick)
-            .navigationTitle("Scan")
+            // Brand "impact on scan-success": a celebratory tick the instant the label resolves into a
+            // bottle card (fires on the identifying → resolved transition only, not on Scan again).
+            .sensoryFeedback(trigger: isResolved) { _, resolved in resolved ? .impact(flexibility: .solid) : nil }
+            .wineNavTitle("Scan")
             .task { store.send(.task) }
             .sheet(
                 isPresented: Binding(
@@ -305,11 +315,12 @@ public struct ScanView: View {
         VStack(spacing: 20) {
             Image(systemName: "camera.viewfinder")
                 .font(.system(size: 60))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Color.candleGold)
                 .symbolEffect(.pulse, options: .repeating)
 
             Text("Scan a bottle")
-                .font(.largeTitle.bold())
+                .font(.system(.largeTitle, design: .serif).weight(.semibold))
+                .foregroundStyle(Color.ink)
 
             Text("Identify a wine from its label.")
                 .font(.body)
@@ -432,7 +443,8 @@ private struct ScanOnboardingView: View {
                             .font(.system(size: 56))
                             .foregroundStyle(.tint)
                         Text("Scan any bottle")
-                            .font(.largeTitle.bold())
+                            .font(.system(.largeTitle, design: .serif).weight(.semibold))
+                            .foregroundStyle(Color.ink)
                             .multilineTextAlignment(.center)
                         Text("Point at a wine and Bacán identifies it from the label, then builds a bottle card you can save or rate.")
                             .font(.body)
@@ -482,6 +494,9 @@ private struct ScanOnboardingView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color.parchment)
+        // The sheet presents in a fresh environment, so pin the wine tint here or the glyphs +
+        // "Got it" button inherit the family (bacanGreen) app tint.
+        .tint(.wine)
         .accessibilityIdentifier("scan-onboarding")
         .interactiveDismissDisabled()
     }

@@ -131,7 +131,7 @@ public struct TastingDetailView: View {
         }
         .scrollContentBackground(.hidden)
         .background(Color.parchment)
-        .navigationTitle("Tasting")
+        .wineNavTitle("Tasting")
         .accessibilityIdentifier("tasting-detail")
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {

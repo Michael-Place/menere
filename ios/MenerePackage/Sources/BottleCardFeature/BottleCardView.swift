@@ -664,7 +664,9 @@ private struct Chip: View {
             .padding(.horizontal, 12)
             .padding(.vertical, 6)
             .background(
-                Capsule().fill(Color(.tertiarySystemFill))
+                // Warm parchment-toned pill instead of the cool system gray, so grape/pairing chips
+                // sit inside the "Cellar & Candlelight" palette.
+                Capsule().fill(Color.inkSoft.opacity(0.15))
             )
     }
 }
