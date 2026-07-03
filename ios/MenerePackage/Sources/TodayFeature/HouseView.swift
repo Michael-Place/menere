@@ -1,5 +1,6 @@
 import ComposableArchitecture
 import FamilyDomain
+import HubspaceClient
 import HueClient
 import LutronClient
 import MenereUI
@@ -19,7 +20,8 @@ public struct HouseView: View {
     public init(
         config: HueConfig, members: [HouseholdMember], bridges: [BridgeSnapshot],
         lutronConfig: LutronConfig? = nil, shades: [LutronShade] = [],
-        sonosConfig: SonosConfig? = nil, nestConfig: NestConfig? = nil
+        sonosConfig: SonosConfig? = nil, nestConfig: NestConfig? = nil,
+        hubspaceConfig: HubspaceConfig? = nil
     ) {
         _store = Bindable(
             wrappedValue: Store(
@@ -27,7 +29,8 @@ public struct HouseView: View {
                     config: config, members: members, bridges: bridges,
                     lutronConfig: lutronConfig, shades: shades,
                     sonosConfig: sonosConfig,
-                    nestConfig: nestConfig
+                    nestConfig: nestConfig,
+                    hubspaceConfig: hubspaceConfig
                 )
             ) { HouseReducer() }
         )
@@ -60,6 +63,11 @@ public struct HouseView: View {
                 if !store.thermostats.isEmpty {
                     climateSection(store.thermostats)
                 }
+                // Water section (P15-C4) — one block per Hubspace water-timer spigot, below Climate.
+                // Renders nothing when there's no spigot (not set up / unreachable) — silent degrade.
+                if !store.spigots.isEmpty {
+                    waterSection(store.spigots)
+                }
             }
             .padding(.horizontal)
             .padding(.vertical, 12)
@@ -78,6 +86,15 @@ public struct HouseView: View {
             }
         }
         .task { store.send(.task) }
+        // ~30s water poll, ONLY while this screen is visible — SwiftUI cancels this `.task` on
+        // disappear, so there's no background polling. Each tick is a single single-flighted re-read.
+        .task {
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(30))
+                guard !Task.isCancelled else { break }
+                store.send(.waterPoll)
+            }
+        }
         .refreshable { await store.send(.refresh).finish() }
     }
 
@@ -445,6 +462,131 @@ public struct HouseView: View {
             return "\(Int(rounded))°"
         }
         return String(format: "%.1f°", rounded)
+    }
+
+    // MARK: Water section (P15-C4)
+
+    private func waterSection(_ spigots: [HubspaceSpigot]) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text("Water".uppercased())
+                .font(.system(.caption, design: .rounded).weight(.semibold))
+                .foregroundStyle(Color.inkSoft)
+                .padding(.bottom, 6)
+            VStack(spacing: 14) {
+                ForEach(spigots) { spigot in
+                    spigotCard(spigot, showHeader: spigots.count > 1)
+                }
+            }
+        }
+        .accessibilityIdentifier("house-water")
+    }
+
+    /// One spigot device: an optional name+battery header (shown when there are multiple devices) and a
+    /// rounded card of per-outlet rows.
+    private func spigotCard(_ spigot: HubspaceSpigot, showHeader: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            if showHeader {
+                HStack(spacing: 8) {
+                    Text(spigot.name)
+                        .font(.system(.subheadline, design: .rounded).weight(.semibold))
+                        .foregroundStyle(Color.ink)
+                    Spacer(minLength: 0)
+                    batteryLabel(spigot.batteryPercent)
+                }
+                .padding(.horizontal, 4)
+            }
+            VStack(spacing: 0) {
+                ForEach(Array(spigot.outlets.enumerated()), id: \.element.id) { idx, outlet in
+                    outletRow(spigot: spigot, outlet: outlet, showBattery: !showHeader && idx == 0 ? spigot.batteryPercent : nil)
+                    if idx < spigot.outlets.count - 1 {
+                        Divider().overlay(Color.inkSoft.opacity(0.15)).padding(.leading, 16)
+                    }
+                }
+            }
+            .background(
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .fill(Color.familySurface)
+            )
+        }
+        .accessibilityIdentifier("house-spigot-\(spigot.id)")
+    }
+
+    private func outletRow(spigot: HubspaceSpigot, outlet: SpigotOutlet, showBattery: Int?) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: outlet.isOpen ? "drop.fill" : "drop")
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(outlet.isOpen ? Color.bacanGreen : Color.inkSoft)
+                .frame(width: 22)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(outlet.name)
+                    .font(.system(.body, design: .rounded).weight(.medium))
+                    .foregroundStyle(Color.ink)
+                    .lineLimit(1)
+                HStack(spacing: 8) {
+                    Text(outlet.statusLine)
+                        .font(.system(.caption, design: .rounded))
+                        .foregroundStyle(outlet.isOpen ? Color.bacanGreen : Color.inkSoft)
+                        .accessibilityIdentifier("house-spigot-status-\(spigot.id)-\(outlet.instance)")
+                    if let battery = showBattery {
+                        Text("· 🔋\(battery)%")
+                            .font(.system(.caption, design: .rounded))
+                            .foregroundStyle(Color.inkSoft)
+                    }
+                }
+            }
+            Spacer(minLength: 0)
+            // When opening, offer a duration menu; when open, a plain "close" toggle.
+            if outlet.isOpen {
+                Toggle("", isOn: Binding(
+                    get: { true },
+                    set: { _ in store.send(.toggleSpigot(deviceId: spigot.id, instance: outlet.instance, open: false, durationMinutes: nil)) }
+                ))
+                .labelsHidden()
+                .tint(Color.bacanGreen)
+                .accessibilityIdentifier("house-spigot-toggle-\(spigot.id)-\(outlet.instance)")
+            } else {
+                durationMenu(spigot: spigot, outlet: outlet)
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .accessibilityIdentifier("house-spigot-outlet-\(spigot.id)-\(outlet.instance)")
+    }
+
+    /// The "open for how long" menu — the timed-run options plus "Until turned off". Tapping any option
+    /// opens the outlet (optimistically) with that duration.
+    private func durationMenu(spigot: HubspaceSpigot, outlet: SpigotOutlet) -> some View {
+        Menu {
+            ForEach(SpigotDuration.options, id: \.self) { minutes in
+                Button("Open for \(minutes) min") {
+                    store.send(.toggleSpigot(deviceId: spigot.id, instance: outlet.instance, open: true, durationMinutes: minutes))
+                }
+            }
+            Button("Open until turned off") {
+                store.send(.toggleSpigot(deviceId: spigot.id, instance: outlet.instance, open: true, durationMinutes: nil))
+            }
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "drop")
+                Text("Open")
+            }
+            .font(.system(size: 14, weight: .semibold, design: .rounded))
+            .foregroundStyle(Color.bacanGreen)
+            .padding(.horizontal, 12)
+            .frame(height: 32)
+            .background(Capsule(style: .continuous).fill(Color.bacanGreen.opacity(0.14)))
+        }
+        .accessibilityIdentifier("house-spigot-open-\(spigot.id)-\(outlet.instance)")
+    }
+
+    private func batteryLabel(_ percent: Int?) -> some View {
+        Group {
+            if let percent {
+                Text("🔋 \(percent)%")
+                    .font(.system(.caption, design: .rounded))
+                    .foregroundStyle(Color.inkSoft)
+            }
+        }
     }
 
     // MARK: Room row

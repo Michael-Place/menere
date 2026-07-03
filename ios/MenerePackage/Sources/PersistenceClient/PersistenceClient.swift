@@ -145,6 +145,19 @@ public struct PersistenceClient: Sendable {
     /// disappears.
     public var deleteNestConfig: @Sendable (_ hid: String) async throws -> Void
 
+    // MARK: Smart home (Hubspace water timer) config (P15-C4)
+    /// The household's Hubspace config at `households/{hid}/config/hubspace`, or nil when absent (never
+    /// set up). Decode-safe (mock/hand-written docs still resolve). The cheap gate for the House "Water"
+    /// section — no doc, no spigots.
+    public var hubspaceConfig: @Sendable (_ hid: String) async throws -> HubspaceConfig?
+    /// Full-document write of the Hubspace config (P15-C4 setup / reconnect). Not a merge — the whole
+    /// `households/{hid}/config/hubspace` doc is replaced, so a dropped `mock` flag actually clears.
+    /// Persists ONLY the refresh token + account id + email — never the password.
+    public var saveHubspaceConfig: @Sendable (_ hid: String, _ config: HubspaceConfig) async throws -> Void
+    /// Remove the Hubspace config doc entirely (Settings "Remove"). The Water section then silently
+    /// disappears.
+    public var deleteHubspaceConfig: @Sendable (_ hid: String) async throws -> Void
+
     // MARK: Activity feed
     /// Recent activity, newest first (capped at 50).
     public var activity: @Sendable (_ hid: String) async throws -> [ActivityItem]
@@ -462,6 +475,20 @@ extension PersistenceClient: DependencyKey {
             },
             deleteNestConfig: { hid in
                 try await households().document(hid).collection("config").document("nest").delete()
+            },
+            hubspaceConfig: { hid in
+                let s = try await households().document(hid).collection("config").document("hubspace").getDocument()
+                guard let d = s.data() else { return nil }
+                return try Firestore.Decoder().decode(HubspaceConfig.self, from: d)
+            },
+            saveHubspaceConfig: { hid, config in
+                // Full-doc replace (merge: false) — same rationale as saveHueConfig / saveNestConfig.
+                try await households().document(hid).collection("config").document("hubspace").setData(
+                    Firestore.Encoder().encode(config)
+                )
+            },
+            deleteHubspaceConfig: { hid in
+                try await households().document(hid).collection("config").document("hubspace").delete()
             },
             activity: { hid in
                 let snapshot = try await households().document(hid).collection("activity")

@@ -2,6 +2,7 @@ import AuthenticationDomain
 import ComposableArchitecture
 import FamilyDomain
 import HouseholdClient
+import HubspaceClient
 import HueClient
 import LutronClient
 import MenereUI
@@ -54,6 +55,15 @@ public struct SettingsReducer {
         /// True while the Remove-Nest confirmation dialog is up.
         var confirmingNestRemove = false
         @Presents var nestSetup: NestSetupReducer.State?
+
+        // MARK: Smart home (Hubspace water timer, P15-C4)
+        /// The household's Hubspace config, or nil when never set up (→ the "Set up Hubspace" row).
+        var hubspaceConfig: HubspaceConfig?
+        /// Live spigot count once fetched (nil until probed / unreachable).
+        var hubspaceSpigotCount: Int?
+        /// True while the Remove-Hubspace confirmation dialog is up.
+        var confirmingHubspaceRemove = false
+        @Presents var hubspaceSetup: HubspaceSetupReducer.State?
 
         public init() {}
 
@@ -115,6 +125,16 @@ public struct SettingsReducer {
         case confirmRemoveNest
         case cancelRemoveNest
         case nestSetup(PresentationAction<NestSetupReducer.Action>)
+
+        // Smart home (Hubspace water timer)
+        case hubspaceConfigLoaded(HubspaceConfig?)
+        case hubspaceSpigotsProbed(Int?)
+        case setupHubspaceTapped
+        case reconnectHubspaceTapped
+        case removeHubspaceTapped
+        case confirmRemoveHubspace
+        case cancelRemoveHubspace
+        case hubspaceSetup(PresentationAction<HubspaceSetupReducer.Action>)
     }
 
     public init() {}
@@ -174,6 +194,9 @@ public struct SettingsReducer {
                     // Nest thermostat config (P15-C3) — load, then (if connected) probe the count.
                     let nest = try? await persistence.nestConfig(hid)
                     await send(.nestConfigLoaded(nest ?? nil))
+                    // Hubspace water-timer config (P15-C4) — load, then (if connected) probe the count.
+                    let hubspace = try? await persistence.hubspaceConfig(hid)
+                    await send(.hubspaceConfigLoaded(hubspace ?? nil))
                 }
 
             case let .hueConfigLoaded(config):
@@ -360,6 +383,58 @@ public struct SettingsReducer {
             case .nestSetup:
                 return .none
 
+            // MARK: Hubspace water timer (P15-C4)
+
+            case let .hubspaceConfigLoaded(config):
+                state.hubspaceConfig = config
+                state.hubspaceSpigotCount = nil
+                guard let config, config.isConnected else { return .none }
+                return .run { send in
+                    @Dependency(\.hubspace) var hubspace
+                    let spigots = (try? await hubspace.spigots(config)) ?? []
+                    await send(.hubspaceSpigotsProbed(spigots.isEmpty ? nil : spigots.count))
+                }
+
+            case let .hubspaceSpigotsProbed(count):
+                state.hubspaceSpigotCount = count
+                return .none
+
+            case .setupHubspaceTapped, .reconnectHubspaceTapped:
+                @Shared(.user) var user
+                guard let hid = user?.householdId else { return .none }
+                state.hubspaceSetup = HubspaceSetupReducer.State(hid: hid, existingConfig: state.hubspaceConfig)
+                return .none
+
+            case .removeHubspaceTapped:
+                state.confirmingHubspaceRemove = true
+                return .none
+
+            case .cancelRemoveHubspace:
+                state.confirmingHubspaceRemove = false
+                return .none
+
+            case .confirmRemoveHubspace:
+                state.confirmingHubspaceRemove = false
+                state.hubspaceConfig = nil
+                state.hubspaceSpigotCount = nil
+                @Shared(.user) var user
+                guard let hid = user?.householdId else { return .none }
+                return .run { _ in
+                    @Dependency(\.persistence) var persistence
+                    try? await persistence.deleteHubspaceConfig(hid)
+                }
+
+            case let .hubspaceSetup(.presented(.delegate(.finished(config)))):
+                state.hubspaceSetup = nil
+                return .send(.hubspaceConfigLoaded(config))
+
+            case .hubspaceSetup(.presented(.delegate(.cancelled))):
+                state.hubspaceSetup = nil
+                return .none
+
+            case .hubspaceSetup:
+                return .none
+
             case let .householdLoaded(h):
                 state.isLoadingHousehold = false
                 state.household = h
@@ -430,6 +505,9 @@ public struct SettingsReducer {
         }
         .ifLet(\.$nestSetup, action: \.nestSetup) {
             NestSetupReducer()
+        }
+        .ifLet(\.$hubspaceSetup, action: \.hubspaceSetup) {
+            HubspaceSetupReducer()
         }
     }
 }
@@ -571,6 +649,7 @@ public struct SettingsView: View {
             LutronPairingView(store: pairingStore)
         }
         .modifier(NestSettingsPresentations(store: store))
+        .modifier(HubspaceSettingsPresentations(store: store))
         .sheet(isPresented: Binding(
             get: { store.huePickerRitual != nil },
             set: { if !$0 { store.send(.hueRitualTapped(nil)) } }
@@ -629,6 +708,8 @@ public struct SettingsView: View {
             lutronRow
             // Nest thermostat (P15-C3) — below the Lutron shades.
             nestRow
+            // Hubspace water timer (P15-C4) — below the Nest thermostat.
+            hubspaceRow
         } header: {
             Text("Smart home")
         } footer: {
@@ -755,6 +836,67 @@ public struct SettingsView: View {
         case .none:
             return "Connected"
         }
+    }
+
+    /// The Hubspace water-timer row (P15-C4): connected → "Connected · {email}" (+ spigot count) with
+    /// Reconnect/Remove actions; not set up → "Set up Hubspace (spigot)".
+    @ViewBuilder
+    private var hubspaceRow: some View {
+        if let config = store.hubspaceConfig, config.isConnected {
+            HStack(spacing: 12) {
+                Image(systemName: "drop.fill")
+                    .foregroundStyle(Color.bacanGreen)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Hubspace spigot").foregroundStyle(Color.ink)
+                    Text(hubspaceStatusLine).font(.caption).foregroundStyle(Color.inkSoft)
+                }
+                Spacer()
+                HStack(spacing: 6) {
+                    Circle().fill(Color.bacanGreen).frame(width: 8, height: 8)
+                    Text("Connected").font(.caption).foregroundStyle(Color.inkSoft)
+                }
+            }
+            .accessibilityIdentifier("hubspace-status-row")
+            .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                Button(role: .destructive) {
+                    store.send(.removeHubspaceTapped)
+                } label: {
+                    Label("Remove", systemImage: "trash")
+                }
+                Button {
+                    store.send(.reconnectHubspaceTapped)
+                } label: {
+                    Label("Reconnect", systemImage: "arrow.triangle.2.circlepath")
+                }
+                .tint(Color.bacanGreen)
+            }
+            .contextMenu {
+                Button { store.send(.reconnectHubspaceTapped) } label: {
+                    Label("Reconnect", systemImage: "arrow.triangle.2.circlepath")
+                }
+                Button(role: .destructive) { store.send(.removeHubspaceTapped) } label: {
+                    Label("Remove", systemImage: "trash")
+                }
+            }
+        } else {
+            Button {
+                store.send(.setupHubspaceTapped)
+            } label: {
+                Label("Set up Hubspace (spigot)", systemImage: "drop")
+                    .foregroundStyle(Color.ink)
+            }
+            .accessibilityIdentifier("hubspace-setup-row")
+        }
+    }
+
+    /// The Hubspace status subtitle: "Connected · {email}", plus the spigot count once fetched.
+    private var hubspaceStatusLine: String {
+        let email = store.hubspaceConfig?.email
+        let base = email.map { "Connected · \($0)" } ?? "Connected"
+        if let count = store.hubspaceSpigotCount {
+            return "\(base) · \(count) spigot\(count == 1 ? "" : "s")"
+        }
+        return base
     }
 
     /// One bridge row: name (+ id) + reachability dot, with swipe/context Re-pair + Remove actions.
@@ -996,6 +1138,32 @@ private struct NestSettingsPresentations: ViewModifier {
                 Button("Cancel", role: .cancel) { store.send(.cancelRemoveNest) }
             } message: {
                 Text("The thermostat drops off the house screen. Your Google registration stays put — reconnect any time.")
+            }
+    }
+}
+
+/// The Hubspace setup sheet + Remove confirmation, bundled into a modifier so they don't deepen the main
+/// `body` modifier chain (the type-checker's budget again).
+private struct HubspaceSettingsPresentations: ViewModifier {
+    @Bindable var store: StoreOf<SettingsReducer>
+
+    func body(content: Content) -> some View {
+        content
+            .sheet(item: $store.scope(state: \.hubspaceSetup, action: \.hubspaceSetup)) { setupStore in
+                HubspaceSetupView(store: setupStore)
+            }
+            .confirmationDialog(
+                "Remove Hubspace?",
+                isPresented: Binding(
+                    get: { store.confirmingHubspaceRemove },
+                    set: { if !$0 { store.send(.cancelRemoveHubspace) } }
+                ),
+                titleVisibility: .visible
+            ) {
+                Button("Remove Hubspace", role: .destructive) { store.send(.confirmRemoveHubspace) }
+                Button("Cancel", role: .cancel) { store.send(.cancelRemoveHubspace) }
+            } message: {
+                Text("The spigot drops off the house screen. Sign in again any time to reconnect.")
             }
     }
 }

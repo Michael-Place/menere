@@ -1,6 +1,7 @@
 import ComposableArchitecture
 import FamilyDomain
 import Foundation
+import HubspaceClient
 import HueClient
 import LutronClient
 import NestClient
@@ -56,11 +57,19 @@ public struct HouseReducer {
         /// empty = not set up / unreachable (silent degrade).
         public var thermostats: [NestThermostat] = []
 
+        // MARK: Hubspace water timer (P15-C4)
+        /// The household's Hubspace config (nil = not set up). Stable for the screen's lifetime.
+        public var hubspaceConfig: HubspaceConfig?
+        /// Live spigot state, mutated optimistically and re-synced on refresh / the ~30s poll. Loaded on
+        /// `.task`; empty = not set up / unreachable (silent degrade).
+        public var spigots: [HubspaceSpigot] = []
+
         public init(
             config: HueConfig, members: [HouseholdMember] = [], bridges: [BridgeSnapshot] = [],
             lutronConfig: LutronConfig? = nil, shades: [LutronShade] = [],
             sonosConfig: SonosConfig? = nil, sonosGroups: [SonosGroup] = [],
-            nestConfig: NestConfig? = nil, thermostats: [NestThermostat] = []
+            nestConfig: NestConfig? = nil, thermostats: [NestThermostat] = [],
+            hubspaceConfig: HubspaceConfig? = nil, spigots: [HubspaceSpigot] = []
         ) {
             self.config = config
             self.members = members
@@ -71,6 +80,8 @@ public struct HouseReducer {
             self.sonosGroups = sonosGroups
             self.nestConfig = nestConfig
             self.thermostats = thermostats
+            self.hubspaceConfig = hubspaceConfig
+            self.spigots = spigots
         }
 
         /// Shades grouped by area/room name, each group's shades sorted by name — the House "Shades"
@@ -156,6 +167,15 @@ public struct HouseReducer {
         case commitNestSetpoint(deviceName: String)
         /// Change a thermostat's mode (optimistic; commits immediately). P14 seam over `setMode`.
         case setNestMode(deviceName: String, mode: NestMode)
+
+        // Hubspace water timer (P15-C4)
+        case spigotsReloaded([HubspaceSpigot])
+        /// Open/close one outlet, optionally for a timed run (optimistic; commits immediately). P14 seam
+        /// over `setSpigot`.
+        case toggleSpigot(deviceId: String, instance: String, open: Bool, durationMinutes: Int?)
+        /// The ~30s poll while the House screen is visible — a single spigot re-read (the View drives the
+        /// cadence and cancels it on disappear, so there's no background polling).
+        case waterPoll
     }
 
     public init() {}
@@ -164,6 +184,7 @@ public struct HouseReducer {
     @Dependency(\.lutron) var lutron
     @Dependency(\.sonos) var sonos
     @Dependency(\.nest) var nest
+    @Dependency(\.hubspace) var hubspace
     @Dependency(\.continuousClock) var clock
 
     /// ≥150ms between slider PUTs (the required floor). One quiescent tick, then one write.
@@ -182,6 +203,7 @@ public struct HouseReducer {
         case sonosVolume(String)
         case nestRefresh
         case nestSetpoint(String)
+        case waterRefresh
     }
 
     public var body: some ReducerOf<Self> {
@@ -193,6 +215,7 @@ public struct HouseReducer {
                 let lutronConfig = state.lutronConfig
                 let sonosConfig = state.sonosConfig
                 let nestConfig = state.nestConfig
+                let hubspaceConfig = state.hubspaceConfig
                 return .merge(
                     .run { send in
                         let snapshots = await hue.readHouse(bridges)
@@ -226,7 +249,15 @@ public struct HouseReducer {
                         let thermostats = (try? await nest.thermostats(nestConfig)) ?? []
                         await send(.nestReloaded(thermostats))
                     }
-                    .cancellable(id: CancelID.nestRefresh, cancelInFlight: true)
+                    .cancellable(id: CancelID.nestRefresh, cancelInFlight: true),
+                    // Spigots load independently (P15-C4) — a Hubspace cloud hiccup never blocks the
+                    // rest. Nil config or an error → empty → the Water section hides.
+                    .run { send in
+                        guard let hubspaceConfig, hubspaceConfig.isConnected else { return }
+                        let spigots = (try? await hubspace.spigots(hubspaceConfig)) ?? []
+                        await send(.spigotsReloaded(spigots))
+                    }
+                    .cancellable(id: CancelID.waterRefresh, cancelInFlight: true)
                 )
 
             case let .houseReloaded(snapshots):
@@ -345,6 +376,38 @@ public struct HouseReducer {
                       let i = state.thermostats.firstIndex(where: { $0.id == deviceName }) else { return .none }
                 state.thermostats[i] = state.thermostats[i].settingMode(mode)   // optimistic
                 return .run { _ in try? await nest.setMode(config, deviceName, mode) }
+
+            // MARK: Hubspace water timer (P15-C4)
+
+            case let .spigotsReloaded(spigots):
+                state.spigots = spigots
+                return .none
+
+            case .waterPoll:
+                // The ~30s poll (View-driven, cancelled on disappear). A single single-flighted re-read;
+                // nil/unconnected config → no-op.
+                guard let config = state.hubspaceConfig, config.isConnected else { return .none }
+                return .run { send in
+                    let spigots = (try? await hubspace.spigots(config)) ?? []
+                    await send(.spigotsReloaded(spigots))
+                }
+                .cancellable(id: CancelID.waterRefresh, cancelInFlight: true)
+
+            case let .toggleSpigot(deviceId, instance, open, durationMinutes):
+                guard let config = state.hubspaceConfig,
+                      let si = state.spigots.firstIndex(where: { $0.id == deviceId }),
+                      let oi = state.spigots[si].outlets.firstIndex(where: { $0.instance == instance })
+                else { return .none }
+                // Optimistic: flip the outlet locally, then commit. On failure re-read to restore truth.
+                let outlet = state.spigots[si].outlets[oi]
+                var outlets = state.spigots[si].outlets
+                outlets[oi] = outlet.setting(open: open, remainingMinutes: durationMinutes)
+                let spigot = state.spigots[si]
+                state.spigots[si] = HubspaceSpigot(id: spigot.id, name: spigot.name, outlets: outlets, batteryPercent: spigot.batteryPercent)
+                return .run { send in
+                    do { try await hubspace.setSpigot(config, deviceId, instance, open, durationMinutes) }
+                    catch { await send(.waterPoll) }   // silent truth-restore
+                }
 
             case let .toggleRoom(bridgeId, roomId):
                 guard let bi = state.bridges.firstIndex(where: { $0.bridge.bridgeId == bridgeId }),
