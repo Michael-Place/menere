@@ -552,7 +552,11 @@ tools. **Recommended order (Michael to confirm):**
    krahabb/meross_lan; HA also has a native `refoss` integration w/ LAN socket
    discovery). Messages signed with a device key (recoverable from the
    Refoss/Meross account pairing). Garage = cover device: state + open/close.
-   Slots in as P15-C5.
+   Slots in as P15-C5. ✅ **SHIPPED P15-C5** — `MerossClient` (envelope +
+   `MD5(messageId+key+timestamp)` sign, `Appliance.System.All` / `.GarageDoor.State`
+   GET/SET), manual-IP setup (UDP-broadcast discovery avoided — needs the restricted
+   iOS multicast entitlement), House "Garage" section with **open confirmation-gated**
+   (security surface) + ~20s "Opening…" settling re-read.
 6. **Ford F-150 Lightning + Charge Station Pro (researched 2026-07-02) → P15-C6.**
    Truck: FordPass API (reverse-engineered; marq24/ha-fordpass fork is EV-optimized
    with cloud-PUSH websocket — no polling) — battery %, range, charge state,

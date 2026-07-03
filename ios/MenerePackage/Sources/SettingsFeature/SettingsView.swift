@@ -6,6 +6,7 @@ import HubspaceClient
 import HueClient
 import LutronClient
 import MenereUI
+import MerossClient
 import NestClient
 import PersistenceClient
 import SwiftUI
@@ -64,6 +65,15 @@ public struct SettingsReducer {
         /// True while the Remove-Hubspace confirmation dialog is up.
         var confirmingHubspaceRemove = false
         @Presents var hubspaceSetup: HubspaceSetupReducer.State?
+
+        // MARK: Smart home (Meross/Refoss garage opener, P15-C5)
+        /// The household's Meross config, or nil when never set up (→ the "Set up garage" row).
+        var merossConfig: MerossConfig?
+        /// Live garage door count once probed (nil until probed / unreachable).
+        var merossDoorCount: Int?
+        /// True while the Remove-garage confirmation dialog is up.
+        var confirmingMerossRemove = false
+        @Presents var merossSetup: MerossSetupReducer.State?
 
         public init() {}
 
@@ -135,6 +145,16 @@ public struct SettingsReducer {
         case confirmRemoveHubspace
         case cancelRemoveHubspace
         case hubspaceSetup(PresentationAction<HubspaceSetupReducer.Action>)
+
+        // Smart home (Meross/Refoss garage opener)
+        case merossConfigLoaded(MerossConfig?)
+        case merossDoorsProbed(Int?)
+        case setupMerossTapped
+        case reconnectMerossTapped
+        case removeMerossTapped
+        case confirmRemoveMeross
+        case cancelRemoveMeross
+        case merossSetup(PresentationAction<MerossSetupReducer.Action>)
     }
 
     public init() {}
@@ -197,6 +217,9 @@ public struct SettingsReducer {
                     // Hubspace water-timer config (P15-C4) — load, then (if connected) probe the count.
                     let hubspace = try? await persistence.hubspaceConfig(hid)
                     await send(.hubspaceConfigLoaded(hubspace ?? nil))
+                    // Meross/Refoss garage config (P15-C5) — load, then (if connected) probe the count.
+                    let meross = try? await persistence.merossConfig(hid)
+                    await send(.merossConfigLoaded(meross ?? nil))
                 }
 
             case let .hueConfigLoaded(config):
@@ -435,6 +458,58 @@ public struct SettingsReducer {
             case .hubspaceSetup:
                 return .none
 
+            // MARK: Meross/Refoss garage opener (P15-C5)
+
+            case let .merossConfigLoaded(config):
+                state.merossConfig = config
+                state.merossDoorCount = nil
+                guard let config, config.isConnected else { return .none }
+                return .run { send in
+                    @Dependency(\.meross) var meross
+                    let doors = (try? await meross.garageState(config)) ?? []
+                    await send(.merossDoorsProbed(doors.isEmpty ? nil : doors.count))
+                }
+
+            case let .merossDoorsProbed(count):
+                state.merossDoorCount = count
+                return .none
+
+            case .setupMerossTapped, .reconnectMerossTapped:
+                @Shared(.user) var user
+                guard let hid = user?.householdId else { return .none }
+                state.merossSetup = MerossSetupReducer.State(hid: hid, existingConfig: state.merossConfig)
+                return .none
+
+            case .removeMerossTapped:
+                state.confirmingMerossRemove = true
+                return .none
+
+            case .cancelRemoveMeross:
+                state.confirmingMerossRemove = false
+                return .none
+
+            case .confirmRemoveMeross:
+                state.confirmingMerossRemove = false
+                state.merossConfig = nil
+                state.merossDoorCount = nil
+                @Shared(.user) var user
+                guard let hid = user?.householdId else { return .none }
+                return .run { _ in
+                    @Dependency(\.persistence) var persistence
+                    try? await persistence.deleteMerossConfig(hid)
+                }
+
+            case let .merossSetup(.presented(.delegate(.finished(config)))):
+                state.merossSetup = nil
+                return .send(.merossConfigLoaded(config))
+
+            case .merossSetup(.presented(.delegate(.cancelled))):
+                state.merossSetup = nil
+                return .none
+
+            case .merossSetup:
+                return .none
+
             case let .householdLoaded(h):
                 state.isLoadingHousehold = false
                 state.household = h
@@ -508,6 +583,9 @@ public struct SettingsReducer {
         }
         .ifLet(\.$hubspaceSetup, action: \.hubspaceSetup) {
             HubspaceSetupReducer()
+        }
+        .ifLet(\.$merossSetup, action: \.merossSetup) {
+            MerossSetupReducer()
         }
     }
 }
@@ -650,6 +728,7 @@ public struct SettingsView: View {
         }
         .modifier(NestSettingsPresentations(store: store))
         .modifier(HubspaceSettingsPresentations(store: store))
+        .modifier(MerossSettingsPresentations(store: store))
         .sheet(isPresented: Binding(
             get: { store.huePickerRitual != nil },
             set: { if !$0 { store.send(.hueRitualTapped(nil)) } }
@@ -710,6 +789,8 @@ public struct SettingsView: View {
             nestRow
             // Hubspace water timer (P15-C4) — below the Nest thermostat.
             hubspaceRow
+            // Meross/Refoss garage opener (P15-C5) — below the Hubspace spigot.
+            merossRow
         } header: {
             Text("Smart home")
         } footer: {
@@ -895,6 +976,67 @@ public struct SettingsView: View {
         let base = email.map { "Connected · \($0)" } ?? "Connected"
         if let count = store.hubspaceSpigotCount {
             return "\(base) · \(count) spigot\(count == 1 ? "" : "s")"
+        }
+        return base
+    }
+
+    /// The Meross/Refoss garage row (P15-C5): connected → "Connected · {name}" (+ door count) with
+    /// Reconnect/Remove actions; not set up → "Set up garage (Refoss)".
+    @ViewBuilder
+    private var merossRow: some View {
+        if let config = store.merossConfig, config.isConnected {
+            HStack(spacing: 12) {
+                Image(systemName: "door.garage.closed")
+                    .foregroundStyle(Color.bacanGreen)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Garage (Refoss)").foregroundStyle(Color.ink)
+                    Text(merossStatusLine).font(.caption).foregroundStyle(Color.inkSoft)
+                }
+                Spacer()
+                HStack(spacing: 6) {
+                    Circle().fill(Color.bacanGreen).frame(width: 8, height: 8)
+                    Text("Connected").font(.caption).foregroundStyle(Color.inkSoft)
+                }
+            }
+            .accessibilityIdentifier("meross-status-row")
+            .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                Button(role: .destructive) {
+                    store.send(.removeMerossTapped)
+                } label: {
+                    Label("Remove", systemImage: "trash")
+                }
+                Button {
+                    store.send(.reconnectMerossTapped)
+                } label: {
+                    Label("Reconnect", systemImage: "arrow.triangle.2.circlepath")
+                }
+                .tint(Color.bacanGreen)
+            }
+            .contextMenu {
+                Button { store.send(.reconnectMerossTapped) } label: {
+                    Label("Reconnect", systemImage: "arrow.triangle.2.circlepath")
+                }
+                Button(role: .destructive) { store.send(.removeMerossTapped) } label: {
+                    Label("Remove", systemImage: "trash")
+                }
+            }
+        } else {
+            Button {
+                store.send(.setupMerossTapped)
+            } label: {
+                Label("Set up garage (Refoss)", systemImage: "door.garage.closed")
+                    .foregroundStyle(Color.ink)
+            }
+            .accessibilityIdentifier("meross-setup-row")
+        }
+    }
+
+    /// The Meross status subtitle: "Connected · {name}", plus the door count once fetched.
+    private var merossStatusLine: String {
+        let name = store.merossConfig?.name
+        let base = name.map { "Connected · \($0)" } ?? "Connected"
+        if let count = store.merossDoorCount {
+            return "\(base) · \(count) door\(count == 1 ? "" : "s")"
         }
         return base
     }
@@ -1164,6 +1306,32 @@ private struct HubspaceSettingsPresentations: ViewModifier {
                 Button("Cancel", role: .cancel) { store.send(.cancelRemoveHubspace) }
             } message: {
                 Text("The spigot drops off the house screen. Sign in again any time to reconnect.")
+            }
+    }
+}
+
+/// The Meross/Refoss garage setup sheet + Remove confirmation, bundled into a modifier so they don't
+/// deepen the main `body` modifier chain (the type-checker's budget again).
+private struct MerossSettingsPresentations: ViewModifier {
+    @Bindable var store: StoreOf<SettingsReducer>
+
+    func body(content: Content) -> some View {
+        content
+            .sheet(item: $store.scope(state: \.merossSetup, action: \.merossSetup)) { setupStore in
+                MerossSetupView(store: setupStore)
+            }
+            .confirmationDialog(
+                "Remove garage?",
+                isPresented: Binding(
+                    get: { store.confirmingMerossRemove },
+                    set: { if !$0 { store.send(.cancelRemoveMeross) } }
+                ),
+                titleVisibility: .visible
+            ) {
+                Button("Remove garage", role: .destructive) { store.send(.confirmRemoveMeross) }
+                Button("Cancel", role: .cancel) { store.send(.cancelRemoveMeross) }
+            } message: {
+                Text("The garage drops off the house screen. Set it up again any time.")
             }
     }
 }

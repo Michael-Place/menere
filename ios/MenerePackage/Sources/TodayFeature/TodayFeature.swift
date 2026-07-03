@@ -114,6 +114,9 @@ public struct TodayReducer {
         /// The household's Hubspace config (P15-C4), loaded independently alongside the house card.
         /// Passed into `HouseView`, which loads live spigot state on appear. Nil = Hubspace not set up.
         var hubspaceConfig: HubspaceConfig?
+        /// The household's Meross/Refoss garage config (P15-C5), loaded independently alongside the house
+        /// card. Passed into `HouseView`, which loads live door state on appear. Nil = garage not set up.
+        var merossConfig: MerossConfig?
         /// The ritual key whose scene recall is in flight (drives the button's pending state).
         var recallingRitual: String?
         /// The ritual key that just succeeded — drives the checkmark morph + success haptic until
@@ -179,6 +182,9 @@ public struct TodayReducer {
         /// Load the Hubspace config (independent, non-blocking). Absent → the Water section hides.
         case loadHubspaceConfig
         case hubspaceConfigLoaded(HubspaceConfig?)
+        /// Load the Meross/Refoss garage config (independent, non-blocking). Absent → the Garage section hides.
+        case loadMerossConfig
+        case merossConfigLoaded(MerossConfig?)
         /// Recall a ritual's scene (Bedtime / Dinner's ready).
         case recallRitual(HueRitual)
         case ritualRecallFinished(key: String)
@@ -273,6 +279,8 @@ public struct TodayReducer {
                     .send(.loadNestConfig),
                     // Hubspace config (P15-C4) — for HouseView's Water section.
                     .send(.loadHubspaceConfig),
+                    // Meross/Refoss garage config (P15-C5) — for HouseView's Garage section.
+                    .send(.loadMerossConfig),
                     // Ask once so tonight's drive time can resolve (idempotent; no-op if determined).
                     .run { _ in
                         @Dependency(\.location) var location
@@ -481,6 +489,18 @@ public struct TodayReducer {
 
             case let .hubspaceConfigLoaded(config):
                 state.hubspaceConfig = config
+                return .none
+
+            case .loadMerossConfig:
+                guard let hid = hid() else { return .none }
+                return .run { send in
+                    @Dependency(\.persistence) var persistence
+                    let config = try? await persistence.merossConfig(hid)
+                    await send(.merossConfigLoaded(config ?? nil))
+                }
+
+            case let .merossConfigLoaded(config):
+                state.merossConfig = config
                 return .none
 
             case let .recallRitual(ritual):

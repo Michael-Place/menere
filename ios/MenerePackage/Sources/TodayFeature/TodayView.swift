@@ -476,7 +476,8 @@ public struct TodayView: View {
             HouseView(
                 config: house.config, members: store.members, bridges: house.bridges,
                 lutronConfig: store.lutronConfig, sonosConfig: store.sonosConfig,
-                nestConfig: store.nestConfig, hubspaceConfig: store.hubspaceConfig
+                nestConfig: store.nestConfig, hubspaceConfig: store.hubspaceConfig,
+                merossConfig: store.merossConfig
             )
         } label: {
             HStack(spacing: 8) {

@@ -4,6 +4,7 @@ import Foundation
 import HubspaceClient
 import HueClient
 import LutronClient
+import MerossClient
 import NestClient
 import SonosClient
 
@@ -64,12 +65,26 @@ public struct HouseReducer {
         /// `.task`; empty = not set up / unreachable (silent degrade).
         public var spigots: [HubspaceSpigot] = []
 
+        // MARK: Meross/Refoss garage opener (P15-C5)
+        /// The household's Meross config (nil = not set up). Stable for the screen's lifetime.
+        public var merossConfig: MerossConfig?
+        /// Live garage door state, re-synced on refresh and after the settle delay. Loaded on `.task`;
+        /// empty = not set up / unreachable (silent degrade).
+        public var garageDoors: [GarageDoor] = []
+        /// Per-channel transitional state while a door is moving (garage doors are slow): "Opening…" /
+        /// "Closing…". Set optimistically on a commit, cleared after the ~20s settle re-read.
+        public var garageSettling: [Int: GarageTransition] = [:]
+        /// The channel awaiting an OPEN confirmation (drives the "Open the garage?" dialog). Opening is a
+        /// security action → always confirmed; closing is not.
+        public var confirmingGarageOpen: Int?
+
         public init(
             config: HueConfig, members: [HouseholdMember] = [], bridges: [BridgeSnapshot] = [],
             lutronConfig: LutronConfig? = nil, shades: [LutronShade] = [],
             sonosConfig: SonosConfig? = nil, sonosGroups: [SonosGroup] = [],
             nestConfig: NestConfig? = nil, thermostats: [NestThermostat] = [],
-            hubspaceConfig: HubspaceConfig? = nil, spigots: [HubspaceSpigot] = []
+            hubspaceConfig: HubspaceConfig? = nil, spigots: [HubspaceSpigot] = [],
+            merossConfig: MerossConfig? = nil, garageDoors: [GarageDoor] = []
         ) {
             self.config = config
             self.members = members
@@ -82,7 +97,12 @@ public struct HouseReducer {
             self.thermostats = thermostats
             self.hubspaceConfig = hubspaceConfig
             self.spigots = spigots
+            self.merossConfig = merossConfig
+            self.garageDoors = garageDoors
         }
+
+        /// The transitional display state of a moving garage door.
+        public enum GarageTransition: Equatable, Sendable { case opening, closing }
 
         /// Shades grouped by area/room name, each group's shades sorted by name — the House "Shades"
         /// sections. Areas are alphabetical for a stable layout.
@@ -176,6 +196,26 @@ public struct HouseReducer {
         /// The ~30s poll while the House screen is visible — a single spigot re-read (the View drives the
         /// cadence and cancels it on disappear, so there's no background polling).
         case waterPoll
+
+        // Meross/Refoss garage opener (P15-C5)
+        case garageReloaded([GarageDoor])
+        /// A tap on a door's OPEN action — routes through the confirmation dialog (opening is a security
+        /// action). Never actuates directly.
+        case garageOpenRequested(channel: Int)
+        /// The user confirmed the pending open → actually opens the door.
+        case confirmGarageOpen
+        /// The user dismissed the open confirmation.
+        case cancelGarageOpen
+        /// A tap on a door's CLOSE action — closing is safe, so it commits directly (no confirmation).
+        case garageCloseRequested(channel: Int)
+        /// The shared commit that actuates a door (optimistic + settling). P14 seam over `setGarage`.
+        /// NOTE: the agent harness must gate `open == true` behind its OWN confirmation (see MerossClient).
+        case commitGarage(channel: Int, open: Bool)
+        /// Fired ~20s after a commit (garage doors are slow) — clears the door's settling state and
+        /// re-reads the true state.
+        case garageSettleElapsed(channel: Int)
+        /// A single garage state re-read (after settle / after a failed write). Silent degrade.
+        case garagePoll
     }
 
     public init() {}
@@ -185,6 +225,7 @@ public struct HouseReducer {
     @Dependency(\.sonos) var sonos
     @Dependency(\.nest) var nest
     @Dependency(\.hubspace) var hubspace
+    @Dependency(\.meross) var meross
     @Dependency(\.continuousClock) var clock
 
     /// ≥150ms between slider PUTs (the required floor). One quiescent tick, then one write.
@@ -192,6 +233,9 @@ public struct HouseReducer {
     /// ≥300ms after the last thermostat stepper tap before a single SDM command lands (SDM is a cloud
     /// call — a coarser debounce than the LAN sliders so a −−−+ flurry collapses to one write).
     static let stepperDebounce: Duration = .milliseconds(300)
+    /// How long a garage door is shown as "Opening…" / "Closing…" before we re-read its true state. Garage
+    /// doors are physically slow — ~20s covers a full travel with margin.
+    static let garageSettleDuration: Duration = .seconds(20)
 
     private enum CancelID: Hashable {
         case refresh
@@ -204,6 +248,8 @@ public struct HouseReducer {
         case nestRefresh
         case nestSetpoint(String)
         case waterRefresh
+        case garageRefresh
+        case garageSettle(Int)
     }
 
     public var body: some ReducerOf<Self> {
@@ -216,6 +262,7 @@ public struct HouseReducer {
                 let sonosConfig = state.sonosConfig
                 let nestConfig = state.nestConfig
                 let hubspaceConfig = state.hubspaceConfig
+                let merossConfig = state.merossConfig
                 return .merge(
                     .run { send in
                         let snapshots = await hue.readHouse(bridges)
@@ -257,7 +304,15 @@ public struct HouseReducer {
                         let spigots = (try? await hubspace.spigots(hubspaceConfig)) ?? []
                         await send(.spigotsReloaded(spigots))
                     }
-                    .cancellable(id: CancelID.waterRefresh, cancelInFlight: true)
+                    .cancellable(id: CancelID.waterRefresh, cancelInFlight: true),
+                    // Garage loads independently (P15-C5) — a dead opener never blocks the rest. Nil config
+                    // or an error → empty → the Garage section hides.
+                    .run { send in
+                        guard let merossConfig, merossConfig.isConnected else { return }
+                        let doors = (try? await meross.garageState(merossConfig)) ?? []
+                        await send(.garageReloaded(doors))
+                    }
+                    .cancellable(id: CancelID.garageRefresh, cancelInFlight: true)
                 )
 
             case let .houseReloaded(snapshots):
@@ -408,6 +463,61 @@ public struct HouseReducer {
                     do { try await hubspace.setSpigot(config, deviceId, instance, open, durationMinutes) }
                     catch { await send(.waterPoll) }   // silent truth-restore
                 }
+
+            // MARK: Meross/Refoss garage opener (P15-C5)
+
+            case let .garageReloaded(doors):
+                state.garageDoors = doors
+                return .none
+
+            case let .garageOpenRequested(channel):
+                // Opening the garage is a security action — always route through the confirmation dialog.
+                state.confirmingGarageOpen = channel
+                return .none
+
+            case .cancelGarageOpen:
+                state.confirmingGarageOpen = nil
+                return .none
+
+            case .confirmGarageOpen:
+                guard let channel = state.confirmingGarageOpen else { return .none }
+                state.confirmingGarageOpen = nil
+                return .send(.commitGarage(channel: channel, open: true))
+
+            case let .garageCloseRequested(channel):
+                // Closing is safe — no confirmation.
+                return .send(.commitGarage(channel: channel, open: false))
+
+            case let .commitGarage(channel, open):
+                guard let config = state.merossConfig,
+                      let di = state.garageDoors.firstIndex(where: { $0.channel == channel }) else { return .none }
+                // Optimistic: flip the door + show the transitional state (garage doors are slow).
+                state.garageDoors[di] = state.garageDoors[di].setting(open: open)
+                state.garageSettling[channel] = open ? .opening : .closing
+                return .run { send in
+                    do { try await meross.setGarage(config, channel, open) }
+                    catch {
+                        // Write failed — restore truth immediately (clear settling + re-read).
+                        await send(.garageSettleElapsed(channel: channel))
+                        return
+                    }
+                    // Let the door travel, then re-read its true resting state.
+                    try? await clock.sleep(for: Self.garageSettleDuration)
+                    await send(.garageSettleElapsed(channel: channel))
+                }
+                .cancellable(id: CancelID.garageSettle(channel), cancelInFlight: true)
+
+            case let .garageSettleElapsed(channel):
+                state.garageSettling[channel] = nil
+                return .send(.garagePoll)
+
+            case .garagePoll:
+                guard let config = state.merossConfig, config.isConnected else { return .none }
+                return .run { send in
+                    let doors = (try? await meross.garageState(config)) ?? []
+                    await send(.garageReloaded(doors))
+                }
+                .cancellable(id: CancelID.garageRefresh, cancelInFlight: true)
 
             case let .toggleRoom(bridgeId, roomId):
                 guard let bi = state.bridges.firstIndex(where: { $0.bridge.bridgeId == bridgeId }),

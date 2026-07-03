@@ -30,6 +30,7 @@ let package = Package(
         .library(name: "SonosClient", targets: ["SonosClient"]),
         .library(name: "NestClient", targets: ["NestClient"]),
         .library(name: "HubspaceClient", targets: ["HubspaceClient"]),
+        .library(name: "MerossClient", targets: ["MerossClient"]),
         .library(name: "IdentifyClient", targets: ["IdentifyClient"]),
         .library(name: "EnrichmentClient", targets: ["EnrichmentClient"]),
         .library(name: "CatalogClient", targets: ["CatalogClient"]),
@@ -123,6 +124,7 @@ let package = Package(
                 "LutronClient",
                 "NestClient",
                 "HubspaceClient",
+                "MerossClient",
             ]
         ),
         .target(
@@ -141,6 +143,7 @@ let package = Package(
                 "SonosClient",
                 "NestClient",
                 "HubspaceClient",
+                "MerossClient",
             ]
         ),
         .target(
@@ -301,6 +304,14 @@ let package = Package(
             ]
         ),
         .target(
+            name: "MerossClient",
+            dependencies: [
+                .product(name: "Dependencies", package: "swift-dependencies"),
+                .product(name: "DependenciesMacros", package: "swift-dependencies"),
+                "FamilyDomain",
+            ]
+        ),
+        .target(
             name: "IdentifyClient",
             dependencies: [
                 .product(name: "Dependencies", package: "swift-dependencies"),
@@ -438,6 +449,7 @@ let package = Package(
                 "LutronClient",
                 "NestClient",
                 "HubspaceClient",
+                "MerossClient",
                 "FamilyDomain",
             ]
         ),
@@ -489,6 +501,13 @@ let package = Package(
             ]
         ),
         .testTarget(
+            name: "MerossClientTests",
+            dependencies: [
+                "MerossClient",
+                "FamilyDomain",
+            ]
+        ),
+        .testTarget(
             name: "TodayFeatureTests",
             dependencies: [
                 .product(name: "ComposableArchitecture", package: "swift-composable-architecture"),
@@ -498,6 +517,7 @@ let package = Package(
                 "SonosClient",
                 "NestClient",
                 "HubspaceClient",
+                "MerossClient",
                 "FamilyDomain",
             ]
         ),

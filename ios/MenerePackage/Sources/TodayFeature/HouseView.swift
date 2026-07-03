@@ -4,6 +4,7 @@ import HubspaceClient
 import HueClient
 import LutronClient
 import MenereUI
+import MerossClient
 import NestClient
 import SonosClient
 import SwiftUI
@@ -21,7 +22,7 @@ public struct HouseView: View {
         config: HueConfig, members: [HouseholdMember], bridges: [BridgeSnapshot],
         lutronConfig: LutronConfig? = nil, shades: [LutronShade] = [],
         sonosConfig: SonosConfig? = nil, nestConfig: NestConfig? = nil,
-        hubspaceConfig: HubspaceConfig? = nil
+        hubspaceConfig: HubspaceConfig? = nil, merossConfig: MerossConfig? = nil
     ) {
         _store = Bindable(
             wrappedValue: Store(
@@ -30,7 +31,8 @@ public struct HouseView: View {
                     lutronConfig: lutronConfig, shades: shades,
                     sonosConfig: sonosConfig,
                     nestConfig: nestConfig,
-                    hubspaceConfig: hubspaceConfig
+                    hubspaceConfig: hubspaceConfig,
+                    merossConfig: merossConfig
                 )
             ) { HouseReducer() }
         )
@@ -68,6 +70,11 @@ public struct HouseView: View {
                 if !store.spigots.isEmpty {
                     waterSection(store.spigots)
                 }
+                // Garage section (P15-C5) — one row per Meross/Refoss door, below Water. Renders nothing
+                // when there's no door (not set up / unreachable) — silent degrade.
+                if !store.garageDoors.isEmpty {
+                    garageSection(store.garageDoors)
+                }
             }
             .padding(.horizontal)
             .padding(.vertical, 12)
@@ -96,6 +103,20 @@ public struct HouseView: View {
             }
         }
         .refreshable { await store.send(.refresh).finish() }
+        // Opening the garage is a security action → always confirm. Closing does not (handled inline).
+        .confirmationDialog(
+            "Open the garage?",
+            isPresented: Binding(
+                get: { store.confirmingGarageOpen != nil },
+                set: { if !$0 { store.send(.cancelGarageOpen) } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("Open the garage", role: .destructive) { store.send(.confirmGarageOpen) }
+            Button("Cancel", role: .cancel) { store.send(.cancelGarageOpen) }
+        } message: {
+            Text("This opens the garage door.")
+        }
     }
 
     // MARK: Bridge section (rooms then zones)
@@ -587,6 +608,115 @@ public struct HouseView: View {
                     .foregroundStyle(Color.inkSoft)
             }
         }
+    }
+
+    // MARK: Garage section (P15-C5)
+
+    private func garageSection(_ doors: [GarageDoor]) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text("Garage".uppercased())
+                .font(.system(.caption, design: .rounded).weight(.semibold))
+                .foregroundStyle(Color.inkSoft)
+                .padding(.bottom, 6)
+            VStack(spacing: 0) {
+                ForEach(Array(doors.enumerated()), id: \.element.id) { idx, door in
+                    garageRow(door)
+                    if idx < doors.count - 1 {
+                        Divider().overlay(Color.inkSoft.opacity(0.15)).padding(.leading, 16)
+                    }
+                }
+            }
+            .background(
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .fill(Color.familySurface)
+            )
+        }
+        .accessibilityIdentifier("house-garage")
+    }
+
+    /// One garage door row. It's a security surface, so state reads plainly (a bacanGreen shield when
+    /// closed / terracotta when open), the transitional "Opening…" / "Closing…" shows while it travels,
+    /// and the action button is Open (→ confirmation) or Close (direct).
+    private func garageRow(_ door: GarageDoor) -> some View {
+        let settling = store.garageSettling[door.channel]
+        return HStack(spacing: 12) {
+            Image(systemName: door.isOpen ? "door.garage.open" : "door.garage.closed")
+                .font(.system(size: 18, weight: .semibold))
+                .foregroundStyle(door.isOpen ? Color.terracotta : Color.bacanGreen)
+                .frame(width: 26)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(door.displayName)
+                    .font(.system(.body, design: .rounded).weight(.medium))
+                    .foregroundStyle(Color.ink)
+                    .lineLimit(1)
+                Text(garageStatusText(door: door, settling: settling))
+                    .font(.system(.caption, design: .rounded))
+                    .foregroundStyle(garageStatusColor(door: door, settling: settling))
+                    .contentTransition(.opacity)
+                    .accessibilityIdentifier("house-garage-status-\(door.channel)")
+            }
+            Spacer(minLength: 0)
+            garageActionButton(door: door, settling: settling)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .accessibilityIdentifier("house-garage-\(door.channel)")
+    }
+
+    @ViewBuilder
+    private func garageActionButton(door: GarageDoor, settling: HouseReducer.State.GarageTransition?) -> some View {
+        if let settling {
+            // While travelling, show a quiet pending pill (no action — the door is mid-move).
+            HStack(spacing: 6) {
+                ProgressView().controlSize(.small)
+                Text(settling == .opening ? "Opening…" : "Closing…")
+            }
+            .font(.system(size: 14, weight: .semibold, design: .rounded))
+            .foregroundStyle(Color.inkSoft)
+            .padding(.horizontal, 12)
+            .frame(height: 32)
+            .background(Capsule(style: .continuous).fill(Color.inkSoft.opacity(0.12)))
+            .accessibilityIdentifier("house-garage-settling-\(door.channel)")
+        } else if door.isOpen {
+            garageButton("Close", systemImage: "door.garage.closed", tint: .bacanGreen,
+                         id: "house-garage-close-\(door.channel)") {
+                store.send(.garageCloseRequested(channel: door.channel))
+            }
+        } else {
+            garageButton("Open", systemImage: "door.garage.open", tint: .terracotta,
+                         id: "house-garage-open-\(door.channel)") {
+                store.send(.garageOpenRequested(channel: door.channel))
+            }
+        }
+    }
+
+    private func garageButton(_ title: String, systemImage: String, tint: Color, id: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 4) {
+                Image(systemName: systemImage)
+                Text(title)
+            }
+            .font(.system(size: 14, weight: .semibold, design: .rounded))
+            .foregroundStyle(tint)
+            .padding(.horizontal, 12)
+            .frame(height: 32)
+            .background(Capsule(style: .continuous).fill(tint.opacity(0.14)))
+        }
+        .buttonStyle(.pressable)
+        .accessibilityIdentifier(id)
+    }
+
+    private func garageStatusText(door: GarageDoor, settling: HouseReducer.State.GarageTransition?) -> String {
+        switch settling {
+        case .opening: return "Opening…"
+        case .closing: return "Closing…"
+        case nil: return door.statusLine
+        }
+    }
+
+    private func garageStatusColor(door: GarageDoor, settling: HouseReducer.State.GarageTransition?) -> Color {
+        if settling != nil { return Color.inkSoft }
+        return door.isOpen ? Color.terracotta : Color.bacanGreen
     }
 
     // MARK: Room row

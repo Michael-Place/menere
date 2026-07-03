@@ -158,6 +158,18 @@ public struct PersistenceClient: Sendable {
     /// disappears.
     public var deleteHubspaceConfig: @Sendable (_ hid: String) async throws -> Void
 
+    // MARK: Smart home (Meross/Refoss garage opener) config (P15-C5)
+    /// The household's Meross config at `households/{hid}/config/meross`, or nil when absent (never set
+    /// up). Decode-safe (mock/hand-written docs still resolve). The cheap gate for the House "Garage"
+    /// section — no doc, no garage.
+    public var merossConfig: @Sendable (_ hid: String) async throws -> MerossConfig?
+    /// Full-document write of the Meross config (P15-C5 setup / reconnect). Not a merge — the whole
+    /// `households/{hid}/config/meross` doc is replaced, so a dropped `mock` flag actually clears.
+    public var saveMerossConfig: @Sendable (_ hid: String, _ config: MerossConfig) async throws -> Void
+    /// Remove the Meross config doc entirely (Settings "Remove"). The Garage section then silently
+    /// disappears.
+    public var deleteMerossConfig: @Sendable (_ hid: String) async throws -> Void
+
     // MARK: Activity feed
     /// Recent activity, newest first (capped at 50).
     public var activity: @Sendable (_ hid: String) async throws -> [ActivityItem]
@@ -489,6 +501,20 @@ extension PersistenceClient: DependencyKey {
             },
             deleteHubspaceConfig: { hid in
                 try await households().document(hid).collection("config").document("hubspace").delete()
+            },
+            merossConfig: { hid in
+                let s = try await households().document(hid).collection("config").document("meross").getDocument()
+                guard let d = s.data() else { return nil }
+                return try Firestore.Decoder().decode(MerossConfig.self, from: d)
+            },
+            saveMerossConfig: { hid, config in
+                // Full-doc replace (merge: false) — same rationale as saveHueConfig / saveHubspaceConfig.
+                try await households().document(hid).collection("config").document("meross").setData(
+                    Firestore.Encoder().encode(config)
+                )
+            },
+            deleteMerossConfig: { hid in
+                try await households().document(hid).collection("config").document("meross").delete()
             },
             activity: { hid in
                 let snapshot = try await households().document(hid).collection("activity")
