@@ -205,6 +205,9 @@ public struct ChoresView: View {
         .sheet(item: $store.scope(state: \.careForm, action: \.careForm)) { formStore in
             CareItemFormView(store: formStore)
         }
+        .sheet(item: $store.scope(state: \.plantCapture, action: \.plantCapture)) { captureStore in
+            PlantCaptureView(store: captureStore)
+        }
         .alert("New reward", isPresented: $store.showAddReward) {
             TextField("What's the prize?", text: $store.newRewardTitle)
             TextField("XP cost", value: $store.newRewardCost, format: .number)
@@ -607,13 +610,27 @@ private struct PlantRow: View {
     }
 
     /// Species / botanical line. A botanical (latin) name renders italic; a plain common name doesn't.
+    /// The light level (P9.1), when set, trails ink-soft with a small sun glyph.
     @ViewBuilder
     private var speciesLine: some View {
-        if let latin = item.speciesLatin, !latin.isEmpty {
-            Text(latin).font(.caption2).italic().foregroundStyle(Color.inkSoft)
-        } else if let species = item.species, !species.isEmpty {
-            Text(species).font(.caption2).foregroundStyle(Color.inkSoft)
+        HStack(spacing: 5) {
+            if let latin = item.speciesLatin, !latin.isEmpty {
+                Text(latin).italic()
+            } else if let species = item.species, !species.isEmpty {
+                Text(species)
+            }
+            if let light = item.lightLevel, !light.isEmpty {
+                if item.species?.isEmpty == false || item.speciesLatin?.isEmpty == false {
+                    Text("·")
+                }
+                Label(light, systemImage: "sun.max")
+                    .labelStyle(.titleAndIcon)
+                    .imageScale(.small)
+                    .accessibilityIdentifier("plant-light-\(item.id)")
+            }
         }
+        .font(.caption2)
+        .foregroundStyle(Color.inkSoft)
     }
 
     /// Due line copy + color, task-title-driven. Domain gives the day math; the view owns voice.

@@ -147,6 +147,10 @@ public struct CareItem: Codable, Equatable, Identifiable, Sendable {
     public var speciesLatin: String?
     /// Free-text care notes ("bright indirect light, let the top inch dry out").
     public var careNotes: String?
+    /// Plant-only (P9.1): the light level the plant lives in — one of the capture wizard's choices
+    /// ("Low" / "Medium" / "Bright indirect" / "Direct sun"). Free-form `String?` so future choices
+    /// stay additive. Decode-safe additive field; rendered ink-soft on the plant row/detail.
+    public var lightLevel: String?
     /// Pet-only (P10): breed, e.g. "Chihuahua mix". Decode-safe additive field.
     public var breed: String?
     /// Pet-only (P10): birthday, for age. Decode-safe additive field.
@@ -168,6 +172,7 @@ public struct CareItem: Codable, Equatable, Identifiable, Sendable {
         species: String? = nil,
         speciesLatin: String? = nil,
         careNotes: String? = nil,
+        lightLevel: String? = nil,
         breed: String? = nil,
         birthday: Date? = nil,
         vetName: String? = nil,
@@ -184,6 +189,7 @@ public struct CareItem: Codable, Equatable, Identifiable, Sendable {
         self.species = species
         self.speciesLatin = speciesLatin
         self.careNotes = careNotes
+        self.lightLevel = lightLevel
         self.breed = breed
         self.birthday = birthday
         self.vetName = vetName
@@ -203,6 +209,7 @@ public struct CareItem: Codable, Equatable, Identifiable, Sendable {
         species = try c.decodeIfPresent(String.self, forKey: .species)
         speciesLatin = try c.decodeIfPresent(String.self, forKey: .speciesLatin)
         careNotes = try c.decodeIfPresent(String.self, forKey: .careNotes)
+        lightLevel = try c.decodeIfPresent(String.self, forKey: .lightLevel)
         breed = try c.decodeIfPresent(String.self, forKey: .breed)
         birthday = try c.decodeIfPresent(Date.self, forKey: .birthday)
         vetName = try c.decodeIfPresent(String.self, forKey: .vetName)
@@ -257,6 +264,10 @@ public struct CareItem: Codable, Equatable, Identifiable, Sendable {
         default: return iconOptions
         }
     }
+
+    /// The light-level choices offered in the plant capture wizard's "Home" step (P9.1), stored as the
+    /// free-form ``lightLevel`` string. Ordered dim → bright.
+    public static let lightLevelChoices: [String] = ["Low", "Medium", "Bright indirect", "Direct sun"]
 
     // MARK: House-health rollup (UI-free — the same math powers the Home banner and Today card)
 

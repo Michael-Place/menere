@@ -572,6 +572,17 @@ let package = Package(
                 "UserDomain",
             ]
         ),
+        .testTarget(
+            name: "ChoresFeatureTests",
+            dependencies: [
+                .product(name: "ComposableArchitecture", package: "swift-composable-architecture"),
+                "ChoresFeature",
+                "FamilyDomain",
+                "PersistenceClient",
+                "StorageClient",
+                "UserDomain",
+            ]
+        ),
     ],
     swiftLanguageModes: [.v5]
 )

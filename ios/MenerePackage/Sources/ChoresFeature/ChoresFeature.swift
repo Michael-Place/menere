@@ -34,6 +34,9 @@ public struct ChoresReducer {
         var isLoading = false
         @Presents var form: ChoreFormReducer.State?
         @Presents var careForm: CareItemFormReducer.State?
+        /// P9.1 — the Planta-inspired add-a-plant capture wizard. ADD routes here; EDIT stays on
+        /// ``careForm``.
+        @Presents var plantCapture: PlantCaptureReducer.State?
         // Simple add-reward entry
         var showAddReward = false
         var newRewardTitle = ""
@@ -79,6 +82,7 @@ public struct ChoresReducer {
         case carePhotosLoaded([String: Data])
         case form(PresentationAction<ChoreFormReducer.Action>)
         case careForm(PresentationAction<CareItemFormReducer.Action>)
+        case plantCapture(PresentationAction<PlantCaptureReducer.Action>)
         case binding(BindingAction<State>)
     }
 
@@ -238,15 +242,12 @@ public struct ChoresReducer {
                 return .none
 
             case .addPlantTapped:
-                // A new plant pre-fills one weekly "Water" task; the form shows plant-flavored
-                // icon/interval sets, a photo picker, and species/notes (kind == .plant).
-                state.careForm = CareItemFormReducer.State(
-                    item: CareItem(
-                        kind: .plant, name: "", iconSymbol: "leaf.fill",
-                        tasks: [CareTask(title: "Water", intervalDays: 7)]
-                    ),
-                    isEditing: false
-                )
+                // P9.1 — ADD now opens the Planta-inspired capture wizard (photo → identify → nickname →
+                // home → watering → welcome). EDIT still uses ``careForm``. Seed the Home step's chips
+                // with the family's existing care-item locations.
+                let locations = state.careItems.compactMap { $0.location?.trimmingCharacters(in: .whitespacesAndNewlines) }
+                    .filter { !$0.isEmpty }
+                state.plantCapture = PlantCaptureReducer.State(existingLocations: locations)
                 return .none
 
             case let .editCareItemTapped(item):
@@ -338,7 +339,10 @@ public struct ChoresReducer {
             case .form(.presented(.delegate(.didChange))):
                 return .send(.task)
 
-            case .form, .careForm, .binding:
+            case .plantCapture(.presented(.delegate(.didFinish))):
+                return .send(.task)
+
+            case .form, .careForm, .plantCapture, .binding:
                 return .none
             }
         }
@@ -347,6 +351,9 @@ public struct ChoresReducer {
         }
         .ifLet(\.$careForm, action: \.careForm) {
             CareItemFormReducer()
+        }
+        .ifLet(\.$plantCapture, action: \.plantCapture) {
+            PlantCaptureReducer()
         }
     }
 

@@ -284,6 +284,15 @@ public struct CareItemFormReducer {
                 return .none
 
             case .saveTapped:
+                // BUG FIX (P9.1): the Planta-style "photo → Identify from photo → Save" flow fills
+                // `species` (the identified common name), NOT `name` — and the Save button is never
+                // disabled. Before this, saving with a blank name silently no-op'd (guard → .none),
+                // which read to Michael as "Save doesn't work for new plants." Fall back to the
+                // identified species (then the botanical name) so an identified plant always saves.
+                if state.item.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                   let fallback = (state.item.species ?? state.item.speciesLatin)?.blankToNil {
+                    state.item.name = fallback
+                }
                 guard let hid = hid(),
                       !state.item.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 else { return .none }
@@ -602,6 +611,18 @@ public struct CareItemFormView: View {
             ))
             .accessibilityIdentifier("plant-species-field")
         }
+        Section("Light") {
+            Picker("Light level", selection: Binding(
+                get: { store.item.lightLevel ?? "" },
+                set: { store.item.lightLevel = $0.isEmpty ? nil : $0 }
+            )) {
+                Text("—").tag("")
+                ForEach(CareItem.lightLevelChoices, id: \.self) { level in
+                    Text(level).tag(level)
+                }
+            }
+            .accessibilityIdentifier("plant-light-picker")
+        }
         Section("Notes") {
             TextField("Care notes (light, watering quirks…)", text: Binding(
                 get: { store.item.careNotes ?? "" },
@@ -717,8 +738,9 @@ public struct CareItemFormView: View {
 
 /// Wraps `UIImagePickerController` (`.camera`) to photograph a plant. The captured image is encoded
 /// to JPEG `Data` and handed to `onCapture` (the reducer compresses/uploads on Save). Mirrors the
-/// wine-label capture; a custom `AVCaptureSession` is out of scope.
-private struct CarePhotoCamera: UIViewControllerRepresentable {
+/// wine-label capture; a custom `AVCaptureSession` is out of scope. Shared by the edit form and the
+/// P9.1 plant capture wizard.
+struct CarePhotoCamera: UIViewControllerRepresentable {
     let onCapture: (Data) -> Void
     let onCancel: () -> Void
 
