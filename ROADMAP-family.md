@@ -553,8 +553,18 @@ tools. **Recommended order (Michael to confirm):**
    discovery). Messages signed with a device key (recoverable from the
    Refoss/Meross account pairing). Garage = cover device: state + open/close.
    Slots in as P15-C5.
+6. **Ford F-150 Lightning + Charge Station Pro (researched 2026-07-02) → P15-C6.**
+   Truck: FordPass API (reverse-engineered; marq24/ha-fordpass fork is EV-optimized
+   with cloud-PUSH websocket — no polling) — battery %, range, charge state,
+   plugged-in, charge logs; one-time token setup with Michael's FordPass account.
+   Charger: the Charge Station Pro is a REBADGED SIEMENS VersiCharge running
+   embedded Linux with a LOCAL Django REST API (ericpullen/fcsp-api +
+   aminorjourney/local-fcsp are the references; needs a developer key, community-
+   documented; OCPP 1.6J fallback). House-card line: "Truck · 82% · ~230 mi ·
+   charging — full by 6:20am". Composes with P6.2 drive-times + P14 ("charged
+   enough for the weekend trip?").
 These are the "layered signals" Michael predicted (2026-07-02) — real automations
-(shades+lights+thermostat+presence) emerge once several are in.
+(shades+lights+thermostat+presence+truck) emerge once several are in.
 
 ### Side quest (anytime after P5) — Oliver mode
 Activate the dormant `.child` role: picture-based chore board, huge tap targets,
