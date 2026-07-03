@@ -547,13 +547,16 @@ public struct CellarView: View {
 
     public var body: some View {
         VStack(spacing: 0) {
-            Picker("", selection: $store.segment) {
-                ForEach(CellarReducer.State.Segment.allCases, id: \.self) { segment in
-                    Text(segment.label).tag(segment)
-                }
-            }
-            .pickerStyle(.segmented)
+            // Brand segmented control (warm parchment track + Bordeaux pill). A stock
+            // `.pickerStyle(.segmented)` renders a white/gray system pill that glares on parchment;
+            // `WineSegmentedControl` is a wine-only view, so this restyle can't leak into the
+            // family screens' stock segmented controls (e.g. Kitchen's Recipes/Meal-plan picker).
+            WineSegmentedControl(
+                selection: $store.segment,
+                options: CellarReducer.State.Segment.allCases.map { ($0, $0.label) }
+            )
             .padding(.horizontal)
+            .padding(.top, 4)
             .padding(.bottom, 8)
             .accessibilityIdentifier("cellar-segment")
             .selectionHaptic(store.segment)
@@ -887,9 +890,12 @@ private struct CellarRowView: View {
             HStack(spacing: 8) {
                 Text(row.bottle.status.rawValue.capitalized)
                     .font(.caption2.weight(.semibold))
+                    .foregroundStyle(Color.inkSoft)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 2)
-                    .background(.quaternary, in: Capsule())
+                    // Warm parchment-tinted chip instead of the system `.quaternary` gray, which
+                    // read as a cool blot on the parchment cellar rows.
+                    .background(Color.inkSoft.opacity(0.14), in: Capsule())
 
                 if let window = row.drinkWindowText {
                     HStack(spacing: 6) {
