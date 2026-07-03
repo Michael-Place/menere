@@ -188,16 +188,21 @@ async function processDocument({ db, hid, docId, apiKey }) {
   if (pagePaths.length === 0) throw new Error(`document ${docId} has no pages to process`);
 
   try {
-    // Member roster (name → uid), so linkedMemberNames can be mapped to ids.
+    // Member roster (name → uid), so linkedMemberNames can be mapped to ids. Each member may carry
+    // BOTH an everyday display `name` (often a nickname, e.g. "Migueluh") and a real/legal
+    // `fullName` (e.g. "Michael"). We index BOTH under the member's id so a document that names
+    // either one links to that member, and we surface both to Claude for literal matching.
     const membersSnap = await db.collection("households").doc(hid).collection("members").get();
     const idByLowerName = {};
     const memberNames = [];
     membersSnap.forEach((m) => {
-      const name = String((m.data() || {}).name || "").trim();
-      if (name) {
-        idByLowerName[name.toLowerCase()] = m.id;
-        memberNames.push(name);
-      }
+      const data = m.data() || {};
+      [data.name, data.fullName].forEach((raw) => {
+        const n = String(raw || "").trim();
+        if (!n) return;
+        idByLowerName[n.toLowerCase()] = m.id;
+        if (!memberNames.includes(n)) memberNames.push(n);
+      });
     });
 
     // Pet roster (name → careItem id) — pets are CareItems with kind == "pet". Their names go to

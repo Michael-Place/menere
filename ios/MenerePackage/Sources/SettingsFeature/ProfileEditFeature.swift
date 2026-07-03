@@ -73,6 +73,18 @@ public struct ProfileEditView: View {
                         .accessibilityIdentifier("profile-name-field")
                 }
 
+                Section {
+                    TextField("Full name", text: Binding(
+                        get: { store.member.fullName ?? "" },
+                        set: { store.member.fullName = $0.isEmpty ? nil : $0 }
+                    ))
+                    .accessibilityIdentifier("profile-fullname-field")
+                } header: {
+                    Text("Full name")
+                } footer: {
+                    Text("Your real name — helps Bacán file documents under you.")
+                }
+
                 Section("Color") {
                     LazyVGrid(columns: columns, spacing: 12) {
                         ForEach(MemberColor.pickerOrder, id: \.self) { color in

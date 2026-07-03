@@ -11,7 +11,13 @@ import Foundation
 public struct HouseholdMember: Codable, Equatable, Identifiable, Sendable {
     /// The member's Firebase Auth uid (also the Firestore document id).
     public let id: String
+    /// The everyday **display** name shown throughout the app (greetings, leaderboard, roster).
+    /// A nickname is perfectly fine here — e.g. "Migueluh". This is the name users see.
     public var name: String
+    /// The person's real / legal name (e.g. "Michael"), used for document matching + formal
+    /// contexts. Optional: existing member docs that only carry `name` decode fine with this nil.
+    /// The Family Brain matches documents against BOTH `name` and `fullName`.
+    public var fullName: String?
     public var color: MemberColor
     public var avatarSystemName: String
     public var role: Role
@@ -20,6 +26,7 @@ public struct HouseholdMember: Codable, Equatable, Identifiable, Sendable {
     public init(
         id: String,
         name: String,
+        fullName: String? = nil,
         color: MemberColor = .ocean,
         avatarSystemName: String = "person.circle.fill",
         role: Role = .admin,
@@ -27,6 +34,7 @@ public struct HouseholdMember: Codable, Equatable, Identifiable, Sendable {
     ) {
         self.id = id
         self.name = name
+        self.fullName = fullName
         self.color = color
         self.avatarSystemName = avatarSystemName
         self.role = role
@@ -37,6 +45,7 @@ public struct HouseholdMember: Codable, Equatable, Identifiable, Sendable {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = try c.decode(String.self, forKey: .id)
         name = try c.decode(String.self, forKey: .name)
+        fullName = try c.decodeIfPresent(String.self, forKey: .fullName)
         color = try c.decodeIfPresent(MemberColor.self, forKey: .color) ?? .ocean
         avatarSystemName = try c.decodeIfPresent(String.self, forKey: .avatarSystemName) ?? "person.circle.fill"
         role = try c.decodeIfPresent(Role.self, forKey: .role) ?? .admin

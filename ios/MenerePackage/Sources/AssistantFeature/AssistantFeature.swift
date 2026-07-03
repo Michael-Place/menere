@@ -55,8 +55,8 @@ public struct AssistantReducer {
         public var pendingConfirmation: PendingConfirmation?
         /// The acting member's first name — greets the empty state and personalizes the system prompt.
         public var firstName: String?
-        /// Family member names, fed to the system prompt for context.
-        public var memberNames: [String] = []
+        /// Family member identities (display name + optional real name), fed to the system prompt.
+        public var members: [MemberIdentity] = []
         /// The in-flight loop, so a confirmation decision can resume it.
         var loopBox = LoopBox()
 
@@ -71,7 +71,7 @@ public struct AssistantReducer {
 
     public enum Action: Equatable, BindableAction {
         case task
-        case rosterLoaded(firstName: String?, memberNames: [String])
+        case rosterLoaded(firstName: String?, members: [MemberIdentity])
         case examplePromptTapped(String)
         case sendTapped
         case streamEvent(AgentLoopEvent)
@@ -105,13 +105,13 @@ public struct AssistantReducer {
                     let first = full?.split(whereSeparator: { $0.isWhitespace }).first.map(String.init)
                     await send(.rosterLoaded(
                         firstName: (first?.isEmpty == false) ? first : nil,
-                        memberNames: members.map(\.name)
+                        members: members.map { MemberIdentity(name: $0.name, fullName: $0.fullName) }
                     ))
                 }
 
-            case let .rosterLoaded(firstName, memberNames):
+            case let .rosterLoaded(firstName, members):
                 state.firstName = firstName
-                state.memberNames = memberNames
+                state.members = members
                 return .none
 
             case let .examplePromptTapped(text):
@@ -136,13 +136,13 @@ public struct AssistantReducer {
                 state.loopBox = LoopBox(loop)
 
                 let firstName = state.firstName
-                let memberNames = state.memberNames
+                let members = state.members
                 return .run { send in
                     // Ground the model with a live snapshot inline (cheap, best-effort).
                     let snapshot = try? await registry.tool(named: "get_today_snapshot")?.execute([:]).content
                     let prompt = AgentSystemPrompt.build(
                         firstName: firstName,
-                        memberNames: memberNames,
+                        members: members,
                         todaySnapshot: snapshot ?? nil
                     )
                     for await event in loop.run(utterance: text, systemPrompt: prompt) {
