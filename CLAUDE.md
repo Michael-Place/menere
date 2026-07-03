@@ -12,7 +12,9 @@ The smart-home fleet: `HueClient`/`LutronClient`/`SonosClient`/`NestClient`/
 `HubspaceClient`/`MerossClient`/`HomeKitClient` — all playbook-shaped (config docs under
 `households/{hid}/config/*`, mock modes, House-screen sections, Settings lifecycle rows,
 `// SEAM (P14)` on control verbs). Garage: HomeKit-first, Meross fallback. Money
-(`MoneyFeature`): Lists row → month view + budgets + Brain-receipt inbox.
+(`MoneyFeature`): Lists row → month view + budgets + Brain-receipt inbox. **Assistant**
+(`AssistantFeature` + `AgentTools` + `agentTurn` fn): sparkles button on Today → chat that
+drives every app verb via a client-side tool loop (P14).
 Hue: `HueClient` (V1, local-first, mock mode), config at `households/{hid}/config/hue`,
 "The house" card on Today (temps/lights/rituals), pairing + re-pair (name-based
 re-binding) in Settings → Smart home. P11 memories deliberately skipped for now.

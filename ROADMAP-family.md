@@ -541,6 +541,14 @@ pipeline.**
   Claude auto-categorizes, family can re-file.
 
 ### P14 — The assistant: an agent harness over the whole app (Michael's request, 2026-07-02)
+**C1 ✅ (fca070d) + C2 ✅ (f79d8ee) shipped 2026-07-03.** C1: `AgentTools` target —
+24 tools wrapping every app verb (queries + family actions + fleet controls), fuzzy
+name resolution (species/breed aliases → "the monstera" finds Monty), `AgentLoop`
+actor with confirmation-pause/resume, `agentTurn` callable (claude-sonnet-5) DEPLOYED.
+C2: sparkles button on Today → chat sheet over AgentLoop, streaming family-voice
+answers, action-chip receipts, inline terracotta confirmation cards for garage/lock,
+keyboard dictation. LIVE-verified against the deployed proxy with real data + tools.
+Remaining: C3 multi-turn memory + Today "ask" affordance; C4 the true MCP server.
 Goal: "I just finished watering the monstera, leaving the house, what time is
 Oliver's KinderCare event?" → the app marks the watering done, answers from
 calendar/Brain, and preps the house — one utterance, many tools.
