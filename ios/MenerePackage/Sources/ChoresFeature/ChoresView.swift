@@ -2,6 +2,7 @@ import ComposableArchitecture
 import DocsFeature
 import FamilyDomain
 import HouseFeature
+import HueClient
 import MenereUI
 import SwiftUI
 import UIKit
@@ -31,37 +32,42 @@ public struct ChoresView: View {
     public var body: some View {
         ScrollView {
             VStack(spacing: 14) {
-                // Smart home — HIDDEN unless a Hue config doc exists (same gate as Today's card).
+                // Smart home — HIDDEN unless a Hue config doc exists (same gate as Today's card). Its
+                // header is the nav trigger (into the granular ``HouseView``); the preview's ritual chips
+                // act in place, so this card can't be a single whole-card NavigationLink.
                 if store.houseCard.isConfigured, let config = store.houseCard.config {
-                    NavigationLink {
-                        HouseView(
-                            config: config, members: store.houseCard.members, bridges: store.houseCard.bridges,
-                            lutronConfig: store.houseCard.lutronConfig, sonosConfig: store.houseCard.sonosConfig,
-                            nestConfig: store.houseCard.nestConfig, hubspaceConfig: store.houseCard.hubspaceConfig,
-                            merossConfig: store.houseCard.merossConfig, homekitConfig: store.houseCard.homekitConfig
-                        )
-                    } label: {
-                        OverviewCard(icon: "house.fill", tint: .bacanGreen, title: "Smart home",
-                                     status: store.houseCard.statusLine)
+                    cardShell {
+                        NavigationLink {
+                            HouseView(
+                                config: config, members: store.houseCard.members, bridges: store.houseCard.bridges,
+                                lutronConfig: store.houseCard.lutronConfig, sonosConfig: store.houseCard.sonosConfig,
+                                nestConfig: store.houseCard.nestConfig, hubspaceConfig: store.houseCard.hubspaceConfig,
+                                merossConfig: store.houseCard.merossConfig, homekitConfig: store.houseCard.homekitConfig
+                            )
+                        } label: {
+                            cardHeaderRow(icon: "house.fill", tint: .bacanGreen, title: "Smart home",
+                                          status: store.houseCard.statusLine)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityIdentifier("home-card-smart-home")
+                        smartHomePreview(config)
                     }
-                    .buttonStyle(.pressable)
-                    .accessibilityIdentifier("home-card-smart-home")
                 }
 
-                hubLink(.choresRewards, icon: "checklist", tint: .bacanGreen,
-                        title: "Chores & rewards", status: choresStatus, id: "chores-rewards")
-                hubLink(.houseCare, icon: "checkmark.seal.fill", tint: .marigold,
-                        title: "House care", status: houseCareStatus, id: "house-care")
-                hubLink(.plants, icon: "leaf.fill", tint: .bacanGreen,
-                        title: "Plants", status: plantsStatus, id: "plants")
-                hubLink(.yard, icon: "tree.fill", tint: .marigold,
-                        title: "Yard & garden", status: yardStatus, id: "yard")
-                hubLink(.pets, icon: "pawprint.fill", tint: .sky,
-                        title: "Pets", status: petsStatus, id: "pets")
+                hubCard(.choresRewards, icon: "checklist", tint: .bacanGreen,
+                        title: "Chores & rewards", status: choresStatus, id: "chores-rewards") { choresPreview }
+                hubCard(.houseCare, icon: "checkmark.seal.fill", tint: .marigold,
+                        title: "House care", status: houseCareStatus, id: "house-care") { houseCarePreview }
+                hubCard(.plants, icon: "leaf.fill", tint: .bacanGreen,
+                        title: "Plants", status: plantsStatus, id: "plants") { plantsPreview }
+                hubCard(.yard, icon: "tree.fill", tint: .marigold,
+                        title: "Yard & garden", status: yardStatus, id: "yard") { yardPreview }
+                hubCard(.pets, icon: "pawprint.fill", tint: .sky,
+                        title: "Pets", status: petsStatus, id: "pets") { petsPreview }
 
                 if !store.activity.isEmpty {
-                    hubLink(.activity, icon: "clock.arrow.circlepath", tint: .sky,
-                            title: "Recent activity", status: activityStatus, id: "activity")
+                    hubCard(.activity, icon: "clock.arrow.circlepath", tint: .sky,
+                            title: "Recent activity", status: activityStatus, id: "activity") { activityPreview }
                 }
             }
             .padding(.horizontal)
@@ -106,13 +112,414 @@ public struct ChoresView: View {
         }
     }
 
-    private func hubLink(_ destination: Destination, icon: String, tint: Color, title: String,
-                         status: String, id: String) -> some View {
-        NavigationLink(value: destination) {
-            OverviewCard(icon: icon, tint: tint, title: title, status: status)
+    // MARK: Card scaffold (header row navigates; preview body sits below)
+
+    /// The rounded `familySurface` container every hub card wears.
+    private func cardShell<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 12, content: content)
+            .padding(16)
+            .frame(maxWidth: .infinity)
+            .background(
+                RoundedRectangle(cornerRadius: 18, style: .continuous).fill(Color.familySurface)
+            )
+    }
+
+    /// A value-nav hub card: a tappable header row (→ the detail screen) with a rich preview beneath.
+    /// The header is the nav trigger (rather than the whole card) so interactive/scrolling preview
+    /// content — plant strips, pet avatars — never fights a wrapping NavigationLink's gesture.
+    private func hubCard<Preview: View>(
+        _ destination: Destination, icon: String, tint: Color, title: String, status: String, id: String,
+        @ViewBuilder preview: () -> Preview
+    ) -> some View {
+        cardShell {
+            NavigationLink(value: destination) {
+                cardHeaderRow(icon: icon, tint: tint, title: title, status: status)
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("home-card-\(id)")
+            preview()
+        }
+    }
+
+    /// The header row shared by every card: leading tinted icon, title, one-line live status, chevron.
+    private func cardHeaderRow(icon: String, tint: Color, title: String, status: String) -> some View {
+        HStack(spacing: 14) {
+            ZStack {
+                Circle().fill(tint.opacity(0.15))
+                Image(systemName: icon).font(.title3).foregroundStyle(tint)
+            }
+            .frame(width: 44, height: 44)
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title).familyTitle(.headline).foregroundStyle(Color.ink)
+                Text(status)
+                    .font(.system(.subheadline, design: .rounded))
+                    .foregroundStyle(Color.inkSoft)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 8)
+            Image(systemName: "chevron.right")
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(Color.inkSoft.opacity(0.5))
+        }
+        .contentShape(Rectangle())
+    }
+
+    /// A member's brand color as a SwiftUI `Color`.
+    private func color(for member: HouseholdMember) -> Color {
+        let rgb = member.color.rgb
+        return Color(red: rgb.red, green: rgb.green, blue: rgb.blue)
+    }
+
+    // MARK: - Smart home preview (room temps + inline ritual chips)
+
+    /// Up to ~2 labeled room temperatures + tappable ritual chips. Both reuse the exact data Today's
+    /// "The house" card renders (label-scoped sensors; ``HueRitualLayout`` ordering).
+    @ViewBuilder
+    private func smartHomePreview(_ config: HueConfig) -> some View {
+        let temps = Array(houseTemps(config).prefix(2))
+        let rituals = hubRituals(config)
+        if !temps.isEmpty || !rituals.isEmpty {
+            VStack(alignment: .leading, spacing: 10) {
+                if !temps.isEmpty {
+                    HStack(spacing: 8) {
+                        ForEach(Array(temps.enumerated()), id: \.offset) { _, t in
+                            tempChip(t.label, t.tempF)
+                        }
+                        Spacer(minLength: 0)
+                    }
+                }
+                if !rituals.isEmpty {
+                    HStack(spacing: 8) {
+                        ForEach(rituals) { ritualChip($0) }
+                        Spacer(minLength: 0)
+                    }
+                }
+            }
+        }
+    }
+
+    /// (label, °F) for every labeled temperature sensor across reachable bridges — the same per-bridge
+    /// label scoping as ``HouseSnapshot/labeledTemperatures``.
+    private func houseTemps(_ config: HueConfig) -> [(label: String, tempF: Double)] {
+        store.houseCard.bridges.flatMap { snap -> [(label: String, tempF: Double)] in
+            let labels = config.sensorLabels(for: snap.bridge.bridgeId)
+            return snap.temperatures.compactMap { t in labels[t.sensorId].map { ($0, t.tempF) } }
+        }
+        .sorted { $0.label < $1.label }
+    }
+
+    /// Ritual presentations for the chips — only rituals whose OWN bridge is reachable, ordered by the
+    /// pure ``HueRitualLayout`` rule (the hub has no meal plan, so Dinner is never forced prominent).
+    private func hubRituals(_ config: HueConfig) -> [RitualPresentation] {
+        let reachable = Set(store.houseCard.bridges.map(\.bridge.bridgeId))
+        let recallable = config.rituals.filter { reachable.contains($0.bridgeId) }
+        return HueRitualLayout.ordered(rituals: recallable, now: Date(), homeCookedDinner: false)
+    }
+
+    private func tempChip(_ label: String, _ tempF: Double) -> some View {
+        HStack(spacing: 4) {
+            Image(systemName: "thermometer.medium").font(.caption2)
+            Text("\(label) \(Int(tempF.rounded()))°")
+        }
+        .font(.system(.caption, design: .rounded))
+        .foregroundStyle(Color.inkSoft)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(Capsule(style: .continuous).fill(Color.sky.opacity(0.12)))
+    }
+
+    /// A tappable ritual chip that fires the scene in place (dims while recalling). Prominent → filled.
+    private func ritualChip(_ p: RitualPresentation) -> some View {
+        let recalling = store.recallingRitual == p.ritual.key
+        return Button {
+            store.send(.recallRitual(p.ritual))
+        } label: {
+            HStack(spacing: 5) {
+                Image(systemName: ritualSymbol(p.ritual))
+                Text(p.ritual.label)
+            }
+            .font(.system(.caption, design: .rounded).weight(.semibold))
+            .foregroundStyle(p.isProminent ? Color.white : Color.bacanGreen)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 7)
+            .background(
+                Capsule(style: .continuous)
+                    .fill(p.isProminent ? Color.bacanGreen : Color.bacanGreen.opacity(0.14))
+            )
+            .opacity(recalling ? 0.6 : 1)
         }
         .buttonStyle(.pressable)
-        .accessibilityIdentifier("home-card-\(id)")
+        .disabled(recalling)
+        .accessibilityIdentifier("home-ritual-\(p.ritual.key)")
+    }
+
+    private func ritualSymbol(_ r: HueRitual) -> String {
+        switch r.key {
+        case HueRitualLayout.bedtimeKey: return "moon.fill"
+        case HueRitualLayout.dinnerKey:  return "fork.knife"
+        default:                          return "lightbulb"
+        }
+    }
+
+    // MARK: - Chores & rewards preview (mini leaderboard)
+
+    private struct MiniLeader: Identifiable, Equatable {
+        let member: HouseholdMember
+        let stats: MemberStats
+        var id: String { member.id }
+    }
+
+    private var miniLeaderboard: [MiniLeader] {
+        store.members
+            .map { MiniLeader(member: $0, stats: memberStats(for: $0.id)) }
+            .sorted { $0.stats.totalXP > $1.stats.totalXP }
+    }
+
+    @ViewBuilder
+    private var choresPreview: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            if !store.members.isEmpty {
+                HStack(spacing: 14) {
+                    ForEach(miniLeaderboard) { row in
+                        VStack(spacing: 3) {
+                            ZStack {
+                                Circle().fill(color(for: row.member).opacity(0.18))
+                                Image(systemName: row.member.avatarSystemName)
+                                    .font(.subheadline)
+                                    .foregroundStyle(color(for: row.member))
+                            }
+                            .frame(width: 38, height: 38)
+                            Text("Lv \(row.stats.level)")
+                                .font(.caption2.weight(.semibold))
+                                .foregroundStyle(Color.inkSoft)
+                        }
+                    }
+                    Spacer(minLength: 0)
+                }
+            }
+            Text(choresDueLine)
+                .font(.system(.caption, design: .rounded))
+                .foregroundStyle(Color.inkSoft)
+        }
+    }
+
+    /// "2 chores due today" (open chores due on/before today) or "All clear".
+    private var choresDueLine: String {
+        let cal = Calendar.current
+        let now = Date()
+        let dueToday = store.chores.filter { chore in
+            guard !chore.isCompleted, let due = chore.dueDate else { return false }
+            return cal.isDateInToday(due) || due < now
+        }.count
+        guard dueToday > 0 else { return "All clear" }
+        return "\(dueToday) chore\(dueToday == 1 ? "" : "s") due today"
+    }
+
+    // MARK: - House care preview (health pill + soonest house/zone items)
+
+    /// House-care is scoped to house + zone kinds — plants and pets have their own cards, so counting
+    /// them here produced an alarming (and misleading) "39 due this week".
+    private var houseCareItems: [CareItem] {
+        store.careItems.filter { $0.kind == .house || $0.kind == .zone }
+    }
+
+    @ViewBuilder
+    private var houseCarePreview: some View {
+        let items = houseCareItems
+        if !items.isEmpty {
+            VStack(alignment: .leading, spacing: 8) {
+                HouseHealthBanner(health: CareItem.houseHealth(for: items))
+                ForEach(items.prefix(2)) { miniCareRow($0) }
+            }
+        }
+    }
+
+    /// A compact care row for the previews: small icon + name + a colored due chip.
+    private func miniCareRow(_ item: CareItem) -> some View {
+        HStack(spacing: 10) {
+            ZStack {
+                Circle().fill(Color.marigold.opacity(0.15))
+                Image(systemName: item.iconSymbol).font(.caption).foregroundStyle(Color.marigold)
+            }
+            .frame(width: 28, height: 28)
+            Text(item.name)
+                .font(.system(.subheadline, design: .rounded))
+                .foregroundStyle(Color.ink)
+                .lineLimit(1)
+            Spacer(minLength: 6)
+            careDueChip(item)
+        }
+    }
+
+    @ViewBuilder
+    private func careDueChip(_ item: CareItem) -> some View {
+        let task = item.soonestDueTask()
+        let days = task?.daysUntilDue()
+        let (text, tint): (String, Color) = {
+            guard let days else {
+                if let due = task?.dueAt {
+                    return ("Due \(due.formatted(.dateTime.month(.abbreviated).day()))", .inkSoft)
+                }
+                return ("Seasonal", .inkSoft)
+            }
+            if days < 0 { return ("\(-days)d over", .terracotta) }
+            if days == 0 { return ("Today", .bacanGreen) }
+            return ("\(days)d", .marigold)
+        }()
+        Text(text)
+            .font(.system(.caption2, design: .rounded).weight(.semibold))
+            .foregroundStyle(tint)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(Capsule(style: .continuous).fill(tint.opacity(0.15)))
+    }
+
+    // MARK: - Plants preview (horizontal photo strip, thirsty flagged)
+
+    @ViewBuilder
+    private var plantsPreview: some View {
+        let plants = store.careItems.filter { $0.kind == .plant }
+        if !plants.isEmpty {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 10) {
+                    ForEach(plants) { plantThumb($0) }
+                }
+                .padding(.vertical, 4)
+                .padding(.horizontal, 2)
+            }
+        }
+    }
+
+    private func plantThumb(_ plant: CareItem) -> some View {
+        let thirsty = (plant.soonestDueTask()?.daysUntilDue() ?? 1) <= 0
+        return ZStack(alignment: .topTrailing) {
+            Group {
+                if let path = plant.photoPath, let data = store.carePhotos[path], let img = UIImage(data: data) {
+                    Image(uiImage: img).resizable().scaledToFill()
+                } else {
+                    ZStack {
+                        Color.bacanGreen.opacity(0.15)
+                        Image(systemName: "leaf.fill").foregroundStyle(Color.bacanGreen)
+                    }
+                }
+            }
+            .frame(width: 44, height: 44)
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+
+            if thirsty {
+                Image(systemName: "drop.fill")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(.white)
+                    .padding(3)
+                    .background(Circle().fill(Color.sky))
+                    .offset(x: 4, y: -4)
+            }
+        }
+        .frame(width: 44, height: 44)
+    }
+
+    // MARK: - Yard preview (next seasonal zone task)
+
+    @ViewBuilder
+    private var yardPreview: some View {
+        if let item = nextYardItem { miniCareRow(item) }
+    }
+
+    /// The soonest zone item anchored to a real date — the "next seasonal job".
+    private var nextYardItem: CareItem? {
+        store.careItems
+            .filter { $0.kind == .zone && $0.soonestDueTask()?.dueAt != nil }
+            .min { ($0.soonestDueTask()?.dueAt ?? .distantFuture) < ($1.soonestDueTask()?.dueAt ?? .distantFuture) }
+    }
+
+    // MARK: - Pets preview (photo avatars + soonest care chip)
+
+    @ViewBuilder
+    private var petsPreview: some View {
+        let pets = store.careItems.filter { $0.kind == .pet }
+        if !pets.isEmpty {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 12) {
+                    ForEach(pets) { petAvatar($0) }
+                    Spacer(minLength: 0)
+                }
+                soonestPetChip
+            }
+        }
+    }
+
+    private func petAvatar(_ pet: CareItem) -> some View {
+        VStack(spacing: 3) {
+            Group {
+                if let path = pet.photoPath, let data = store.carePhotos[path], let img = UIImage(data: data) {
+                    Image(uiImage: img).resizable().scaledToFill()
+                } else {
+                    ZStack {
+                        Color.sky.opacity(0.15)
+                        Image(systemName: "pawprint.fill").foregroundStyle(Color.sky)
+                    }
+                }
+            }
+            .frame(width: 44, height: 44)
+            .clipShape(Circle())
+            Text(firstName(pet.name))
+                .font(.caption2)
+                .foregroundStyle(Color.inkSoft)
+                .lineLimit(1)
+        }
+    }
+
+    /// The soonest pet care task within ~60 days, as a colored chip ("Sprinkle · vaccine 20d").
+    @ViewBuilder
+    private var soonestPetChip: some View {
+        let soonest = store.careItems
+            .filter { $0.kind == .pet }
+            .compactMap { pet -> (label: String, days: Int)? in
+                guard let task = pet.soonestDueTask(), let days = task.daysUntilDue(), days <= 60 else { return nil }
+                return ("\(firstName(pet.name)) · \(task.title.lowercased())", days)
+            }
+            .min { $0.days < $1.days }
+        if let soonest {
+            let tint: Color = soonest.days < 0 ? .terracotta : (soonest.days == 0 ? .sky : .inkSoft)
+            let text: String = soonest.days < 0
+                ? "\(soonest.label) \(-soonest.days)d over"
+                : (soonest.days == 0 ? "\(soonest.label) today" : "\(soonest.label) \(soonest.days)d")
+            Text(text)
+                .font(.system(.caption, design: .rounded).weight(.medium))
+                .foregroundStyle(tint)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(Capsule(style: .continuous).fill(tint.opacity(0.14)))
+        }
+    }
+
+    // MARK: - Recent activity preview (latest 2-3 lines)
+
+    @ViewBuilder
+    private var activityPreview: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            ForEach(store.activity.prefix(3)) { item in
+                HStack(spacing: 8) {
+                    Circle().fill(activityColor(item)).frame(width: 8, height: 8)
+                    Text(item.text)
+                        .font(.system(.caption, design: .rounded))
+                        .foregroundStyle(Color.ink)
+                        .lineLimit(1)
+                    Spacer(minLength: 6)
+                    Text(item.createdAt, format: .relative(presentation: .named))
+                        .font(.caption2)
+                        .foregroundStyle(Color.inkSoft)
+                        .lineLimit(1)
+                }
+            }
+        }
+    }
+
+    /// The activity dot color — the actor's member color, else the brand green.
+    private func activityColor(_ item: ActivityItem) -> Color {
+        guard let id = item.actorID, let m = store.members.first(where: { $0.id == id }) else { return .bacanGreen }
+        return color(for: m)
     }
 
     // MARK: Overview-card status summaries (glanceable, one line each)
@@ -134,8 +541,9 @@ public struct ChoresView: View {
     }
 
     private var houseCareStatus: String {
-        guard !store.careItems.isEmpty else { return "Nothing under care yet" }
-        switch CareItem.houseHealth(for: store.careItems) {
+        let items = houseCareItems
+        guard !items.isEmpty else { return "Nothing under care yet" }
+        switch CareItem.houseHealth(for: items) {
         case .caughtUp: return HouseHealth.happyLine
         case let .overdue(count, _, _): return "\(count) thing\(count == 1 ? "" : "s") overdue"
         case let .dueThisWeek(count, _, _): return "\(count) due this week"
@@ -184,43 +592,6 @@ public struct ChoresView: View {
         guard let mc = store.confettiColor else { return .bacanGreen }
         let rgb = mc.rgb
         return Color(red: rgb.red, green: rgb.green, blue: rgb.blue)
-    }
-}
-
-/// A single hub overview card: leading icon in a tinted circle, title, one-line live status, trailing
-/// chevron — on `.familySurface`, rounded type, `.pressable` via the wrapping `NavigationLink`.
-private struct OverviewCard: View {
-    let icon: String
-    let tint: Color
-    let title: String
-    let status: String
-
-    var body: some View {
-        HStack(spacing: 14) {
-            ZStack {
-                Circle().fill(tint.opacity(0.15))
-                Image(systemName: icon).font(.title3).foregroundStyle(tint)
-            }
-            .frame(width: 44, height: 44)
-
-            VStack(alignment: .leading, spacing: 3) {
-                Text(title).familyTitle(.headline).foregroundStyle(Color.ink)
-                Text(status)
-                    .font(.system(.subheadline, design: .rounded))
-                    .foregroundStyle(Color.inkSoft)
-                    .lineLimit(1)
-            }
-            Spacer(minLength: 8)
-            Image(systemName: "chevron.right")
-                .font(.footnote.weight(.semibold))
-                .foregroundStyle(Color.inkSoft.opacity(0.5))
-        }
-        .padding(16)
-        .frame(maxWidth: .infinity)
-        .background(
-            RoundedRectangle(cornerRadius: 18, style: .continuous).fill(Color.familySurface)
-        )
-        .contentShape(Rectangle())
     }
 }
 

@@ -1,6 +1,7 @@
 import ComposableArchitecture
 import FamilyDomain
 import HouseFeature
+import HueClient
 import MenereUI
 import PersistenceClient
 import StorageClient
@@ -47,6 +48,10 @@ public struct ChoresReducer {
         var confettiTrigger = 0
         var confettiColor: MemberColor?
 
+        /// P16-C2 — the ritual key currently firing from the Smart-home preview's inline chips (dims the
+        /// tapped chip while the scene recall is in flight). Nil = idle.
+        var recallingRitual: String?
+
         /// P16 — backing store for the hub's **Smart home** overview card: loads the same Hue/Lutron/
         /// etc. data Today's "The house" card uses, so the card can seed the shared ``HouseView``.
         public var houseCard = HouseCardReducer.State()
@@ -85,6 +90,9 @@ public struct ChoresReducer {
         case petSuggestionTapped(PetSuggestion)
         case dismissPetSuggestions
         case carePhotosLoaded([String: Data])
+        // P16-C2 — fire a Hue ritual (Bedtime / Dinner's ready) inline from the Smart-home preview.
+        case recallRitual(HueRitual)
+        case ritualRecallFinished(key: String)
         case form(PresentationAction<ChoreFormReducer.Action>)
         case careForm(PresentationAction<CareItemFormReducer.Action>)
         case plantCapture(PresentationAction<PlantCaptureReducer.Action>)
@@ -340,6 +348,25 @@ public struct ChoresReducer {
 
             case .dismissPetSuggestions:
                 state.petSuggestionsDismissed = true
+                return .none
+
+            case let .recallRitual(ritual):
+                // Route the recall to the ritual's OWN bridge (mirrors Today's card); ignore if that
+                // bridge isn't paired or another recall is already in flight. Hue scene only — shade
+                // actions are a Today-card refinement not wired into the hub preview.
+                guard state.recallingRitual == nil,
+                      let config = state.houseCard.config,
+                      let bridge = config.bridge(ritual.bridgeId) else { return .none }
+                state.recallingRitual = ritual.key
+                return .run { send in
+                    @Dependency(\.hue) var hue
+                    // Best-effort: recall failures degrade silently (the card never shows errors).
+                    try? await hue.recallScene(bridge, ritual.groupId, ritual.sceneId)
+                    await send(.ritualRecallFinished(key: ritual.key))
+                }
+
+            case let .ritualRecallFinished(key):
+                if state.recallingRitual == key { state.recallingRitual = nil }
                 return .none
 
             case .careForm(.presented(.delegate(.didChange))):
