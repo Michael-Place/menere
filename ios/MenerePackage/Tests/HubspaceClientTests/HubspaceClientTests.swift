@@ -75,11 +75,39 @@ struct HubspaceClientTests {
         #expect(q("session_code") == "SC")
         #expect(q("execution") == "EX")
         #expect(q("tab_id") == "TAB")
+        // client_id is REQUIRED on this POST (aioafero `extract_login_codes`); its absence makes
+        // Keycloak reject every login with HTTP 400 — the bug this pins against regressing.
+        #expect(q("client_id") == "hubspace_android")
         #expect(req.value(forHTTPHeaderField: "x-requested-with") == "io.afero.partner.hubspace")
         let body = String(decoding: req.httpBody ?? Data(), as: UTF8.self)
         #expect(body.contains("username=me%40example.com"))
         #expect(body.contains("password=pw%26secret"))   // & escaped, not a separator
         #expect(body.contains("credentialId="))
+    }
+
+    // MARK: reference-conformance pins (aioafero v1_const.py)
+
+    @Test func authConstantsMatchReference() {
+        // Pinned verbatim to aioafero `AFERO_CLIENTS["hubspace"]` + `AFERO_GENERICS`. A drift in the
+        // upstream reference must break this test, not Michael's sign-in.
+        #expect(HubspaceAuth.clientId == "hubspace_android")
+        #expect(HubspaceAuth.redirectURI == "hubspace-app://loginredirect")
+        #expect(HubspaceAuth.openidHost == "accounts.hubspaceconnect.com")
+        #expect(HubspaceAuth.realm == "thd")
+        #expect(HubspaceAuth.apiHost == "api2.afero.net")
+        #expect(HubspaceAuth.dataHost == "semantics2.afero.net")
+        #expect(HubspaceAuth.authorizeEndpoint.absoluteString
+            == "https://accounts.hubspaceconnect.com/auth/realms/thd/protocol/openid-connect/auth")
+        #expect(HubspaceAuth.loginActionEndpoint.absoluteString
+            == "https://accounts.hubspaceconnect.com/auth/realms/thd/login-actions/authenticate")
+        #expect(HubspaceAuth.tokenEndpoint.absoluteString
+            == "https://accounts.hubspaceconnect.com/auth/realms/thd/protocol/openid-connect/token")
+        #expect(HubspaceAuth.accountEndpoint.absoluteString == "https://api2.afero.net/v1/users/me")
+    }
+
+    @Test func requiresOTPDetectsSecondFactorForm() {
+        #expect(HubspaceAuth.requiresOTP(html: #"<form id="kc-otp-login-form" action="…">"#))
+        #expect(!HubspaceAuth.requiresOTP(html: #"<form id="kc-form-login" action="…">"#))
     }
 
     @Test func extractsAuthorizationCodeFromRedirect() {
@@ -328,6 +356,104 @@ struct HubspaceClientTests {
     private actor FetchCounter {
         private(set) var value = 0
         func bump() { value += 1 }
+    }
+
+    // MARK: 3-leg login flow (cookie-session + client_id + error typing)
+
+    private static let loginPageHTML = """
+    <html><body>
+    <form id="kc-form-login"
+          action="https://accounts.hubspaceconnect.com/auth/realms/thd/login-actions/authenticate?session_code=SC&amp;execution=EX&amp;tab_id=TAB"
+          method="post"><input name="username"/><input name="password"/></form>
+    </body></html>
+    """
+
+    /// Records which HTTP seam each request used, so we can prove leg 1 (GET auth) shares the
+    /// no-redirect session with leg 2 (the credential POST) — the cookie-jar fix.
+    private actor SeamLog {
+        private(set) var noRedirectPaths: [String] = []
+        private(set) var performPaths: [String] = []
+        func noRedirect(_ p: String) { noRedirectPaths.append(p) }
+        func perform(_ p: String) { performPaths.append(p) }
+    }
+
+    private func html200(_ url: URL) -> (Data, HTTPURLResponse) {
+        (Data(Self.loginPageHTML.utf8), HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!)
+    }
+
+    /// Happy path: authorize (no-redirect) → credentials (no-redirect, 302+code) → token → users/me.
+    @Test func loginFlowSharesSessionSendsClientIdAndReturnsTokens() async throws {
+        let log = SeamLog()
+        let http = HubspaceHTTPClient(
+            perform: { req in
+                await log.perform(req.url!.path)
+                let url = req.url!
+                if url.path.contains("openid-connect/token") {
+                    return self.ok(url, #"{"access_token":"AT","refresh_token":"RT","id_token":"ID"}"#)
+                }
+                return self.ok(url, #"{"accountAccess":[{"account":{"accountId":"acct-42"}}]}"#)
+            },
+            performNoRedirect: { req in
+                await log.noRedirect(req.url!.path)
+                let url = req.url!
+                if url.path.contains("login-actions/authenticate") {
+                    // Assert the credential POST carries client_id (the bug fix).
+                    let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
+                    #expect(items.first { $0.name == "client_id" }?.value == "hubspace_android")
+                    let resp = HTTPURLResponse(url: url, statusCode: 302, httpVersion: nil,
+                        headerFields: ["Location": "hubspace-app://loginredirect?code=THE_CODE"])!
+                    return (Data(), resp)
+                }
+                return self.html200(url)   // the authorize GET → login page
+            }
+        )
+        let tokens = try await HubspaceLogin(http: http).login(email: "me@x.com", password: "pw")
+        #expect(tokens.refreshToken == "RT")
+        #expect(tokens.accountId == "acct-42")
+        // Leg 1 (authorize) AND leg 2 (credentials) both went through the no-redirect session, so the
+        // Keycloak session cookies set on leg 1 are replayed on leg 2.
+        #expect(await log.noRedirectPaths == [
+            "/auth/realms/thd/protocol/openid-connect/auth",
+            "/auth/realms/thd/login-actions/authenticate",
+        ])
+    }
+
+    /// A non-302, non-OTP credential response is a rejected password → `.invalidCredentials`
+    /// (distinct from a flow break), so the UI can say "wrong password" only when it really is.
+    @Test func loginRejectedPasswordThrowsInvalidCredentials() async throws {
+        let http = HubspaceHTTPClient(
+            perform: { req in self.ok(req.url!, "{}") },
+            performNoRedirect: { req in
+                let url = req.url!
+                if url.path.contains("login-actions/authenticate") {
+                    // 400 re-rendering the login page (Keycloak's bad-password signature).
+                    return (Data("<html>login</html>".utf8),
+                            HTTPURLResponse(url: url, statusCode: 400, httpVersion: nil, headerFields: nil)!)
+                }
+                return self.html200(url)
+            }
+        )
+        await #expect(throws: HubspaceError.invalidCredentials) {
+            try await HubspaceLogin(http: http).login(email: "me@x.com", password: "bad")
+        }
+    }
+
+    /// An OTP form back from the credential POST → `.otpRequired`, never a bad-password message.
+    @Test func loginOTPFormThrowsOtpRequired() async throws {
+        let http = HubspaceHTTPClient(
+            perform: { req in self.ok(req.url!, "{}") },
+            performNoRedirect: { req in
+                let url = req.url!
+                if url.path.contains("login-actions/authenticate") {
+                    return (Data(#"<form id="kc-otp-login-form"></form>"#.utf8),
+                            HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!)
+                }
+                return self.html200(url)
+            }
+        )
+        await #expect(throws: HubspaceError.otpRequired) {
+            try await HubspaceLogin(http: http).login(email: "me@x.com", password: "pw")
+        }
     }
 
     // MARK: stateful mock

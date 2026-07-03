@@ -168,23 +168,32 @@ struct HubspaceLogin: Sendable {
     func login(email: String, password: String) async throws -> HubspaceTokens {
         let pkce = HubspacePKCE()
 
-        // 1. GET the login page.
+        // 1. GET the login page. This MUST go through the SAME (no-redirect) session as the credential
+        //    POST in step 2: Keycloak sets session cookies here (AUTH_SESSION_ID / KC_AUTH_SESSION_HASH /
+        //    KC_RESTART) and REQUIRES them back on the POST. Using two different URLSessions (each with
+        //    its own ephemeral cookie jar) drops those cookies → Keycloak answers the POST with HTTP 400
+        //    (re-rendering the login page), which surfaces to the user as a bogus "wrong password".
         var authReq = URLRequest(url: HubspaceAuth.authorizeURL(codeChallenge: pkce.challenge))
         authReq.setValue("io.afero.partner.hubspace", forHTTPHeaderField: "x-requested-with")
-        let (pageData, pageResp) = try await http.perform(authReq)
+        let (pageData, pageResp) = try await http.performNoRedirect(authReq)
         guard (200..<400).contains(pageResp.statusCode),
               let html = String(data: pageData, encoding: .utf8),
               let form = HubspaceAuth.extractLoginForm(html: html) else {
             throw HubspaceError.loginFailed
         }
 
-        // 2. POST credentials (no redirect follow) → 302 Location carries ?code=…
+        // 2. POST credentials (no redirect follow, same session as step 1 → cookies replay) → 302
+        //    Location carries ?code=…
         let credReq = HubspaceAuth.credentialRequest(form: form, username: email, password: password)
-        let (_, credResp) = try await http.performNoRedirect(credReq)
+        let (credData, credResp) = try await http.performNoRedirect(credReq)
         guard credResp.statusCode == 302,
               let location = credResp.value(forHTTPHeaderField: "Location"),
               let code = HubspaceAuth.authorizationCode(fromRedirect: location) else {
-            throw HubspaceError.loginFailed
+            // The flow reached the auth server and posted credentials, so a non-302 here is a genuine
+            // credential verdict — distinguish it from flow breakage so the UI can say the right thing.
+            let body = String(data: credData, encoding: .utf8) ?? ""
+            if HubspaceAuth.requiresOTP(html: body) { throw HubspaceError.otpRequired }
+            throw HubspaceError.invalidCredentials
         }
 
         // 3. Exchange the code for tokens.

@@ -91,13 +91,14 @@ final class HubspaceSetupReducerTests: XCTestCase {
         await store.receive(.delegate(.finished(expected)))
     }
 
-    /// A genuine login failure (bad credentials / unreachable Keycloak) → the failure screen, and NOTHING
-    /// is persisted. This is the case that SHOULD show failure — the contrast with the probe case above.
-    func testLoginFailureShowsFailedAndPersistsNothing() async {
+    /// A rejected password (`.invalidCredentials`) → the failure screen with the "check your
+    /// email/password" copy, and NOTHING is persisted. This is the case that SHOULD show a credential
+    /// failure — the contrast with the probe case above.
+    func testInvalidCredentialsShowsFailedAndPersistsNothing() async {
         let clock = TestClock()
         let savedBox = LockIsolated<HubspaceConfig?>(nil)
         let store = filledStore(clock: clock, savedBox: savedBox) {
-            $0.hubspace.login = { _, _ in throw HubspaceError.loginFailed }
+            $0.hubspace.login = { _, _ in throw HubspaceError.invalidCredentials }
         }
 
         await store.send(.binding(.set(\.email, "me@example.com"))) { $0.email = "me@example.com" }
@@ -111,5 +112,27 @@ final class HubspaceSetupReducerTests: XCTestCase {
             $0.errorMessage = "Couldn't sign in to Hubspace. Double-check your email and password and try again."
         }
         XCTAssertNil(savedBox.value)   // never persisted a thing
+    }
+
+    /// A flow break (`.loginFailed` — couldn't reach/parse Keycloak) must NOT masquerade as a wrong
+    /// password: it surfaces the connectivity copy instead, and still persists nothing.
+    func testLoginFlowBreakShowsConnectivityMessage() async {
+        let clock = TestClock()
+        let savedBox = LockIsolated<HubspaceConfig?>(nil)
+        let store = filledStore(clock: clock, savedBox: savedBox) {
+            $0.hubspace.login = { _, _ in throw HubspaceError.loginFailed }
+        }
+
+        await store.send(.binding(.set(\.email, "me@example.com"))) { $0.email = "me@example.com" }
+        await store.send(.binding(.set(\.password, "pw"))) { $0.password = "pw" }
+
+        await store.send(.connectTapped) { $0.step = .connecting }
+
+        await store.receive(\.connectFailed) {
+            $0.step = .failed
+            $0.password = ""
+            $0.errorMessage = "Couldn't reach Hubspace to sign in. Check your connection and try again."
+        }
+        XCTAssertNil(savedBox.value)
     }
 }

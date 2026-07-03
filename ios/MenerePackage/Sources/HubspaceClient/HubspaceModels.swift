@@ -15,9 +15,17 @@ import Foundation
 public enum HubspaceError: Error, Equatable, Sendable {
     /// The config is missing a refresh token / account id, so we can't authenticate.
     case notConfigured
-    /// The Keycloak login (email/password) failed — bad credentials, an unexpected form, or no
-    /// redirect `code`.
+    /// The login *flow* broke before we could even present credentials — we couldn't fetch or parse
+    /// the Keycloak login page, or the credential POST returned no usable `code` for a reason other
+    /// than a rejected password (network hiccup, or the reference flow drifted). This is NOT a
+    /// "wrong password" — it must not be surfaced as one.
     case loginFailed
+    /// The Keycloak login page rendered and we posted the credentials, but the auth server rejected
+    /// them (non-302, no OTP form) — the email/password really is wrong.
+    case invalidCredentials
+    /// The account has a second factor (email OTP) enabled; Keycloak returned the OTP form. We can't
+    /// complete that headlessly, so we surface it distinctly rather than as a bad password.
+    case otpRequired
     /// A token exchange / refresh response was malformed or missing `access_token`.
     case invalidTokenResponse
     /// `users/me` carried no `accountAccess[].account.accountId`.

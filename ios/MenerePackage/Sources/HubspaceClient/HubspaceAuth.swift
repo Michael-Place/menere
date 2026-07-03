@@ -104,9 +104,13 @@ public enum HubspaceAuth {
     /// values ride as query params; the credentials are the form body.
     public static func credentialRequest(form: LoginForm, username: String, password: String) -> URLRequest {
         var comps = URLComponents(url: loginActionEndpoint, resolvingAgainstBaseURL: false)!
+        // `client_id` is REQUIRED here — aioafero's `extract_login_codes` puts it in the query params.
+        // Without it Keycloak can't resolve the client and rejects the POST with HTTP 400 (re-rendering
+        // the login page), which reads to the user as "wrong password" even when the password is right.
         comps.queryItems = [
             URLQueryItem(name: "session_code", value: form.sessionCode),
             URLQueryItem(name: "execution", value: form.execution),
+            URLQueryItem(name: "client_id", value: clientId),
             URLQueryItem(name: "tab_id", value: form.tabId),
         ]
         var req = URLRequest(url: comps.url!)
@@ -119,6 +123,12 @@ public enum HubspaceAuth {
             "credentialId": "",
         ])
         return req
+    }
+
+    /// True when the credential-POST response is Keycloak's OTP (second-factor) form rather than a
+    /// redirect — mirrors aioafero's `requires_otp` (`"kc-otp-login-form" in content`).
+    public static func requiresOTP(html: String) -> Bool {
+        html.contains("kc-otp-login-form")
     }
 
     /// Extract the `code` from the post-login redirect (`hubspace-app://loginredirect?code=…`).

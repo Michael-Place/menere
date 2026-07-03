@@ -113,8 +113,20 @@ public struct HubspaceSetupReducer {
                         note = "Signed in — but Bacán couldn't reach your spigot just now. It'll show up on Today once it's back online."
                     }
                     await send(.connected(config, note))
-                } catch: { _, send in
-                    await send(.connectFailed("Couldn't sign in to Hubspace. Double-check your email and password and try again."))
+                } catch: { error, send in
+                    // Surface the *reason* — a genuine bad password reads very differently from an OTP
+                    // wall or a flow/network break, and conflating them (the old behavior) is exactly
+                    // what made a real auth bug masquerade as "wrong password".
+                    let message: String
+                    switch error as? HubspaceError {
+                    case .invalidCredentials:
+                        message = "Couldn't sign in to Hubspace. Double-check your email and password and try again."
+                    case .otpRequired:
+                        message = "Your Hubspace account requires a verification code, which Bacán can't enter yet. Turn off two-step verification in the Hubspace app, then try again."
+                    case .loginFailed, .invalidTokenResponse, .requestFailed, .noAccountId, .notConfigured, .none:
+                        message = "Couldn't reach Hubspace to sign in. Check your connection and try again."
+                    }
+                    await send(.connectFailed(message))
                 }
 
             case let .connected(config, note):
