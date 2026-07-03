@@ -470,6 +470,12 @@ Original notes (still apply): one `HueClient` dependency, local-first:
   cases. C5 candidate: CLIP v2 SSE live state.
 
 ### P13 — Money: expense tracking + budgets (Michael's request, 2026-07-02)
+**C1 ✅ shipped 2026-07-02 (commit 2f13ff4, built in a PARALLEL WORKTREE while P15
+ran on main):** Expense/BudgetConfig models, Money pinned row in Lists, month view
+(total, category bars vs budgets, terracotta over-budget), "New from the Brain"
+inbox (one-tap File-it, tag-based category auto-suggest — verified live: the real
+Kindercare doc → $175 Kids), manual add, budget editor. Remaining: Today "This
+month" card (C2), email/statement ingestion, optional Plaid.
 Ordering flexible (can jump ahead of P11/P12). **Key insight: the Family Brain
 already extracts vendor/amount/docDate from receipts — Phase 1 is a lens, not a
 pipeline.**

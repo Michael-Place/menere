@@ -7,7 +7,12 @@ minimal public-launch hardening).
 
 For the full pivot plan, phase history, and decisions, see **`ROADMAP-family.md`**.
 
-**Act II (in progress — P5 identity ✅, P6 Today ✅, P7 Family Brain ✅, P8 home care ✅, P9 plants & garden ✅, P10 pets ✅, P12 Hue ✅):**
+**Act II (in progress — P5 identity ✅, P6 Today ✅, P7 Family Brain ✅, P8 home care ✅, P9 plants & garden ✅, P10 pets ✅, P12 Hue ✅, P13-C1 Money ✅, P15 fleet ✅ except C6 Ford):**
+The smart-home fleet: `HueClient`/`LutronClient`/`SonosClient`/`NestClient`/
+`HubspaceClient`/`MerossClient`/`HomeKitClient` — all playbook-shaped (config docs under
+`households/{hid}/config/*`, mock modes, House-screen sections, Settings lifecycle rows,
+`// SEAM (P14)` on control verbs). Garage: HomeKit-first, Meross fallback. Money
+(`MoneyFeature`): Lists row → month view + budgets + Brain-receipt inbox.
 Hue: `HueClient` (V1, local-first, mock mode), config at `households/{hid}/config/hue`,
 "The house" card on Today (temps/lights/rituals), pairing + re-pair (name-based
 re-binding) in Settings → Smart home. P11 memories deliberately skipped for now.
