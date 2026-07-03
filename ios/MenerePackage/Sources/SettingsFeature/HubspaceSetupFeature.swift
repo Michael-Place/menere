@@ -108,7 +108,15 @@ public struct HubspaceSetupReducer {
                     // exactly what happened while Little Snitch was still blocking the sim's cloud calls.)
                     var note: String?
                     do {
-                        _ = try await hubspace.spigots(config)
+                        // A clean read that finds NO water timer is a very different thing from a read
+                        // that couldn't reach Hubspace — the first means "you haven't paired a spigot
+                        // yet", the second means "cloud hiccup". Conflating them (the old copy) sent
+                        // Michael hunting for a connectivity problem when his account simply had no
+                        // device. Say the right one.
+                        let found = try await hubspace.spigots(config)
+                        if found.isEmpty {
+                            note = "Signed in — but Bacán didn't find a water timer on your Hubspace account. Add your spigot in the Refoss (Hubspace) app first, then it'll show up on Today."
+                        }
                     } catch {
                         note = "Signed in — but Bacán couldn't reach your spigot just now. It'll show up on Today once it's back online."
                     }

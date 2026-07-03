@@ -132,6 +132,13 @@ struct HubspaceSession: Sendable {
                 var req = URLRequest(url: comps.url!)
                 req.httpMethod = "GET"
                 req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+                // The metadevices READ is served by the DATA host, NOT the API host. The URL points at
+                // `api2.afero.net` but the `host` header MUST be `semantics2.afero.net` (aioafero
+                // `_fetch_data` sets `host: API_DATA_HOST`) — omitting it makes Afero's edge answer the
+                // (otherwise-correct) path with HTTP 404 `not_found`, which reads to the user as "no
+                // spigot found". The state WRITE below already sets this; the read was missing it.
+                req.setValue(HubspaceAuth.dataHost, forHTTPHeaderField: "host")
+                req.setValue(HubspaceAuth.userAgent, forHTTPHeaderField: "user-agent")
                 return req
             }
             return try HubspaceDevice.parseSpigots(data)
@@ -152,6 +159,7 @@ struct HubspaceSession: Sendable {
             req.setValue("application/json; charset=utf-8", forHTTPHeaderField: "Content-Type")
             // The write host header points at the DATA host (per aioafero `base.py`).
             req.setValue(HubspaceAuth.dataHost, forHTTPHeaderField: "host")
+            req.setValue(HubspaceAuth.userAgent, forHTTPHeaderField: "user-agent")
             req.httpBody = try? JSONSerialization.data(withJSONObject: body)
             return req
         }

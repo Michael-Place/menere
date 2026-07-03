@@ -271,9 +271,13 @@ struct HubspaceClientTests {
     private actor CallLog {
         private(set) var urls: [String] = []
         private(set) var auths: [String?] = []
+        private(set) var hosts: [String?] = []
+        private(set) var userAgents: [String?] = []
         func record(_ req: URLRequest) {
             urls.append(req.url?.absoluteString ?? "")
             auths.append(req.value(forHTTPHeaderField: "Authorization"))
+            hosts.append(req.value(forHTTPHeaderField: "host"))
+            userAgents.append(req.value(forHTTPHeaderField: "user-agent"))
         }
         var count: Int { urls.count }
         var refreshCount: Int { urls.filter { $0.contains("openid-connect/token") }.count }
@@ -311,6 +315,28 @@ struct HubspaceClientTests {
         #expect(await log.count == 3)          // metadevices(401) → refresh → metadevices(200)
         #expect(await log.refreshCount == 1)
         #expect(await log.auths == ["Bearer STALE", nil, "Bearer FRESH"])
+    }
+
+    /// The metadevices READ must carry `host: semantics2.afero.net` (the DATA host) — NOT the api2 URL
+    /// host. Afero answers the correct path with HTTP 404 `not_found` when this header is missing (the
+    /// live second bug, distinct from auth). This pins it against regressing. Also asserts the
+    /// user-agent is present.
+    @Test func metadevicesReadCarriesDataHostHeader() async throws {
+        let log = CallLog()
+        let cache = HubspaceTokenCache()
+        await cache.store("GOOD", expiry: Date().addingTimeInterval(3600), for: "R")
+        let http = HubspaceHTTPClient(
+            perform: { req in await log.record(req); return self.ok(req.url!, self.metadevicesJSON) },
+            performNoRedirect: { _ in (Data(), HTTPURLResponse()) }
+        )
+        let session = HubspaceSession(config: config, http: http, cache: cache, singleFlight: HubspaceSingleFlight())
+        _ = try await session.spigots()
+        // Request went to api2.afero.net (the URL host) …
+        #expect(await log.urls.first?.contains("api2.afero.net/v1/accounts/") == true)
+        // … but the host header overrides to the DATA host so the read isn't 404'd.
+        #expect(await log.hosts.first == "semantics2.afero.net")
+        let ua = await log.userAgents.first ?? nil
+        #expect(ua?.isEmpty == false)
     }
 
     @Test func cachedTokenIsReusedWithoutRefresh() async throws {

@@ -30,6 +30,9 @@ public enum HubspaceAuth {
     static let realm = "thd"
     static let apiHost = "api2.afero.net"
     static let dataHost = "semantics2.afero.net"
+    /// Sent on every Afero device call (aioafero `get_headers` / `DEFAULT_USERAGENT`). The client-name
+    /// slot is filled with our app name; the shape is what Afero's edge expects.
+    static let userAgent = "Mozilla/5.0 (Linux; Android 15; Bacan Build/test; wv) AppleWebKit/537.36"
 
     /// `https://accounts.hubspaceconnect.com/auth/realms/thd/protocol/openid-connect/auth`
     public static let authorizeEndpoint = URL(string: "https://\(openidHost)/auth/realms/\(realm)/protocol/openid-connect/auth")!
