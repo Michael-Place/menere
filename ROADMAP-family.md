@@ -128,6 +128,53 @@ Remaining (Postmark dashboard, your account):
 
 ---
 
+# Act III — Refinement (Michael's usage feedback, 2026-07-03)
+
+Emerged from Michael actually LIVING in the app. Four items:
+
+### P16 — Home tab as the physical-home HUB (overview cards + drill-in)
+Problem: the **Home** tab (renamed Chores tab) is getting very long — House care,
+Plants, Yard & garden, Pets, Recent Activity, Leaderboard, Chores, Rewards — and
+Michael keeps looking for the **smart home** in the Home tab but it's buried on the
+Today/dashboard tab (the "The house" card + House control screen). Vision:
+- **Home becomes a hub of OVERVIEW CARDS**, each a glanceable summary that taps into
+  a rich full screen: Smart home (lights/shades/climate summary → House control
+  screen), Chores & rewards (XP/leaderboard), House care, Plants (N thirsty), Yard &
+  garden, Pets. Recent Activity stays inline or its own card.
+- **Relocate/surface smart home in the Home tab** — its natural place. The House
+  control screen (currently pushed from the Today card header) becomes reachable
+  from the Home tab's Smart-home card. Today keeps a slim glance card at most.
+- Each card: title + 1-line status + a chevron; tap → the existing detailed screen
+  (House care section, plant roster, House control, etc.). This scales as more
+  sections land.
+
+### P17 — Time-aware Today dashboard (the "rolling day")
+The dashboard should reflect what's AHEAD, not the whole calendar day:
+- **Past calendar events drop off** today's schedule once their endDate < now (or
+  move to a de-emphasized "earlier today" collapse). The assistant already reasons
+  this way ("café con Mariana at 11am — already passed"); the cards should too.
+- **Tonight's dinner clears/changes after dinner** (a dinner cutoff hour, e.g. past
+  ~8pm → "Dinner's done" or hide), so it stops showing a stale plan late at night.
+- General principle: Today = a live, self-pruning view; time-of-day drives what's
+  shown (morning shows the day ahead; evening shows what's left + Bedtime; late =
+  quiet). Ties into the existing 18:00 Bedtime-prominence rule.
+
+### P18 — Managed members + "claim your profile" (answers the Valentina-join question)
+Act II deferred managed members; P0.1 created profile-only members (Vale/Famfis/
+Oliver, no login) so documents link — which now REQUIRES a claim flow:
+- **The problem:** when Valentina joins via invite code, `joinHousehold` creates a
+  NEW member keyed to her uid — a DUPLICATE of the profile-only "Vale" (which holds
+  her linked docs + terracotta color). 
+- **Claim flow:** on join, if the household has profile-only members (member docs
+  with no uid in the household `members` array), present "Which one are you?" → she
+  picks Vale → re-key that persona to her uid: copy fullName/color, migrate every
+  `document.linkedMemberIds` (and future links) from the synthetic id → her uid,
+  delete the placeholder. Server-side (`joinHousehold` extension) or a client step.
+- **Interim (works today):** orchestrator runs an Admin-SDK merge when she joins.
+- Oliver/Famfis stay profile-only indefinitely (no logins) — the managed-member
+  end state; only Valentina claims. Also unlocks the dormant `.child` role / an
+  eventual kid experience.
+
 ## 2026-07-03 — TestFlight feedback round (build 11 → 12), all ✅ shipped
 Michael's playtest feedback, turned around same-day (commits 9ced9db…39b9571):
 - **W1 + W1.1 wine polish:** 9 style/bug fixes (serif inline nav titles restored via
