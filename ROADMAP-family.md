@@ -128,6 +128,35 @@ Remaining (Postmark dashboard, your account):
 
 ---
 
+## 2026-07-03 — TestFlight feedback round (build 11 → 12), all ✅ shipped
+Michael's playtest feedback, turned around same-day (commits 9ced9db…39b9571):
+- **W1 + W1.1 wine polish:** 9 style/bug fixes (serif inline nav titles restored via
+  `wineNavTitle`, wine-tinted Scan chrome, gold glyphs, serif numerals, warm chips,
+  scan-success haptic) + `WineSegmentedControl` (custom Bordeaux-pill segmented
+  control — appearance-proxy scoping deliberately avoided). Flagged: Margaux
+  `type=.other` data gap; Journal form row surfaces in dark mode.
+- **P15-C8a reset affordances:** every integration removable in-app w/ confirmation;
+  mock configs labeled "(demo data)" + "Clear demo data"; missing delete CRUD added
+  (hue/lutron/homekit). **INCIDENT:** Michael's real Hue config was found clobbered
+  by an agent mock fixture (attribution unclear, evening of 07-02); restored
+  byte-perfect from scratchpad backups. Lesson: orchestrator now verifies config
+  restoration post-run instead of trusting agent reports.
+- **P15-C8b:** Smart-home Settings split — "Philips Hue" card (bridges + RITUALS
+  subsection + actions) / "More devices" card (Michael's screenshot feedback).
+- **P9.1 plant Save bug + Planta wizard:** root cause — identify-without-typed-name
+  left `name` blank and save silently no-op'd; fixed w/ species fallback +
+  regression test. New 6-step capture wizard (photo → AI reveal → nickname →
+  location+lightLevel (new decode-safe field) → watering anchor → "Welcome home,
+  {name}" LeafUnfurl). Edit form unchanged.
+- **P2.1 two-way Apple Calendar sync** (Fambo port, 3 flaws fixed): per-occurrence
+  import dedup (`ekID#occurrenceISO`), edit propagation, RecurrenceOption→
+  EKRecurrenceRule single-event pushes into a dedicated "Bacán" calendar (id stored
+  in prefs at `users/{uid}/settings/calendarSync`); email-extracted events push
+  automatically (decode-default source=manual); imported-event deletion in-app does
+  NOT delete the Apple original (mirror safety). Sim quirks: calaccessd XPC blocks
+  SwiftPM EventKit tests; recurring-import E2E is unit-tested only.
+- Also: Hubspace mock cleared via Admin SDK (unblocked login); `idb` works again.
+
 # Act II — Make it *ours* (the personal era)
 
 Act I built a working family hub. Act II makes it unmistakably the **Place family's**
