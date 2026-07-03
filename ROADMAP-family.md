@@ -177,6 +177,31 @@ actionable, it's read-only."** Both = make Today a LIVE, INTERACTIVE surface.
   shown (morning shows the day ahead; evening shows what's left + Bedtime; late =
   quiet). Ties into the existing 18:00 Bedtime-prominence rule.
 
+### P19 — Plant Care Pro (the "plant whisperer") — 32 plants, zero overwhelm
+Michael has 32 plants and it's OVERWHELMING; wants rich detail, more care types, and
+AI troubleshooting with context-adaptive care. The insight: 32 plants is a
+triage + expertise problem, not a list problem.
+- **C1 — Plant detail screen + rich multi-task care (foundation):** a proper plant
+  DETAIL screen (hero photo, species italic, light level) with a TOP OVERVIEW ("Next:
+  water today · fertilize in 5 days", health glance, last-watered-by), the full
+  care-task list with inline mark-done (LeafUnfurl), and richer task types beyond
+  water — **Fertilize, Re-pot, Prune, Rotate, Mist, Clean leaves, Pest check** — each
+  with species-sensible interval presets; new activity verbs (fertilized/repotted/
+  pruned/rotated/misted). Detail distinct from the edit form (currently the row just
+  opens the form).
+- **C2 — Plants triage + room grouping (overwhelm relief):** the Plants roster gets a
+  TRIAGE HEADER ("5 need water · 2 fertilize this week · rest happy"), plants grouped
+  **by room/location** with per-room watering status + a "water this room / mark all
+  watered" batch action. Home-hub Plants card + Today reflect the triage.
+- **C3 — Context-aware adaptive care + AI troubleshooting (the wow):** a per-plant
+  CONTEXT field (pot type, soil, indoor/outdoor, light exposure) that FEEDS care —
+  the AI adjusts intervals from it ("outside potted maple dries faster → shorten
+  water"; "pure potting soil holds moisture → stretch to 2 weeks"). A "Troubleshoot /
+  Ask about this plant" flow (Claude + optional photo of the problem + species +
+  context) → diagnosis + fix + optional care-interval adjustment. Expand
+  `identifyPlant` / species profile: light, humidity, **TOXICITY / pet-safe** (matters
+  with Fajita/Sprinkle/Fireball!), fertilizer schedule, common problems, ideal temp.
+
 ### P18 — Managed members + "claim your profile" (answers the Valentina-join question)
 Act II deferred managed members; P0.1 created profile-only members (Vale/Famfis/
 Oliver, no login) so documents link — which now REQUIRES a claim flow:
