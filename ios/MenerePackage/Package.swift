@@ -44,6 +44,7 @@ let package = Package(
         .library(name: "CellarFeature", targets: ["CellarFeature"]),
         .library(name: "MoneyFeature", targets: ["MoneyFeature"]),
         .library(name: "AgentTools", targets: ["AgentTools"]),
+        .library(name: "AssistantFeature", targets: ["AssistantFeature"]),
     ],
     dependencies: [
         .package(url: "https://github.com/firebase/firebase-ios-sdk", .upToNextMajor(from: "11.13.0")),
@@ -81,6 +82,7 @@ let package = Package(
                 "CalendarFeature",
                 "ChoresFeature",
                 "RecipesFeature",
+                "AssistantFeature",
             ]
         ),
         .target(
@@ -432,6 +434,17 @@ let package = Package(
                 "HubspaceClient",
                 "MerossClient",
                 "HomeKitClient",
+            ]
+        ),
+        .target(
+            name: "AssistantFeature",
+            dependencies: [
+                .product(name: "ComposableArchitecture", package: "swift-composable-architecture"),
+                "MenereUI",
+                "AgentTools",
+                "FamilyDomain",
+                "PersistenceClient",
+                "UserDomain",
             ]
         ),
         .testTarget(

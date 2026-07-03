@@ -1,3 +1,4 @@
+import AssistantFeature
 import CalendarFeature
 import ChoresFeature
 import ComposableArchitecture
@@ -18,7 +19,10 @@ public struct MainTabReducer {
         var showSettings = false
         /// Family-Brain search is presented as a sheet from the shared toolbar on every tab.
         var showSearch = false
+        /// The Bacán assistant chat, presented as a sheet from the Today tab's sparkles button.
+        var showAssistant = false
         var search = BrainSearchReducer.State()
+        var assistant = AssistantReducer.State()
         var today = TodayReducer.State()
         var lists = ListsReducer.State()
         var calendar = CalendarReducer.State()
@@ -37,6 +41,7 @@ public struct MainTabReducer {
         case recipes(RecipesReducer.Action)
         case settings(SettingsReducer.Action)
         case search(BrainSearchReducer.Action)
+        case assistant(AssistantReducer.Action)
         case tabSelected(TabItem)
         case binding(BindingAction<State>)
     }
@@ -53,6 +58,7 @@ public struct MainTabReducer {
         Scope(state: \.recipes, action: \.recipes, child: RecipesReducer.init)
         Scope(state: \.settings, action: \.settings, child: SettingsReducer.init)
         Scope(state: \.search, action: \.search, child: BrainSearchReducer.init)
+        Scope(state: \.assistant, action: \.assistant, child: AssistantReducer.init)
 
         Reduce { state, action in
             switch action {
@@ -77,7 +83,11 @@ public struct MainTabReducer {
                 state.showSearch = false
                 return .none
 
-            case .today, .lists, .calendar, .chores, .recipes, .settings, .search, .binding:
+            case .assistant(.dismissTapped):
+                state.showAssistant = false
+                return .none
+
+            case .today, .lists, .calendar, .chores, .recipes, .settings, .search, .assistant, .binding:
                 return .none
             }
         }
@@ -125,7 +135,17 @@ public struct MainTabView: View {
             Tab(TabItem.today.title, systemImage: TabItem.today.systemImage, value: TabItem.today) {
                 NavigationStack {
                     TodayView(store: store.scope(state: \.today, action: \.today))
-                        .toolbar { familyToolbar }
+                        .toolbar {
+                            familyToolbar
+                            // Bacán assistant — Today only, alongside the shared search/family icons.
+                            ToolbarItem(placement: .topBarTrailing) {
+                                Button { store.showAssistant = true } label: {
+                                    Image(systemName: "sparkles")
+                                }
+                                .accessibilityLabel("Ask Bacán")
+                                .accessibilityIdentifier("assistant-button")
+                            }
+                        }
                 }
             }
 
@@ -169,6 +189,10 @@ public struct MainTabView: View {
         .sheet(isPresented: $store.showSearch) {
             // BrainSearchView owns its own NavigationStack (results push the document detail).
             BrainSearchView(store: store.scope(state: \.search, action: \.search))
+        }
+        .sheet(isPresented: $store.showAssistant) {
+            // AssistantView owns its own NavigationStack (sparkles header + Done).
+            AssistantView(store: store.scope(state: \.assistant, action: \.assistant))
         }
     }
 
