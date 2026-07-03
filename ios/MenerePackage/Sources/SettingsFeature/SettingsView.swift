@@ -899,10 +899,23 @@ public struct SettingsView: View {
         .task { store.send(.loadHomeKit) }
     }
 
-    // MARK: - Smart home (Hue, P12-C3 — multi-bridge)
+    // MARK: - Smart home (P15-C8b — split into two cards)
+    //
+    // Two grouped cards so Hue no longer "bleeds" into the other integrations (Michael's screenshot
+    // feedback): "Philips Hue" owns the bridge list, Add-a-bridge, the (Hue-scoped) rituals and the
+    // Remove/Clear action; "More devices" carries one row per other integration. Layout only — every
+    // action / accessibility id below is unchanged.
 
     @ViewBuilder
     private var smartHomeSection: some View {
+        hueSection
+        moreDevicesSection
+    }
+
+    /// The Philips Hue card: bridge list, Add a bridge, the Hue-scoped rituals (in their own labelled
+    /// subsection), and the Remove-all / Clear-demo action. Its "Set up" state when never paired.
+    @ViewBuilder
+    private var hueSection: some View {
         Section {
             if let config = store.hueConfig, !config.bridges.isEmpty {
                 ForEach(config.bridges) { bridge in
@@ -915,6 +928,13 @@ public struct SettingsView: View {
                         .foregroundStyle(Color.ink)
                 }
                 .accessibilityIdentifier("hue-add-bridge-row")
+                // Rituals are Hue-scoped — set them apart with a small subsection divider row so they
+                // read as "these belong to Hue" rather than free-floating in the card.
+                Text("RITUALS")
+                    .font(.caption2)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(Color.inkSoft)
+                    .accessibilityIdentifier("hue-rituals-subheader")
                 ForEach(hueRitualStates(config), id: \.id) { ritual in
                     hueRitualRow(ritual, showBridge: config.bridges.count > 1)
                 }
@@ -934,23 +954,32 @@ public struct SettingsView: View {
                 }
                 .accessibilityIdentifier("hue-setup-row")
             }
-
-            // Lutron shades (P15-C1) — below the Hue bridge list.
-            lutronRow
-            // Nest thermostat (P15-C3) — below the Lutron shades.
-            nestRow
-            // Hubspace water timer (P15-C4) — below the Nest thermostat.
-            hubspaceRow
-            // Meross/Refoss garage opener (P15-C5) — below the Hubspace spigot.
-            merossRow
-            // Apple HomeKit (P15-C7) — below the garage. Local, keyless; pairing lives in Apple's Home app.
-            homekitRow
         } header: {
-            Text("Smart home")
+            Text("Philips Hue").foregroundStyle(Color.inkSoft)
         } footer: {
             if store.hueConfig?.bridges.isEmpty ?? true {
                 Text("Pair your Hue bridge to light up the house from Today.")
             }
+        }
+    }
+
+    /// The "More devices" card: one row each for the non-Hue integrations, each rendering its own
+    /// status / set-up state exactly as before.
+    @ViewBuilder
+    private var moreDevicesSection: some View {
+        Section {
+            // Lutron shades (P15-C1).
+            lutronRow
+            // Nest thermostat (P15-C3).
+            nestRow
+            // Hubspace water timer (P15-C4).
+            hubspaceRow
+            // Meross/Refoss garage opener (P15-C5).
+            merossRow
+            // Apple HomeKit (P15-C7) — local, keyless; pairing lives in Apple's Home app.
+            homekitRow
+        } header: {
+            Text("More devices").foregroundStyle(Color.inkSoft)
         }
     }
 
