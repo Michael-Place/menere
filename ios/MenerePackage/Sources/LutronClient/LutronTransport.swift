@@ -122,23 +122,33 @@ enum LutronLeapSession {
 enum LutronPairingSession {
     static let pairingPort: UInt16 = 8083
 
-    /// The LAP handshake (pylutron-caseta `pairing.py`): connect anonymous-TLS to 8083, wait for the
-    /// button-press status (`PhysicalAccess` permission), submit the CSR to `/pair`, and read the
-    /// `SigningResult` (signed cert + root CA). We generate the EC keypair + CSR locally; the returned
-    /// PEMs become the stored credential.
-    static func pair(bridgeIP: String) async throws -> LutronPairingResult {
+    /// The LAP handshake (pylutron-caseta `pairing.py` / lutron-leap-js `PairingClient.ts`): open ONE
+    /// long-lived TLS socket to 8083 **presenting the bundled LAP client certificate** (mutual TLS — the
+    /// bridge only opens the pairing session and pushes the button status for an authenticated client),
+    /// wait up to `buttonTimeout` for the button-press status (`Body.Status.Permissions` contains
+    /// `PhysicalAccess`), then submit the CSR to `/pair` and read the `SigningResult` (signed cert + root
+    /// CA). We generate the EC keypair + CSR locally; the returned PEMs become the stored credential.
+    ///
+    /// The connection is held open for the whole button window (not reconnected per second) — the bridge
+    /// pushes the press asynchronously on the live session, so tearing the socket down and reconnecting
+    /// would drop the very status we're waiting for.
+    ///
+    /// Throws `.buttonNotPressed` only when the socket connected but no press arrived in the window
+    /// (so the UI can say "we reached the bridge but didn't see the button"); a TLS/connect failure
+    /// throws `.networkError` / `.bridgeUnreachable` instead (so the UI can say "couldn't reach the
+    /// bridge") — the caller distinguishes these to surface the right guidance.
+    static func pair(bridgeIP: String, buttonTimeout: TimeInterval = 30) async throws -> LutronPairingResult {
         let keypair = try LutronCrypto.makePairingKeypair()
-        let conn = try await LutronConnection.openAnonymous(host: bridgeIP, port: pairingPort)
+        let conn = try await LutronConnection.openPairing(host: bridgeIP, port: pairingPort)
         defer { conn.close() }
 
         // Wait (bounded) for the physical-access status that indicates the button was pressed.
-        let pressed = try await conn.awaitButtonPress(timeout: 8)
+        let pressed = try await conn.awaitButtonPress(timeout: buttonTimeout)
         guard pressed else { throw LutronError.buttonNotPressed }
 
         // Submit the CSR: Execute /pair with the CSR text.
         let response = try await conn.pairRequest(csrPEM: keypair.csrPEM, timeout: 12)
-        guard let signing = response.signingResult,
-              !signing.certificate.isEmpty, !signing.rootCertificate.isEmpty else {
+        guard let signing = response.signingResult, !signing.certificate.isEmpty else {
             throw LutronError.pairingRejected
         }
         return LutronPairingResult(
@@ -183,9 +193,18 @@ final class LutronConnection: @unchecked Sendable {
         return try await connect(host: config.bridgeIP, port: port, tls: tls)
     }
 
-    /// Open an anonymous-TLS connection (pairing): no client identity, accept the server cert.
-    static func openAnonymous(host: String, port: UInt16) async throws -> LutronConnection {
+    /// Open the pairing TLS connection (port 8083): present the bundled well-known LAP client identity
+    /// (mutual TLS — REQUIRED for the bridge to open the pairing session and push the button status),
+    /// pin TLS 1.2 (the bridge's pairing endpoint), and accept the bridge's self-signed server cert.
+    /// A missing/failed LAP identity throws `credentialError` rather than silently connecting anonymously.
+    static func openPairing(host: String, port: UInt16) async throws -> LutronConnection {
+        let identity = try LutronCrypto.makeLAPPairingIdentity()
         let tls = NWProtocolTLS.Options()
+        guard let secIdentity = sec_identity_create(identity) else {
+            throw LutronError.credentialError("could not create LAP sec_identity")
+        }
+        sec_protocol_options_set_local_identity(tls.securityProtocolOptions, secIdentity)
+        sec_protocol_options_set_min_tls_protocol_version(tls.securityProtocolOptions, .TLSv12)
         sec_protocol_options_set_verify_block(
             tls.securityProtocolOptions,
             { _, _, complete in complete(true) },
@@ -250,7 +269,7 @@ final class LutronConnection: @unchecked Sendable {
         try await send(request)
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
-            if let frame = takeMatchingFrame(tag: tag) {
+            if let frame = takeFrame(where: { tag == nil || $0.header.clientTag == tag }) {
                 guard frame.isSuccessful else { throw LutronError.invalidResponse }
                 return frame
             }
@@ -259,35 +278,38 @@ final class LutronConnection: @unchecked Sendable {
         throw LutronError.networkError("timeout awaiting \(tag ?? "response")")
     }
 
-    /// Await a status frame carrying `PhysicalAccess` permission (button pressed).
+    /// Await the button-press status push. The bridge sends a `status;` frame whose
+    /// `Body.Status.Permissions` contains `PhysicalAccess` when the physical button is pressed
+    /// (pylutron-caseta `pairing.py`; lutron-leap-js reports `Status.Permissions ["Public","PhysicalAccess"]`
+    /// with a 200 status). Returns true on the press, false if the window elapses with the socket idle.
     func awaitButtonPress(timeout: TimeInterval) async throws -> Bool {
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
-            let frames = drainFrames()
-            for frame in frames where frame.header.statusCode?.contains("status") == true || frame.communiqueType == nil {
-                if let bytes = frame.bodyData, let text = String(data: bytes, encoding: .utf8),
-                   text.contains("PhysicalAccess") {
-                    return true
-                }
-            }
+            if takeFrame(where: { $0.indicatesPhysicalAccess }) != nil { return true }
             try await Task.sleep(nanoseconds: 100_000_000)
         }
         return false
     }
 
-    /// Submit the CSR to `/pair` and await the `SigningResult` frame.
-    func pairRequest(csrPEM: String, timeout: TimeInterval) async throws -> LEAPResponse {
-        // Pairing uses the Execute/CSR body shape (pairing.py) — hand-build the JSON since it differs
-        // from the zone-command Body.
+    /// Build the CSR `/pair` request frame (JSON + `\r\n` framing). Pairing uses the Execute/CSR body
+    /// shape (`pairing.py` / `PairingClient.ts`), which differs from the zone-command Body, so it's
+    /// hand-built. Extracted (and internal) so the wire shape + framing are unit-testable.
+    static func csrRequestFrame(csrPEM: String) throws -> Data {
         let payload: [String: Any] = [
             "Header": ["RequestType": "Execute", "Url": "/pair", "ClientTag": "get-cert"],
             "Body": [
                 "CommandType": "CSR",
-                "Parameters": ["CSR": csrPEM, "DisplayName": "bacan", "DeviceUID": "000000000000", "Role": "Admin"],
+                "Parameters": ["CSR": csrPEM, "DisplayName": "Bacan", "DeviceUID": "000000000000", "Role": "Admin"],
             ],
         ]
         var data = try JSONSerialization.data(withJSONObject: payload)
-        data.append(contentsOf: [0x0d, 0x0a])
+        data.append(contentsOf: [0x0d, 0x0a])   // \r\n — matches pylutron-caseta's `buffer + b"\r\n"`
+        return data
+    }
+
+    /// Submit the CSR to `/pair` and await the `SigningResult` frame.
+    func pairRequest(csrPEM: String, timeout: TimeInterval) async throws -> LEAPResponse {
+        let data = try Self.csrRequestFrame(csrPEM: csrPEM)
         try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
             connection.send(content: data, completion: .contentProcessed { error in
                 if let error { cont.resume(throwing: LutronError.networkError("\(error)")) }
@@ -296,7 +318,7 @@ final class LutronConnection: @unchecked Sendable {
         }
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
-            if let frame = takeMatchingFrame(tag: "get-cert") { return frame }
+            if let frame = takeFrame(where: { $0.header.clientTag == "get-cert" }) { return frame }
             try await Task.sleep(nanoseconds: 60_000_000)
         }
         throw LutronError.pairingRejected
@@ -304,14 +326,12 @@ final class LutronConnection: @unchecked Sendable {
 
     // MARK: Frame buffering
 
-    private func drainFrames() -> [LEAPResponse] {
-        lock.lock(); let snapshot = buffer; buffer.removeAll(keepingCapacity: true); lock.unlock()
-        return LEAPResponse.frames(from: snapshot)
-    }
-
-    private func takeMatchingFrame(tag: String?) -> LEAPResponse? {
+    /// Consume all *complete* newline-delimited frames currently buffered (keeping a trailing partial
+    /// line in the buffer) and return the first that satisfies `predicate`, or nil if none match yet.
+    /// Unifies the control-request, button-press, and CSR-response readers so all three share the same
+    /// CRLF-safe framing. (Swift folds "\r\n" into one grapheme, so we normalize to LF before splitting.)
+    private func takeFrame(where predicate: (LEAPResponse) -> Bool) -> LEAPResponse? {
         lock.lock()
-        // Normalize CRLF/CR → LF (Swift folds "\r\n" into one grapheme) before line-splitting.
         guard var text = String(data: buffer, encoding: .utf8) else { lock.unlock(); return nil }
         text = text.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n")
         guard text.contains("\n") else { lock.unlock(); return nil }
@@ -326,7 +346,7 @@ final class LutronConnection: @unchecked Sendable {
             let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !trimmed.isEmpty, let d = trimmed.data(using: .utf8),
                   let frame = try? decoder.decode(LEAPResponse.self, from: d) else { continue }
-            if tag == nil || frame.header.clientTag == tag { return frame }
+            if predicate(frame) { return frame }
         }
         return nil
     }
@@ -364,7 +384,21 @@ final class LockedFlag: @unchecked Sendable {
 
 // MARK: - Pairing response decode
 
-private extension LEAPResponse {
+extension LEAPResponse {
+    /// True when this frame is the button-press status push: `Body.Status.Permissions` contains
+    /// `PhysicalAccess` (pylutron-caseta / lutron-leap-js). Falls back to a raw-text scan so we still
+    /// detect the press if the body shape drifts across bridge families (Caséta vs RA3).
+    var indicatesPhysicalAccess: Bool {
+        guard let bodyData else { return false }
+        if let obj = try? JSONSerialization.jsonObject(with: bodyData) as? [String: Any],
+           let status = obj["Status"] as? [String: Any],
+           let perms = status["Permissions"] as? [String] {
+            return perms.contains("PhysicalAccess")
+        }
+        if let text = String(data: bodyData, encoding: .utf8) { return text.contains("PhysicalAccess") }
+        return false
+    }
+
     struct SigningResult { let certificate: String; let rootCertificate: String }
 
     /// Pull `Body.SigningResult.{Certificate,RootCertificate}` from a `/pair` response.

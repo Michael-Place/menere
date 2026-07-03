@@ -70,13 +70,41 @@ enum LutronCrypto {
         guard let key = SecKeyCreateWithData(rawEC as CFData, keyAttrs as CFDictionary, &error) else {
             throw LutronError.credentialError("key import: \(error?.takeRetainedValue().localizedDescription ?? "unknown")")
         }
+        return try importIdentity(cert: cert, key: key)
+    }
 
-        // Add cert + key to the keychain (ignore duplicate errors), then form the identity.
-        let tag = "com.copoche.menere.lutron".data(using: .utf8)!
+    /// Assemble the bundled **LAP pairing identity** (P15-C1 fix) — the well-known Caséta "Application"
+    /// certificate + RSA key from `LutronLAPAssets`, imported into the keychain and bound into a
+    /// `SecIdentity`. This is presented as the TLS client identity on the port-8083 pairing socket so
+    /// the bridge establishes the pairing session and pushes the physical button-press status. Without
+    /// it the bridge stays silent and the pairing countdown always times out.
+    static func makeLAPPairingIdentity() throws -> SecIdentity {
+        guard let certDER = der(fromPEM: LutronLAPAssets.certPEM),
+              let cert = SecCertificateCreateWithData(nil, certDER as CFData) else {
+            throw LutronError.credentialError("bad LAP cert")
+        }
+        guard let keyDER = der(fromPEM: LutronLAPAssets.keyPEM) else {
+            throw LutronError.credentialError("bad LAP key")
+        }
+        // The bundled LAP key is an RSA 2048 PKCS#1 `RSAPrivateKey` — import as RSA (not EC).
+        var error: Unmanaged<CFError>?
+        let keyAttrs: [String: Any] = [
+            kSecAttrKeyType as String: kSecAttrKeyTypeRSA,
+            kSecAttrKeyClass as String: kSecAttrKeyClassPrivate,
+        ]
+        guard let key = SecKeyCreateWithData(keyDER as CFData, keyAttrs as CFDictionary, &error) else {
+            throw LutronError.credentialError("LAP key import: \(error?.takeRetainedValue().localizedDescription ?? "unknown")")
+        }
+        return try importIdentity(cert: cert, key: key)
+    }
+
+    /// Import a certificate + private key into the keychain (idempotent) and return the `SecIdentity`
+    /// the keychain forms from the matching pair. On iOS a `SecIdentity` can't be minted directly from a
+    /// cert (that API is macOS-only), so we add both items then query identities and match by cert DER.
+    private static func importIdentity(cert: SecCertificate, key: SecKey) throws -> SecIdentity {
         let addKey: [String: Any] = [
             kSecClass as String: kSecClassKey,
             kSecValueRef as String: key,
-            kSecAttrApplicationTag as String: tag,
         ]
         let keyStatus = SecItemAdd(addKey as CFDictionary, nil)
         guard keyStatus == errSecSuccess || keyStatus == errSecDuplicateItem else {
@@ -91,9 +119,6 @@ enum LutronCrypto {
             throw LutronError.credentialError("keychain cert add \(certStatus)")
         }
 
-        // On iOS a SecIdentity can't be minted directly from a cert (that API is macOS-only); the
-        // keychain forms it automatically once a matching private key + certificate are both present.
-        // Query all identities and pick the one whose certificate DER matches ours.
         let wantedDER = SecCertificateCopyData(cert) as Data
         let query: [String: Any] = [
             kSecClass as String: kSecClassIdentity,

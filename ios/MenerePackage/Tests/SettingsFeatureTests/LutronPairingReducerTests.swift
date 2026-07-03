@@ -5,20 +5,19 @@ import XCTest
 
 @testable import SettingsFeature
 
-/// `TestStore` walk of the Lutron pairing state machine (P15-C1): discover → single-bridge
-/// auto-advance → 30s button-press poll (buttonNotPressed retries) → credential minted → config saved.
-/// Mirrors `HuePairingReducerTests`; there is no binding step (shades are driven by zone id, no
-/// scenes/sensors to bind).
+/// `TestStore` walk of the Lutron pairing state machine (P15-C1, corrected): discover → single-bridge
+/// auto-advance → ONE long-lived LAP button-press handshake → credential minted → config saved. The
+/// old poll-loop (reconnect-per-second) was replaced: the transport now holds one socket open for the
+/// whole window (a reconnect drops the button-press status push), and the reducer distinguishes
+/// "button not pressed in time" from "couldn't reach the bridge" for failure surfacing.
 @MainActor
 final class LutronPairingReducerTests: XCTestCase {
     private let bridge = DiscoveredLutronBridge(id: "Caseta-1", ip: "192.168.1.50", name: "Caseta Smart Bridge")
 
-    /// `pair` throws buttonNotPressed twice, then mints the credential on the third attempt.
-    private actor Attempts { var n = 0; func bump() -> Int { n += 1; return n } }
-
+    /// Single pairing call succeeds → paired → saving → saved → done, and the config carries the minted
+    /// PEMs + bridge identity with no mock flag.
     func testHappyPathPairsAndSaves() async {
         let clock = TestClock()
-        let attempts = Attempts()
         let savedBox = LockIsolated<LutronConfig?>(nil)
         let bridge = self.bridge
         let result = LutronPairingResult(
@@ -31,10 +30,7 @@ final class LutronPairingReducerTests: XCTestCase {
         } withDependencies: {
             $0.continuousClock = clock
             $0.lutron.discoverBridges = { [bridge] }
-            $0.lutron.pair = { _ in
-                if await attempts.bump() <= 2 { throw LutronError.buttonNotPressed }
-                return result
-            }
+            $0.lutron.pair = { _ in result }
             $0.persistence.saveLutronConfig = { _, config in savedBox.setValue(config) }
         }
 
@@ -45,21 +41,12 @@ final class LutronPairingReducerTests: XCTestCase {
             $0.step = .linkButton
             $0.countdown = 30
         }
-        // First poll → buttonNotPressed → tick (29), 1s sleep, poll again → still not pressed (28).
-        await store.receive(\.pollPair)
-        await store.receive(\.pollTick) { $0.countdown = 29 }
-        await clock.advance(by: .seconds(1))
-        await store.receive(\.pollPair)
-        await store.receive(\.pollTick) { $0.countdown = 28 }
-        await clock.advance(by: .seconds(1))
-        // Third poll succeeds → paired → saving → saved → done.
-        await store.receive(\.pollPair)
+        await store.receive(\.startPairing)
         await store.receive(\.paired) { $0.step = .saving }
         await store.receive(\.saved) { $0.step = .done }
         await clock.advance(by: .seconds(1.2))
         await store.receive(\.delegate)
 
-        // The saved config carries the minted PEMs + bridge identity, no mock flag.
         let saved = savedBox.value
         XCTAssertEqual(saved?.bridgeIP, "192.168.1.50")
         XCTAssertEqual(saved?.bridgeId, "bridge-abc")
@@ -69,16 +56,18 @@ final class LutronPairingReducerTests: XCTestCase {
         XCTAssertNil(saved?.mock)
     }
 
-    func testCountdownExpiryFails() async {
+    /// The socket connected but the button was never pressed (transport throws `buttonNotPressed`) →
+    /// the flow fails with the "we reached your bridge but didn't see the press" guidance.
+    func testButtonWindowExpiresSurfacesButtonMessage() async {
         let clock = TestClock()
         let bridge = self.bridge
 
-        let store = TestStore(initialState: LutronPairingReducer.State(hid: "hid-1", existingConfig: nil)) {
+        let store = TestStore(initialState: LutronPairingReducer.State(hid: "hid-1")) {
             LutronPairingReducer()
         } withDependencies: {
             $0.continuousClock = clock
             $0.lutron.discoverBridges = { [bridge] }
-            $0.lutron.pair = { _ in throw LutronError.buttonNotPressed }   // never pressed
+            $0.lutron.pair = { _ in throw LutronError.buttonNotPressed }
         }
 
         await store.send(.task)
@@ -88,17 +77,56 @@ final class LutronPairingReducerTests: XCTestCase {
             $0.step = .linkButton
             $0.countdown = 30
         }
-        // Walk the countdown to 0 (poll → tick, sleep, repeat). 30 ticks → failure at 0.
-        await store.receive(\.pollPair)
-        for n in stride(from: 29, through: 1, by: -1) {
-            await store.receive(\.pollTick) { $0.countdown = n }
-            await clock.advance(by: .seconds(1))
-            await store.receive(\.pollPair)
-        }
-        await store.receive(\.pollTick) {
-            $0.countdown = 0
+        await store.receive(\.startPairing)
+        await store.receive(\.pairWindowExpired) {
             $0.step = .failed
-            $0.errorMessage = "Didn't catch the button in time. Press it again and retry."
+            $0.errorMessage = "We reached your bridge, but didn't see the button press in time. Press the small black button on the back of the bridge, then tap Try again."
         }
+    }
+
+    /// A connect/TLS failure (any non-`buttonNotPressed` error) surfaces the distinct "couldn't reach
+    /// your bridge" message — so Michael can tell a socket problem apart from a missed button.
+    func testConnectFailureSurfacesSocketMessage() async {
+        let clock = TestClock()
+        let bridge = self.bridge
+
+        let store = TestStore(initialState: LutronPairingReducer.State(hid: "hid-1")) {
+            LutronPairingReducer()
+        } withDependencies: {
+            $0.continuousClock = clock
+            $0.lutron.discoverBridges = { [bridge] }
+            $0.lutron.pair = { _ in throw LutronError.networkError("tls handshake failed") }
+        }
+
+        await store.send(.task)
+        await store.receive(\.bridgesDiscovered) { $0.bridges = [bridge] }
+        await store.receive(\.bridgeSelected) {
+            $0.selectedBridge = bridge
+            $0.step = .linkButton
+            $0.countdown = 30
+        }
+        await store.receive(\.startPairing)
+        await store.receive(\.pairingFailed) {
+            $0.step = .failed
+            $0.errorMessage = "Couldn't reach your Lutron bridge to pair. Make sure your phone is on your home Wi-Fi (not cellular or guest), then tap Try again."
+        }
+    }
+
+    /// The visual countdown decrements once per second and clamps at 0.
+    func testCountdownTickDecrementsAndClamps() async {
+        let store = TestStore(initialState: {
+            var s = LutronPairingReducer.State(hid: "hid-1")
+            s.step = .linkButton
+            s.countdown = 2
+            return s
+        }()) {
+            LutronPairingReducer()
+        } withDependencies: {
+            $0.continuousClock = TestClock()
+        }
+
+        await store.send(.countdownTick) { $0.countdown = 1 }
+        await store.send(.countdownTick) { $0.countdown = 0 }
+        await store.send(.countdownTick)   // clamped at 0 — no state change
     }
 }

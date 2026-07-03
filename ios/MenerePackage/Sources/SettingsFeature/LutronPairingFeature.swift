@@ -48,9 +48,14 @@ public struct LutronPairingReducer {
         case task
         case bridgesDiscovered([DiscoveredLutronBridge])
         case bridgeSelected(DiscoveredLutronBridge)
-        case pollPair
-        case pollTick
+        /// Kick off the single, long-lived LAP pairing handshake (held open for the whole button window).
+        case startPairing
+        /// One second elapsed — purely the visual countdown (the handshake bounds the real window).
+        case countdownTick
         case paired(LutronPairingResult)
+        /// The socket connected fine but the button wasn't pressed within the window (distinct from a
+        /// connect/TLS failure) — surfaced with "we reached your bridge but didn't see the press".
+        case pairWindowExpired
         case pairingFailed(String)
         case retryTapped
         case saved(LutronConfig)
@@ -68,7 +73,11 @@ public struct LutronPairingReducer {
     @Dependency(\.persistence) var persistence
     @Dependency(\.continuousClock) var clock
 
-    private enum CancelID { case pairing }
+    private enum CancelID { case pairing, countdown }
+
+    /// The physical-button window shown as the countdown; the transport holds the pairing socket open
+    /// for this long waiting for the press.
+    static let buttonWindowSeconds = 30
 
     public init() {}
 
@@ -103,36 +112,47 @@ public struct LutronPairingReducer {
             case let .bridgeSelected(bridge):
                 state.selectedBridge = bridge
                 state.step = .linkButton
-                state.countdown = 30
+                state.countdown = Self.buttonWindowSeconds
                 state.errorMessage = nil
-                return .send(.pollPair)
+                // ONE long-lived pairing handshake (held open for the whole window) plus a purely visual
+                // countdown. Reconnecting per second — as the old poll loop did — would tear down the very
+                // socket the bridge pushes the button-press status on, so the press was never seen.
+                return .merge(
+                    .send(.startPairing),
+                    .run { send in
+                        for _ in 0..<Self.buttonWindowSeconds {
+                            try await clock.sleep(for: .seconds(1))
+                            await send(.countdownTick)
+                        }
+                    }
+                    .cancellable(id: CancelID.countdown, cancelInFlight: true)
+                )
 
-            case .pollPair:
+            case .startPairing:
                 guard let ip = state.selectedBridge?.ip else { return .none }
                 return .run { send in
-                    do {
-                        let result = try await lutron.pair(ip)
-                        await send(.paired(result))
-                    } catch let error as LutronError where error == .buttonNotPressed {
-                        await send(.pollTick)
-                    } catch {
-                        await send(.pairingFailed("Couldn't talk to the bridge. Let's try again."))
+                    let result = try await lutron.pair(ip)
+                    await send(.paired(result))
+                } catch: { error, send in
+                    if let error = error as? LutronError, error == .buttonNotPressed {
+                        // Connected fine, but the window elapsed with no press.
+                        await send(.pairWindowExpired)
+                    } else {
+                        // Couldn't establish the pairing socket (unreachable / TLS / credential).
+                        await send(.pairingFailed("Couldn't reach your Lutron bridge to pair. Make sure your phone is on your home Wi-Fi (not cellular or guest), then tap Try again."))
                     }
                 }
                 .cancellable(id: CancelID.pairing, cancelInFlight: true)
 
-            case .pollTick:
+            case .countdownTick:
+                guard state.step == .linkButton, state.countdown > 0 else { return .none }
                 state.countdown -= 1
-                guard state.countdown > 0 else {
-                    state.step = .failed
-                    state.errorMessage = "Didn't catch the button in time. Press it again and retry."
-                    return .none
-                }
-                return .run { send in
-                    try await clock.sleep(for: .seconds(1))
-                    await send(.pollPair)
-                }
-                .cancellable(id: CancelID.pairing, cancelInFlight: true)
+                return .none
+
+            case .pairWindowExpired:
+                state.step = .failed
+                state.errorMessage = "We reached your bridge, but didn't see the button press in time. Press the small black button on the back of the bridge, then tap Try again."
+                return .merge(.cancel(id: CancelID.pairing), .cancel(id: CancelID.countdown))
 
             case let .paired(result):
                 guard let bridge = state.selectedBridge else { return .none }
@@ -147,12 +167,15 @@ public struct LutronPairingReducer {
                     areaNames: state.existingConfig?.areaNames,
                     mock: nil
                 )
-                return .run { [hid = state.hid] send in
-                    try await persistence.saveLutronConfig(hid, config)
-                    await send(.saved(config))
-                } catch: { _, send in
-                    await send(.pairingFailed("Couldn't save your setup. Let's try again."))
-                }
+                return .merge(
+                    .cancel(id: CancelID.countdown),
+                    .run { [hid = state.hid] send in
+                        try await persistence.saveLutronConfig(hid, config)
+                        await send(.saved(config))
+                    } catch: { _, send in
+                        await send(.pairingFailed("Couldn't save your setup. Let's try again."))
+                    }
+                )
 
             case let .saved(config):
                 state.step = .done
@@ -164,7 +187,7 @@ public struct LutronPairingReducer {
             case let .pairingFailed(message):
                 state.step = .failed
                 state.errorMessage = message
-                return .cancel(id: CancelID.pairing)
+                return .merge(.cancel(id: CancelID.pairing), .cancel(id: CancelID.countdown))
 
             case .retryTapped:
                 return .send(.task)
@@ -172,6 +195,7 @@ public struct LutronPairingReducer {
             case .cancelTapped:
                 return .merge(
                     .cancel(id: CancelID.pairing),
+                    .cancel(id: CancelID.countdown),
                     .send(.delegate(.cancelled))
                 )
 

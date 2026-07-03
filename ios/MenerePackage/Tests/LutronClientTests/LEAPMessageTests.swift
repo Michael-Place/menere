@@ -120,4 +120,51 @@ struct LEAPMessageTests {
         let frame = try #require(LEAPResponse.frames(from: Data(fixture.utf8)).first)
         #expect(frame.isSuccessful == false)
     }
+
+    // MARK: LAP pairing wire shapes (P15-C1 fix)
+
+    /// The CSR `/pair` request matches pylutron-caseta / lutron-leap-js and is `\r\n`-framed.
+    @Test func csrRequestFrameShapeAndFraming() throws {
+        var data = try LutronConnection.csrRequestFrame(csrPEM: "-----BEGIN CERTIFICATE REQUEST-----\nAAA\n-----END CERTIFICATE REQUEST-----\n")
+        #expect(data.suffix(2) == Data([0x0d, 0x0a]))   // CRLF framing
+        data.removeLast(2)
+        let obj = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let header = try #require(obj["Header"] as? [String: Any])
+        #expect(header["RequestType"] as? String == "Execute")
+        #expect(header["Url"] as? String == "/pair")
+        #expect(header["ClientTag"] as? String == "get-cert")
+        let body = try #require(obj["Body"] as? [String: Any])
+        #expect(body["CommandType"] as? String == "CSR")
+        let params = try #require(body["Parameters"] as? [String: Any])
+        #expect((params["CSR"] as? String)?.contains("CERTIFICATE REQUEST") == true)
+        #expect(params["DeviceUID"] as? String == "000000000000")
+        #expect(params["Role"] as? String == "Admin")
+    }
+
+    /// The button-press status push (`Body.Status.Permissions` contains `PhysicalAccess`) is detected;
+    /// an ordinary status frame is not.
+    @Test func physicalAccessStatusIsDetected() throws {
+        let press = """
+        {"Header":{"StatusCode":"200 OK","ContentType":"status;.../..."},"Body":{"Status":{"Permissions":["Public","PhysicalAccess"]}}}
+        """
+        let pressFrame = try #require(LEAPResponse.frames(from: Data(press.utf8)).first)
+        #expect(pressFrame.indicatesPhysicalAccess)
+
+        let noPress = """
+        {"Header":{"StatusCode":"200 OK","ContentType":"status;.../..."},"Body":{"Status":{"Permissions":["Public"]}}}
+        """
+        let noPressFrame = try #require(LEAPResponse.frames(from: Data(noPress.utf8)).first)
+        #expect(noPressFrame.indicatesPhysicalAccess == false)
+    }
+
+    /// The signed-cert response is parsed into the client cert + root CA.
+    @Test func signingResultParsed() throws {
+        let fixture = """
+        {"Header":{"StatusCode":"200 OK","ClientTag":"get-cert"},"Body":{"SigningResult":{"Certificate":"-CERT-","RootCertificate":"-CA-"}}}
+        """
+        let frame = try #require(LEAPResponse.frames(from: Data(fixture.utf8)).first)
+        let signing = try #require(frame.signingResult)
+        #expect(signing.certificate == "-CERT-")
+        #expect(signing.rootCertificate == "-CA-")
+    }
 }
