@@ -1,0 +1,228 @@
+import ComposableArchitecture
+import FamilyDomain
+import Foundation
+import MenereUI
+import PersistenceClient
+import SwiftUI
+import UserDomain
+
+/// Money — expense tracking + budgets (P13, phase 1: ingestion-ladder rungs 1+2).
+///
+/// A *lens* on money, not a pipeline: the Family Brain already extracts vendor/amount/docDate from
+/// receipts, so phase 1 promotes those into expenses ("New from the Brain" inbox) and adds a manual
+/// quick-add. Rolls up a month at a time with category bars vs optional budgets.
+@Reducer
+public struct MoneyReducer {
+    @ObservableState
+    public struct State: Equatable {
+        var expenses: [Expense] = []
+        var documents: [FamilyDomain.Document] = []
+        var budgets: BudgetConfig = .init()
+        /// First-of-month anchor the screen shows / navigates. Defaults to the current month.
+        var monthAnchor: Date = Date()
+        var isLoading = false
+        var currentUid: String?
+
+        @Presents var addExpense: ExpenseFormReducer.State?
+        @Presents var budgetEditor: BudgetEditorReducer.State?
+
+        public init(monthAnchor: Date = Date()) {
+            self.monthAnchor = monthAnchor
+        }
+
+        // MARK: Derived
+
+        /// The rolled-up summary for the anchored month (spend + budgets by category).
+        var summary: MoneyRollup.MonthSummary {
+            MoneyRollup.summary(expenses: expenses, budgets: budgets, month: monthAnchor)
+        }
+
+        /// This month's expenses, newest first — the deletable ledger below the bars.
+        var monthExpenses: [Expense] {
+            expenses
+                .filter { MoneyRollup.isInMonth($0.date, of: monthAnchor) }
+                .sorted { $0.date > $1.date }
+        }
+
+        /// "New from the Brain": documents carrying an amount that aren't yet an expense and haven't
+        /// been dismissed. Matches on `documentId`, so filing one makes it drop out of the inbox.
+        var inboxDocuments: [FamilyDomain.Document] {
+            let linked = Set(expenses.compactMap(\.documentId))
+            let dismissed = Set(budgets.dismissedDocumentIds)
+            return documents
+                .filter { doc in
+                    guard let amount = doc.amount, amount > 0 else { return false }
+                    return !linked.contains(doc.id) && !dismissed.contains(doc.id)
+                }
+                .sorted { $0.createdAt > $1.createdAt }
+        }
+    }
+
+    public enum Action: Equatable, BindableAction {
+        case task
+        case expensesLoaded([Expense])
+        case documentsLoaded([FamilyDomain.Document])
+        case budgetsLoaded(BudgetConfig?)
+        case previousMonthTapped
+        case nextMonthTapped
+        case addTapped
+        case editBudgetsTapped
+        case fileFromBrainTapped(FamilyDomain.Document)
+        case dismissBrainDocument(FamilyDomain.Document)
+        case deleteExpenses(IndexSet)
+        case addExpense(PresentationAction<ExpenseFormReducer.Action>)
+        case budgetEditor(PresentationAction<BudgetEditorReducer.Action>)
+        case binding(BindingAction<State>)
+    }
+
+    public init() {}
+
+    @Dependency(\.persistence) var persistence
+    @Dependency(\.uuid) var uuid
+    @Dependency(\.date) var date
+
+    private func hid() -> String? {
+        @Shared(.user) var user
+        return user?.householdId
+    }
+
+    private func uid() -> String? {
+        @Shared(.user) var user
+        return user?.id
+    }
+
+    public var body: some ReducerOf<Self> {
+        BindingReducer()
+        Reduce { state, action in
+            switch action {
+            case .task:
+                state.currentUid = uid()
+                guard let hid = hid() else { return .none }
+                state.isLoading = true
+                return .run { send in
+                    async let expenses = persistence.expenses(hid)
+                    async let documents = persistence.documents(hid)
+                    async let budgets = persistence.budgetConfig(hid)
+                    await send(.expensesLoaded((try? await expenses) ?? []))
+                    await send(.documentsLoaded((try? await documents) ?? []))
+                    await send(.budgetsLoaded(try? await budgets))
+                }
+
+            case let .expensesLoaded(expenses):
+                state.isLoading = false
+                state.expenses = expenses
+                return .none
+
+            case let .documentsLoaded(documents):
+                state.documents = documents
+                return .none
+
+            case let .budgetsLoaded(budgets):
+                if let budgets { state.budgets = budgets }
+                return .none
+
+            case .previousMonthTapped:
+                state.monthAnchor = MoneyRollup.shiftMonth(state.monthAnchor, by: -1)
+                return .none
+
+            case .nextMonthTapped:
+                state.monthAnchor = MoneyRollup.shiftMonth(state.monthAnchor, by: 1)
+                return .none
+
+            case .addTapped:
+                state.addExpense = ExpenseFormReducer.State(
+                    date: date.now,
+                    memberId: state.currentUid
+                )
+                return .none
+
+            case .editBudgetsTapped:
+                state.budgetEditor = BudgetEditorReducer.State(config: state.budgets)
+                return .none
+
+            case let .fileFromBrainTapped(doc):
+                guard let hid = hid() else { return .none }
+                let expense = Expense.promoting(document: doc, id: uuid().uuidString, now: date.now)
+                state.expenses.append(expense)
+                return .run { _ in
+                    try await persistence.saveExpense(hid, expense)
+                }
+
+            case let .dismissBrainDocument(doc):
+                guard let hid = hid() else { return .none }
+                guard !state.budgets.dismissedDocumentIds.contains(doc.id) else { return .none }
+                state.budgets.dismissedDocumentIds.append(doc.id)
+                let config = state.budgets
+                return .run { _ in
+                    try await persistence.saveBudgetConfig(hid, config)
+                }
+
+            case let .deleteExpenses(offsets):
+                guard let hid = hid() else { return .none }
+                let monthExpenses = state.monthExpenses
+                let toDelete = offsets.map { monthExpenses[$0] }
+                let deleteIDs = Set(toDelete.map(\.id))
+                state.expenses.removeAll { deleteIDs.contains($0.id) }
+                return .run { _ in
+                    for expense in toDelete { try await persistence.deleteExpense(hid, expense.id) }
+                }
+
+            case let .addExpense(.presented(.delegate(.save(expense)))):
+                guard let hid = hid() else { state.addExpense = nil; return .none }
+                state.addExpense = nil
+                state.expenses.append(expense)
+                return .run { _ in
+                    try await persistence.saveExpense(hid, expense)
+                }
+
+            case .addExpense(.presented(.delegate(.cancel))):
+                state.addExpense = nil
+                return .none
+
+            case .addExpense:
+                return .none
+
+            case let .budgetEditor(.presented(.delegate(.save(config)))):
+                guard let hid = hid() else { state.budgetEditor = nil; return .none }
+                state.budgetEditor = nil
+                state.budgets = config
+                return .run { _ in
+                    try await persistence.saveBudgetConfig(hid, config)
+                }
+
+            case .budgetEditor(.presented(.delegate(.cancel))):
+                state.budgetEditor = nil
+                return .none
+
+            case .budgetEditor:
+                return .none
+
+            case .binding:
+                return .none
+            }
+        }
+        .ifLet(\.$addExpense, action: \.addExpense) {
+            ExpenseFormReducer()
+        }
+        .ifLet(\.$budgetEditor, action: \.budgetEditor) {
+            BudgetEditorReducer()
+        }
+    }
+}
+
+public extension ExpenseCategory {
+    /// Family-palette tint for a category (kept in the UI layer so `FamilyDomain` stays UI-free,
+    /// mirroring `DocumentType`'s tint mapping in DocsFeature).
+    var tint: Color {
+        switch self {
+        case .groceries: .bacanGreen
+        case .dining: .terracotta
+        case .kids: .sky
+        case .house: .inkSoft
+        case .garden: .sage
+        case .pets: .marigold
+        case .fun: .marigold
+        case .other: .inkSoft
+        }
+    }
+}

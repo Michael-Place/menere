@@ -3,6 +3,7 @@ import ComposableArchitecture
 import DocsFeature
 import FamilyDomain
 import MenereUI
+import MoneyFeature
 import PersistenceClient
 import ScanFeature
 import SwiftUI
@@ -29,6 +30,10 @@ public struct ListsReducer {
         // the DocsFeature library. State lives here, mirroring the Cellar wiring.
         @Presents var docs: DocsReducer.State?
 
+        // Money (expenses & budgets) is the third pinned row, under Family Brain; pushing it presents
+        // the MoneyFeature screen. State lives here, mirroring the Cellar / Docs wiring.
+        @Presents var money: MoneyReducer.State?
+
         public init() {}
     }
 
@@ -45,6 +50,8 @@ public struct ListsReducer {
         case cellar(PresentationAction<CellarReducer.Action>)
         case docsTapped
         case docs(PresentationAction<DocsReducer.Action>)
+        case moneyTapped
+        case money(PresentationAction<MoneyReducer.Action>)
         case scan(ScanReducer.Action)
         case scanRequested
         case scanDismissed
@@ -134,6 +141,13 @@ public struct ListsReducer {
             case .docs:
                 return .none
 
+            case .moneyTapped:
+                state.money = MoneyReducer.State()
+                return .none
+
+            case .money:
+                return .none
+
             case .scanDismissed:
                 state.showScan = false
                 // Refresh the cellar so a just-scanned bottle appears.
@@ -154,6 +168,9 @@ public struct ListsReducer {
         }
         .ifLet(\.$docs, action: \.docs) {
             DocsReducer()
+        }
+        .ifLet(\.$money, action: \.money) {
+            MoneyReducer()
         }
     }
 }
@@ -208,6 +225,29 @@ public struct ListsView: View {
                     }
                 }
                 .accessibilityIdentifier("docs-row")
+
+                // Sibling pinned row: Money — expenses & budgets.
+                Button {
+                    store.send(.moneyTapped)
+                } label: {
+                    HStack {
+                        Label {
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text("Money").foregroundStyle(Color.ink)
+                                Text("Spending & budgets")
+                                    .font(.caption)
+                                    .foregroundStyle(Color.inkSoft)
+                            }
+                        } icon: {
+                            Image(systemName: "dollarsign.circle").foregroundStyle(Color.sage)
+                        }
+                        Spacer()
+                        Image(systemName: "chevron.right")
+                            .font(.footnote.weight(.semibold))
+                            .foregroundStyle(.tertiary)
+                    }
+                }
+                .accessibilityIdentifier("money-row")
             }
             .listRowBackground(Color.familySurface)
 
@@ -275,6 +315,11 @@ public struct ListsView: View {
             item: $store.scope(state: \.docs, action: \.docs)
         ) { docsStore in
             DocsLibraryView(store: docsStore)
+        }
+        .navigationDestination(
+            item: $store.scope(state: \.money, action: \.money)
+        ) { moneyStore in
+            MoneyView(store: moneyStore)
         }
         .fullScreenCover(
             isPresented: Binding(

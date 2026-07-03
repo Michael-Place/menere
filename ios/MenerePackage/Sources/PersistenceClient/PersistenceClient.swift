@@ -158,6 +158,20 @@ public struct PersistenceClient: Sendable {
     /// disappears.
     public var deleteHubspaceConfig: @Sendable (_ hid: String) async throws -> Void
 
+    // MARK: Money — expenses + budgets (P13)
+    /// All expenses in a household at `households/{hid}/expenses` (order not guaranteed; callers sort
+    /// newest-first). Decode-safe per-doc.
+    public var expenses: @Sendable (_ hid: String) async throws -> [Expense]
+    public var saveExpense: @Sendable (_ hid: String, _ expense: Expense) async throws -> Void
+    public var deleteExpense: @Sendable (_ hid: String, _ expenseID: String) async throws -> Void
+    /// The household's optional budget config at `households/{hid}/config/budgets`, or nil when the
+    /// doc is absent (no budgets set). Decode-safe (an empty `{}` doc still resolves) — the same
+    /// cheap-gate pattern as the smart-home config docs.
+    public var budgetConfig: @Sendable (_ hid: String) async throws -> BudgetConfig?
+    /// Full-document write of the budget config. Not a merge — the whole `config/budgets` doc is
+    /// replaced, mirroring `saveHueConfig` et al., so a cleared limit actually clears.
+    public var saveBudgetConfig: @Sendable (_ hid: String, _ config: BudgetConfig) async throws -> Void
+
     // MARK: Activity feed
     /// Recent activity, newest first (capped at 50).
     public var activity: @Sendable (_ hid: String) async throws -> [ActivityItem]
@@ -489,6 +503,29 @@ extension PersistenceClient: DependencyKey {
             },
             deleteHubspaceConfig: { hid in
                 try await households().document(hid).collection("config").document("hubspace").delete()
+            },
+            expenses: { hid in
+                let snapshot = try await households().document(hid).collection("expenses").getDocuments()
+                return try snapshot.documents.map { try Firestore.Decoder().decode(Expense.self, from: $0.data()) }
+            },
+            saveExpense: { hid, expense in
+                try await households().document(hid).collection("expenses").document(expense.id).setData(
+                    Firestore.Encoder().encode(expense), merge: true
+                )
+            },
+            deleteExpense: { hid, expenseID in
+                try await households().document(hid).collection("expenses").document(expenseID).delete()
+            },
+            budgetConfig: { hid in
+                let s = try await households().document(hid).collection("config").document("budgets").getDocument()
+                guard let d = s.data() else { return nil }
+                return try Firestore.Decoder().decode(BudgetConfig.self, from: d)
+            },
+            saveBudgetConfig: { hid, config in
+                // Full-doc replace (merge: false) — same rationale as saveHueConfig et al.
+                try await households().document(hid).collection("config").document("budgets").setData(
+                    Firestore.Encoder().encode(config)
+                )
             },
             activity: { hid in
                 let snapshot = try await households().document(hid).collection("activity")
