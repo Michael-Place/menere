@@ -148,8 +148,26 @@ Today/dashboard tab (the "The house" card + House control screen). Vision:
   (House care section, plant roster, House control, etc.). This scales as more
   sections land.
 
-### P17 — Time-aware Today dashboard (the "rolling day")
-The dashboard should reflect what's AHEAD, not the whole calendar day:
+### P17 — Today dashboard: time-aware AND actionable (a cockpit, not a bulletin board)
+Michael's two dashboard critiques (2026-07-03): (a) it's not time-aware (shows the
+whole day incl. past items), and (b) **"almost nothing on the dashboard is
+actionable, it's read-only."** Both = make Today a LIVE, INTERACTIVE surface.
+
+**Actionable pass — every card should let you DO, not just read:**
+- **Calendar events** → tap a schedule row to open/edit it; inline quick actions
+  (reschedule, mark done/attended, "add to Apple calendar" if not synced). Today's
+  schedule is currently a dead list.
+- **Family cards** → tap a member → their day / profile (currently inert).
+- **Briefing highlights** → make the suggestions tappable (the assistant already
+  offers these verbally — "want me to pull up the registration doc?"); e.g. a
+  highlight mentioning a doc opens it, a dinner suggestion opens the meal plan.
+- **Needs attention (docs)** → inline "Add to calendar" / open the doc, not just a
+  bounce to the Brain.
+- **Dinner** → tap to change/plan inline (partly there via Plan dinner).
+- Keep the good inline actions that already exist (chore sticker-slap, care
+  mark-done, house rituals) and extend that pattern everywhere.
+
+**Time-aware pass — the dashboard reflects what's AHEAD, not the whole day:**
 - **Past calendar events drop off** today's schedule once their endDate < now (or
   move to a de-emphasized "earlier today" collapse). The assistant already reasons
   this way ("café con Mariana at 11am — already passed"); the cards should too.
