@@ -20,6 +20,7 @@ const { extractEventsFromText } = require("./eventExtract");
 const { generateDailyBriefing } = require("./briefingGenerate");
 const { processDocument } = require("./docProcess");
 const { identifyPlant } = require("./plantIdentify");
+const { runAgentTurn } = require("./agentTurn");
 const { notifyHousehold, memberName } = require("./notifications");
 const { awardChoreXP, reverseChoreXP } = require("./choreXP");
 
@@ -243,6 +244,40 @@ exports.identifyPlant = onCall(
       return await identifyPlant({ imageBase64, mediaType, apiKey: ANTHROPIC_API_KEY.value() });
     } catch (err) {
       throw new HttpsError("internal", `Plant identification failed: ${err.message}`);
+    }
+  }
+);
+
+/**
+ * `agentTurn` is a v2 HTTPS callable (us-central1) — the dumb model proxy for the P14 on-phone
+ * agent. Input `{ messages, tools, system }` (Anthropic Messages-API shapes, built by the client's
+ * AgentLoop) → ONE `claude-sonnet-5` call → `{ content, stopReason }` (raw content blocks +
+ * stop_reason). NO family logic runs here: tools live on the phone, the client runs the loop, this
+ * only forwards a single model call. Auth-required; logs only the stop reason + tool NAMES (never
+ * arguments). Reuses the existing ANTHROPIC_API_KEY secret.
+ */
+exports.agentTurn = onCall(
+  { timeoutSeconds: 60, memory: "512MiB", secrets: [ANTHROPIC_API_KEY] },
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError("unauthenticated", "You must be signed in.");
+    }
+    const data = request.data || {};
+    const messages = Array.isArray(data.messages) ? data.messages : null;
+    if (!messages || messages.length === 0) {
+      throw new HttpsError("invalid-argument", "messages is required.");
+    }
+    const system = typeof data.system === "string" ? data.system : undefined;
+    const tools = Array.isArray(data.tools) ? data.tools : undefined;
+    try {
+      return await runAgentTurn({
+        apiKey: ANTHROPIC_API_KEY.value(),
+        system,
+        messages,
+        tools,
+      });
+    } catch (err) {
+      throw new HttpsError("internal", `Agent turn failed: ${err.message}`);
     }
   }
 );

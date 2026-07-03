@@ -43,6 +43,7 @@ let package = Package(
         .library(name: "JournalFeature", targets: ["JournalFeature"]),
         .library(name: "CellarFeature", targets: ["CellarFeature"]),
         .library(name: "MoneyFeature", targets: ["MoneyFeature"]),
+        .library(name: "AgentTools", targets: ["AgentTools"]),
     ],
     dependencies: [
         .package(url: "https://github.com/firebase/firebase-ios-sdk", .upToNextMajor(from: "11.13.0")),
@@ -414,6 +415,39 @@ let package = Package(
                 "FamilyDomain",
                 "PersistenceClient",
                 "UserDomain",
+            ]
+        ),
+        .target(
+            name: "AgentTools",
+            dependencies: [
+                .product(name: "Dependencies", package: "swift-dependencies"),
+                .product(name: "DependenciesMacros", package: "swift-dependencies"),
+                .product(name: "FirebaseFunctions", package: "firebase-ios-sdk"),
+                "FamilyDomain",
+                "PersistenceClient",
+                "HueClient",
+                "LutronClient",
+                "SonosClient",
+                "NestClient",
+                "HubspaceClient",
+                "MerossClient",
+                "HomeKitClient",
+            ]
+        ),
+        .testTarget(
+            name: "AgentToolsTests",
+            dependencies: [
+                .product(name: "Dependencies", package: "swift-dependencies"),
+                "AgentTools",
+                "FamilyDomain",
+                "PersistenceClient",
+                "HueClient",
+                "LutronClient",
+                "SonosClient",
+                "NestClient",
+                "HubspaceClient",
+                "MerossClient",
+                "HomeKitClient",
             ]
         ),
         .testTarget(
