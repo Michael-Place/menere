@@ -4,7 +4,7 @@ import HueClient
 import SonosClient
 import Testing
 
-@testable import TodayFeature
+@testable import HouseFeature
 
 /// Locks the P15-C2 Sonos verbs on `HouseReducer`: play/pause is optimistic on the group coordinator,
 /// and the volume slider REUSES the established ≥150ms trailing debounce (the same floor as the Hue and

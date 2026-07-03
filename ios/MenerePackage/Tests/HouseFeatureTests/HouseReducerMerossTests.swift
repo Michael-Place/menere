@@ -4,7 +4,7 @@ import HueClient
 import MerossClient
 import Testing
 
-@testable import TodayFeature
+@testable import HouseFeature
 
 /// Locks the P15-C5 Meross/Refoss garage verbs on `HouseReducer`, centered on the security contract:
 /// **opening REQUIRES a confirmation** (routes through `confirmingGarageOpen` → `confirmGarageOpen`),

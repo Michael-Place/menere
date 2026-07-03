@@ -1,5 +1,6 @@
 import ComposableArchitecture
 import FamilyDomain
+import HouseFeature
 import MenereUI
 import PersistenceClient
 import StorageClient
@@ -46,6 +47,10 @@ public struct ChoresReducer {
         var confettiTrigger = 0
         var confettiColor: MemberColor?
 
+        /// P16 — backing store for the hub's **Smart home** overview card: loads the same Hue/Lutron/
+        /// etc. data Today's "The house" card uses, so the card can seed the shared ``HouseView``.
+        public var houseCard = HouseCardReducer.State()
+
         public init() {}
 
         func stats(for memberID: String) -> MemberStats {
@@ -83,6 +88,7 @@ public struct ChoresReducer {
         case form(PresentationAction<ChoreFormReducer.Action>)
         case careForm(PresentationAction<CareItemFormReducer.Action>)
         case plantCapture(PresentationAction<PlantCaptureReducer.Action>)
+        case houseCard(HouseCardReducer.Action)
         case binding(BindingAction<State>)
     }
 
@@ -98,12 +104,15 @@ public struct ChoresReducer {
 
     public var body: some ReducerOf<Self> {
         BindingReducer()
+        Scope(state: \.houseCard, action: \.houseCard) { HouseCardReducer() }
         Reduce { state, action in
             switch action {
             case .task:
                 guard let (hid, _) = ctx() else { return .none }
                 state.isLoading = true
                 return .merge(
+                    // Smart-home card data (independent; hides itself when Hue isn't configured).
+                    .send(.houseCard(.load)),
                     .run { send in
                         @Dependency(\.persistence) var persistence
                         async let chores = persistence.chores(hid)
@@ -342,7 +351,7 @@ public struct ChoresReducer {
             case .plantCapture(.presented(.delegate(.didFinish))):
                 return .send(.task)
 
-            case .form, .careForm, .plantCapture, .binding:
+            case .form, .careForm, .plantCapture, .houseCard, .binding:
                 return .none
             }
         }

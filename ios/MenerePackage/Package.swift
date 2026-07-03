@@ -16,6 +16,7 @@ let package = Package(
         .library(name: "UserDomain", targets: ["UserDomain"]),
         .library(name: "WineDomain", targets: ["WineDomain"]),
         .library(name: "FamilyDomain", targets: ["FamilyDomain"]),
+        .library(name: "HouseFeature", targets: ["HouseFeature"]),
         .library(name: "TodayFeature", targets: ["TodayFeature"]),
         .library(name: "ListsFeature", targets: ["ListsFeature"]),
         .library(name: "DocsFeature", targets: ["DocsFeature"]),
@@ -134,6 +135,26 @@ let package = Package(
                 "HomeKitClient",
             ]
         ),
+        // Shared smart-home control surface (the `HouseView`/`HouseReducer` control screen + the
+        // reusable `HouseCardReducer` loader). Lives here so BOTH Today (glance card) and Home (hub
+        // Smart-home card) can reach it without a target cycle.
+        .target(
+            name: "HouseFeature",
+            dependencies: [
+                .product(name: "ComposableArchitecture", package: "swift-composable-architecture"),
+                "MenereUI",
+                "FamilyDomain",
+                "PersistenceClient",
+                "UserDomain",
+                "HueClient",
+                "LutronClient",
+                "SonosClient",
+                "NestClient",
+                "HubspaceClient",
+                "MerossClient",
+                "HomeKitClient",
+            ]
+        ),
         .target(
             name: "TodayFeature",
             dependencies: [
@@ -141,6 +162,7 @@ let package = Package(
                 .product(name: "FirebaseFunctions", package: "firebase-ios-sdk"),
                 "MenereUI",
                 "FamilyDomain",
+                "HouseFeature",
                 "PersistenceClient",
                 "UserDomain",
                 "DocsFeature",
@@ -207,6 +229,7 @@ let package = Package(
                 .product(name: "FirebaseFunctions", package: "firebase-ios-sdk"),
                 "MenereUI",
                 "FamilyDomain",
+                "HouseFeature",
                 "PersistenceClient",
                 "StorageClient",
                 "UserDomain",
@@ -596,10 +619,10 @@ let package = Package(
             ]
         ),
         .testTarget(
-            name: "TodayFeatureTests",
+            name: "HouseFeatureTests",
             dependencies: [
                 .product(name: "ComposableArchitecture", package: "swift-composable-architecture"),
-                "TodayFeature",
+                "HouseFeature",
                 "HueClient",
                 "LutronClient",
                 "SonosClient",

@@ -1,6 +1,7 @@
 import ComposableArchitecture
 import DocsFeature
 import FamilyDomain
+import HouseFeature
 import HueClient
 import MenereUI
 import SwiftUI

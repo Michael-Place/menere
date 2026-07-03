@@ -4,7 +4,7 @@ import HubspaceClient
 import HueClient
 import Testing
 
-@testable import TodayFeature
+@testable import HouseFeature
 
 /// Locks the P15-C4 Hubspace verbs on `HouseReducer`: opening an outlet with a timed run flips state
 /// optimistically and fires exactly one `setSpigot`; closing does likewise; a failed write silently

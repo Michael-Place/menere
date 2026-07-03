@@ -4,7 +4,7 @@ import HueClient
 import NestClient
 import Testing
 
-@testable import TodayFeature
+@testable import HouseFeature
 
 /// Locks the P15-C3 Nest verbs on `HouseReducer`: setpoint stepping is optimistic and the −/+ taps
 /// collapse to a SINGLE SDM command after ≥300ms of quiet (a coarser debounce than the LAN sliders,

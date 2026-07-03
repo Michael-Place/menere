@@ -5,7 +5,7 @@ import HueClient
 import MerossClient
 import Testing
 
-@testable import TodayFeature
+@testable import HouseFeature
 
 /// Locks the P15-C7 HomeKit verbs on `HouseReducer`: the **garage source precedence** (a HomeKit garage
 /// takes over the section from the Meross fallback; absent → Meross stays), the **lock UNLOCK confirmation

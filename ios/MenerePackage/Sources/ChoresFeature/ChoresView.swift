@@ -1,148 +1,239 @@
 import ComposableArchitecture
 import DocsFeature
 import FamilyDomain
+import HouseFeature
 import MenereUI
 import SwiftUI
 import UIKit
 import UserDomain
 
+/// The **Home** tab (P16) — a hub of glanceable OVERVIEW CARDS, each a leading tinted icon + title +
+/// one-line live status + chevron, tapping into a rich detail screen. This is an IA restructure: the
+/// detail screens hold the *exact* section content that used to stack in one long scroll, moved behind
+/// TCA navigation and bound to the SAME ``ChoresReducer`` store (no duplicated reducers). The headline
+/// fix is the **Smart home** card — the granular ``HouseView`` control screen (previously only reachable
+/// from Today's "The house" card) now lives here too.
 public struct ChoresView: View {
     @Bindable var store: StoreOf<ChoresReducer>
+    /// The signed-in member — resolves "my" level for the Chores card summary.
+    @Shared(.user) private var user
 
     public init(store: StoreOf<ChoresReducer>) {
         self.store = store
     }
 
-    /// Whole-house upkeep — the House-care section's rows (P9-C3 split zones out into their own).
-    private var houseItems: [CareItem] { store.careItems.filter { $0.kind == .house } }
-    /// Plant care items — the Plants section's rows.
-    private var plantItems: [CareItem] { store.careItems.filter { $0.kind == .plant } }
-    /// Yard & garden zones — the seasonal-landscaping section's rows (P9-C3).
-    private var zoneItems: [CareItem] { store.careItems.filter { $0.kind == .zone } }
-    /// Pets — Fajita, Sprinkle, and friends (P10).
-    private var petItems: [CareItem] { store.careItems.filter { $0.kind == .pet } }
+    /// Hub destinations pushed onto the tab's `NavigationStack` (Smart home is a direct
+    /// `NavigationLink` since it seeds ``HouseView`` from the loaded config).
+    enum Destination: Hashable {
+        case choresRewards, houseCare, plants, yard, pets, activity
+    }
 
     public var body: some View {
+        ScrollView {
+            VStack(spacing: 14) {
+                // Smart home — HIDDEN unless a Hue config doc exists (same gate as Today's card).
+                if store.houseCard.isConfigured, let config = store.houseCard.config {
+                    NavigationLink {
+                        HouseView(
+                            config: config, members: store.houseCard.members, bridges: store.houseCard.bridges,
+                            lutronConfig: store.houseCard.lutronConfig, sonosConfig: store.houseCard.sonosConfig,
+                            nestConfig: store.houseCard.nestConfig, hubspaceConfig: store.houseCard.hubspaceConfig,
+                            merossConfig: store.houseCard.merossConfig, homekitConfig: store.houseCard.homekitConfig
+                        )
+                    } label: {
+                        OverviewCard(icon: "house.fill", tint: .bacanGreen, title: "Smart home",
+                                     status: store.houseCard.statusLine)
+                    }
+                    .buttonStyle(.pressable)
+                    .accessibilityIdentifier("home-card-smart-home")
+                }
+
+                hubLink(.choresRewards, icon: "checklist", tint: .bacanGreen,
+                        title: "Chores & rewards", status: choresStatus, id: "chores-rewards")
+                hubLink(.houseCare, icon: "checkmark.seal.fill", tint: .marigold,
+                        title: "House care", status: houseCareStatus, id: "house-care")
+                hubLink(.plants, icon: "leaf.fill", tint: .bacanGreen,
+                        title: "Plants", status: plantsStatus, id: "plants")
+                hubLink(.yard, icon: "tree.fill", tint: .marigold,
+                        title: "Yard & garden", status: yardStatus, id: "yard")
+                hubLink(.pets, icon: "pawprint.fill", tint: .sky,
+                        title: "Pets", status: petsStatus, id: "pets")
+
+                if !store.activity.isEmpty {
+                    hubLink(.activity, icon: "clock.arrow.circlepath", tint: .sky,
+                            title: "Recent activity", status: activityStatus, id: "activity")
+                }
+            }
+            .padding(.horizontal)
+            .padding(.vertical, 12)
+        }
+        .scrollContentBackground(.hidden)
+        .background(Color.familyCanvas)
+        .navigationTitle("Home")
+        .navigationDestination(for: Destination.self) { destination in
+            switch destination {
+            case .choresRewards: ChoresRewardsDetailView(store: store)
+            case .houseCare: HouseCareDetailView(store: store)
+            case .plants: PlantsDetailView(store: store)
+            case .yard: YardDetailView(store: store)
+            case .pets: PetsDetailView(store: store)
+            case .activity: ActivityDetailView(store: store)
+            }
+        }
+        .overlay {
+            // A level-up that arrives while the hub is visible still celebrates here.
+            ConfettiBurst(color: confettiColor, trigger: store.confettiTrigger)
+                .ignoresSafeArea()
+        }
+        .task { store.send(.task) }
+        // Sheets + the reward alert live on the hub root so they present over whichever detail screen
+        // triggered them — one wiring, unchanged behavior.
+        .sheet(item: $store.scope(state: \.form, action: \.form)) { formStore in
+            ChoreFormView(store: formStore)
+        }
+        .sheet(item: $store.scope(state: \.careForm, action: \.careForm)) { formStore in
+            CareItemFormView(store: formStore)
+        }
+        .sheet(item: $store.scope(state: \.plantCapture, action: \.plantCapture)) { captureStore in
+            PlantCaptureView(store: captureStore)
+        }
+        .alert("New reward", isPresented: $store.showAddReward) {
+            TextField("What's the prize?", text: $store.newRewardTitle)
+            TextField("XP cost", value: $store.newRewardCost, format: .number)
+                .keyboardType(.numberPad)
+            Button("Cancel", role: .cancel) { store.showAddReward = false }
+            Button("Add") { store.send(.createReward) }
+        }
+    }
+
+    private func hubLink(_ destination: Destination, icon: String, tint: Color, title: String,
+                         status: String, id: String) -> some View {
+        NavigationLink(value: destination) {
+            OverviewCard(icon: icon, tint: tint, title: title, status: status)
+        }
+        .buttonStyle(.pressable)
+        .accessibilityIdentifier("home-card-\(id)")
+    }
+
+    // MARK: Overview-card status summaries (glanceable, one line each)
+
+    private func memberStats(for id: String) -> MemberStats {
+        store.stats.first { $0.memberID == id } ?? MemberStats(id: id, memberID: id)
+    }
+
+    private func firstName(_ full: String) -> String {
+        full.split(whereSeparator: { $0.isWhitespace }).first.map(String.init) ?? full
+    }
+
+    private var choresStatus: String {
+        let open = store.chores.filter { !$0.isCompleted }.count
+        guard open > 0 else { return "All clear" }
+        let base = "\(open) to do"
+        guard let uid = user?.id, let me = store.members.first(where: { $0.id == uid }) else { return base }
+        return "\(base) · \(firstName(me.name)) Lv \(memberStats(for: uid).level)"
+    }
+
+    private var houseCareStatus: String {
+        guard !store.careItems.isEmpty else { return "Nothing under care yet" }
+        switch CareItem.houseHealth(for: store.careItems) {
+        case .caughtUp: return HouseHealth.happyLine
+        case let .overdue(count, _, _): return "\(count) thing\(count == 1 ? "" : "s") overdue"
+        case let .dueThisWeek(count, _, _): return "\(count) due this week"
+        }
+    }
+
+    private var plantsStatus: String {
+        let plants = store.careItems.filter { $0.kind == .plant }
+        guard !plants.isEmpty else { return "No plants yet" }
+        let thirsty = plants.filter { ($0.soonestDueTask()?.daysUntilDue() ?? 1) <= 0 }.count
+        let base = "\(plants.count) plant\(plants.count == 1 ? "" : "s")"
+        return thirsty > 0 ? "\(base) · \(thirsty) thirsty" : base
+    }
+
+    private var yardStatus: String {
+        let soonest = store.careItems.filter { $0.kind == .zone }
+            .compactMap { zone -> (name: String, due: Date)? in
+                guard let due = zone.soonestDueTask()?.dueAt else { return nil }
+                return (zone.name, due)
+            }
+            .min { $0.due < $1.due }
+        guard let soonest else { return "Nothing scheduled" }
+        return "Next: \(soonest.name) · \(soonest.due.formatted(.dateTime.month(.abbreviated).day()))"
+    }
+
+    private var petsStatus: String {
+        let pets = store.careItems.filter { $0.kind == .pet }
+        guard !pets.isEmpty else { return "No pets yet" }
+        let names = pets.map(\.name).joined(separator: ", ")
+        let soonest = pets
+            .compactMap { pet -> (label: String, days: Int)? in
+                guard let task = pet.soonestDueTask(), let days = task.daysUntilDue(), days <= 30 else { return nil }
+                return ("\(pet.name) \(task.title.lowercased())", days)
+            }
+            .min { $0.days < $1.days }
+        guard let soonest else { return names }
+        return "\(names) · \(soonest.label) · \(soonest.days)d"
+    }
+
+    private var activityStatus: String {
+        store.activity.first?.text ?? "Nothing yet"
+    }
+
+    /// The confetti color for the most recent level-up (falls back to the brand green).
+    private var confettiColor: Color {
+        guard let mc = store.confettiColor else { return .bacanGreen }
+        let rgb = mc.rgb
+        return Color(red: rgb.red, green: rgb.green, blue: rgb.blue)
+    }
+}
+
+/// A single hub overview card: leading icon in a tinted circle, title, one-line live status, trailing
+/// chevron — on `.familySurface`, rounded type, `.pressable` via the wrapping `NavigationLink`.
+private struct OverviewCard: View {
+    let icon: String
+    let tint: Color
+    let title: String
+    let status: String
+
+    var body: some View {
+        HStack(spacing: 14) {
+            ZStack {
+                Circle().fill(tint.opacity(0.15))
+                Image(systemName: icon).font(.title3).foregroundStyle(tint)
+            }
+            .frame(width: 44, height: 44)
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title).familyTitle(.headline).foregroundStyle(Color.ink)
+                Text(status)
+                    .font(.system(.subheadline, design: .rounded))
+                    .foregroundStyle(Color.inkSoft)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 8)
+            Image(systemName: "chevron.right")
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(Color.inkSoft.opacity(0.5))
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity)
+        .background(
+            RoundedRectangle(cornerRadius: 18, style: .continuous).fill(Color.familySurface)
+        )
+        .contentShape(Rectangle())
+    }
+}
+
+// MARK: - Chores & rewards detail (Leaderboard · Chores · Rewards)
+
+/// The Chores-tab's XP world, moved behind the "Chores & rewards" hub card. Same store, same actions —
+/// chore complete (sticker-slap + server XP), rewards redemption, add chore/reward, and the level-up
+/// ``ConfettiBurst`` all preserved exactly.
+private struct ChoresRewardsDetailView: View {
+    @Bindable var store: StoreOf<ChoresReducer>
+
+    var body: some View {
         List {
-            Section("House care") {
-                // The health banner is kind-agnostic: it rolls up *all* care items (plants and yard
-                // zones flow in automatically), while the rows below show only whole-house upkeep.
-                if !store.careItems.isEmpty {
-                    HouseHealthBanner(health: CareItem.houseHealth(for: store.careItems))
-                }
-                if houseItems.isEmpty {
-                    if store.careSuggestionsDismissed {
-                        Text("Nothing under care yet — add the first thing you always forget.")
-                            .foregroundStyle(Color.inkSoft)
-                    } else {
-                        careSuggestionsCard
-                    }
-                } else {
-                    ForEach(houseItems) { item in
-                        CareRow(
-                            item: item,
-                            members: store.members,
-                            onEdit: { store.send(.editCareItemTapped(item)) },
-                            onMarkDone: { taskID in
-                                store.send(.markCareTaskDone(itemID: item.id, taskID: taskID))
-                            }
-                        )
-                    }
-                }
-                Button {
-                    store.send(.addCareItemTapped)
-                } label: {
-                    Label("Add a care item", systemImage: "plus")
-                        .appearBounce()
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.pressable)
-                .accessibilityIdentifier("add-care-item-button")
-            }
-            .listRowBackground(Color.familySurface)
-
-            Section("Plants") {
-                if plantItems.isEmpty {
-                    plantsEmptyCard
-                } else {
-                    ForEach(plantItems) { item in
-                        PlantRow(
-                            item: item,
-                            members: store.members,
-                            photo: item.photoPath.flatMap { store.carePhotos[$0] },
-                            onEdit: { store.send(.editCareItemTapped(item)) },
-                            onMarkDone: { taskID in
-                                store.send(.markCareTaskDone(itemID: item.id, taskID: taskID))
-                            }
-                        )
-                    }
-                    addPlantButton
-                }
-            }
-            .listRowBackground(Color.familySurface)
-
-            Section("Yard & garden") {
-                ForEach(zoneItems) { item in
-                    // Zones are house-ish (sticker-slap mark-done, not the plant leaf-unfurl).
-                    CareRow(
-                        item: item,
-                        members: store.members,
-                        onEdit: { store.send(.editCareItemTapped(item)) },
-                        onMarkDone: { taskID in
-                            store.send(.markCareTaskDone(itemID: item.id, taskID: taskID))
-                        }
-                    )
-                }
-                // Seasonal starters persist (filtered to the not-yet-added ones) so several jobs can be
-                // scheduled in one sitting — unlike the one-and-done House card. Dismissable.
-                if !remainingYardStarters.isEmpty, !store.yardSuggestionsDismissed {
-                    yardSuggestionsCard
-                } else if zoneItems.isEmpty {
-                    Text("Nothing in the yard yet — add a seasonal job.")
-                        .foregroundStyle(Color.inkSoft)
-                }
-                addYardZoneButton
-            }
-            .listRowBackground(Color.familySurface)
-
-            Section("Pets") {
-                ForEach(petItems) { item in
-                    PetRow(
-                        item: item,
-                        members: store.members,
-                        photo: item.photoPath.flatMap { store.carePhotos[$0] },
-                        expiringDoc: expiringDoc(for: item),
-                        onEdit: { store.send(.editCareItemTapped(item)) },
-                        onMarkDone: { taskID in
-                            store.send(.markCareTaskDone(itemID: item.id, taskID: taskID))
-                        }
-                    )
-                }
-                // "The pack" persists (filtered to the not-yet-added dogs) so Fajita and Sprinkle can
-                // both be added in one sitting. Dismissable.
-                if !remainingPackStarters.isEmpty, !store.petSuggestionsDismissed {
-                    packStarterCard
-                } else if petItems.isEmpty {
-                    Text("No pets yet — add one of the crew.")
-                        .foregroundStyle(Color.inkSoft)
-                }
-                addPetButton
-            }
-            .listRowBackground(Color.familySurface)
-
-            if !store.activity.isEmpty {
-                Section("Recent Activity") {
-                    ForEach(store.activity.prefix(5)) { item in
-                        HStack(spacing: 10) {
-                            Image(systemName: item.systemImage).foregroundStyle(Color.bacanGreen)
-                            Text(item.text).font(.callout).foregroundStyle(Color.ink)
-                        }
-                    }
-                }
-                .listRowBackground(Color.familySurface)
-            }
-
             if !store.members.isEmpty {
                 Section("Leaderboard") {
                     ForEach(leaderboard) { row in
@@ -187,37 +278,19 @@ public struct ChoresView: View {
         .scrollContentBackground(.hidden)
         .background(Color.familyCanvas)
         .overlay {
-            // Member-colored celebration when the live leaderboard reports a level-up.
             ConfettiBurst(color: confettiColor, trigger: store.confettiTrigger)
                 .ignoresSafeArea()
         }
-        .navigationTitle("Home")
+        .navigationTitle("Chores & rewards")
+        .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Button { store.send(.addTapped) } label: { Image(systemName: "plus") }
                     .accessibilityIdentifier("add-chore-button")
             }
         }
-        .task { store.send(.task) }
-        .sheet(item: $store.scope(state: \.form, action: \.form)) { formStore in
-            ChoreFormView(store: formStore)
-        }
-        .sheet(item: $store.scope(state: \.careForm, action: \.careForm)) { formStore in
-            CareItemFormView(store: formStore)
-        }
-        .sheet(item: $store.scope(state: \.plantCapture, action: \.plantCapture)) { captureStore in
-            PlantCaptureView(store: captureStore)
-        }
-        .alert("New reward", isPresented: $store.showAddReward) {
-            TextField("What's the prize?", text: $store.newRewardTitle)
-            TextField("XP cost", value: $store.newRewardCost, format: .number)
-                .keyboardType(.numberPad)
-            Button("Cancel", role: .cancel) { store.showAddReward = false }
-            Button("Add") { store.send(.createReward) }
-        }
     }
 
-    /// The confetti color for the most recent level-up (falls back to the brand green).
     private var confettiColor: Color {
         guard let mc = store.confettiColor else { return .bacanGreen }
         let rgb = mc.rgb
@@ -232,8 +305,6 @@ public struct ChoresView: View {
         var id: String { member.id }
     }
 
-    /// View-local lookup — `store.stats` resolves to the state property, so the state's
-    /// `stats(for:)` method isn't reachable through the store.
     private func memberStats(for id: String) -> MemberStats {
         store.stats.first { $0.memberID == id } ?? MemberStats(id: id, memberID: id)
     }
@@ -315,8 +386,60 @@ public struct ChoresView: View {
             }
         }
     }
+}
 
-    // MARK: House care
+// MARK: - House care detail
+
+/// Whole-house upkeep, moved behind the "House care" hub card. The HouseHealth banner, care rows
+/// (sticker-slap mark-done), starters, and add-a-care-item all unchanged.
+private struct HouseCareDetailView: View {
+    @Bindable var store: StoreOf<ChoresReducer>
+
+    private var houseItems: [CareItem] { store.careItems.filter { $0.kind == .house } }
+
+    var body: some View {
+        List {
+            Section("House care") {
+                if !store.careItems.isEmpty {
+                    HouseHealthBanner(health: CareItem.houseHealth(for: store.careItems))
+                }
+                if houseItems.isEmpty {
+                    if store.careSuggestionsDismissed {
+                        Text("Nothing under care yet — add the first thing you always forget.")
+                            .foregroundStyle(Color.inkSoft)
+                    } else {
+                        careSuggestionsCard
+                    }
+                } else {
+                    ForEach(houseItems) { item in
+                        CareRow(
+                            item: item,
+                            members: store.members,
+                            onEdit: { store.send(.editCareItemTapped(item)) },
+                            onMarkDone: { taskID in
+                                store.send(.markCareTaskDone(itemID: item.id, taskID: taskID))
+                            }
+                        )
+                    }
+                }
+                Button {
+                    store.send(.addCareItemTapped)
+                } label: {
+                    Label("Add a care item", systemImage: "plus")
+                        .appearBounce()
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.pressable)
+                .accessibilityIdentifier("add-care-item-button")
+            }
+            .listRowBackground(Color.familySurface)
+        }
+        .scrollContentBackground(.hidden)
+        .background(Color.familyCanvas)
+        .navigationTitle("House care")
+        .navigationBarTitleDisplayMode(.inline)
+    }
 
     private var careSuggestionsCard: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -353,8 +476,44 @@ public struct ChoresView: View {
         }
         .padding(.vertical, 4)
     }
+}
 
-    // MARK: Plants (P9)
+// MARK: - Plants detail
+
+/// The plant roster, moved behind the "Plants" hub card. Rows play the ``LeafUnfurl`` water motion;
+/// "Add a plant" still launches the capture wizard (presented from the hub root).
+private struct PlantsDetailView: View {
+    @Bindable var store: StoreOf<ChoresReducer>
+
+    private var plantItems: [CareItem] { store.careItems.filter { $0.kind == .plant } }
+
+    var body: some View {
+        List {
+            Section("Plants") {
+                if plantItems.isEmpty {
+                    plantsEmptyCard
+                } else {
+                    ForEach(plantItems) { item in
+                        PlantRow(
+                            item: item,
+                            members: store.members,
+                            photo: item.photoPath.flatMap { store.carePhotos[$0] },
+                            onEdit: { store.send(.editCareItemTapped(item)) },
+                            onMarkDone: { taskID in
+                                store.send(.markCareTaskDone(itemID: item.id, taskID: taskID))
+                            }
+                        )
+                    }
+                    addPlantButton
+                }
+            }
+            .listRowBackground(Color.familySurface)
+        }
+        .scrollContentBackground(.hidden)
+        .background(Color.familyCanvas)
+        .navigationTitle("Plants")
+        .navigationBarTitleDisplayMode(.inline)
+    }
 
     private var plantsEmptyCard: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -382,8 +541,16 @@ public struct ChoresView: View {
         .buttonStyle(.pressable)
         .accessibilityIdentifier("add-plant-button")
     }
+}
 
-    // MARK: Yard & garden (P9-C3)
+// MARK: - Yard & garden detail
+
+/// Seasonal landscaping zones, moved behind the "Yard & garden" hub card. Seasonal starters (persisting
+/// for multi-add) + add-a-zone unchanged.
+private struct YardDetailView: View {
+    @Bindable var store: StoreOf<ChoresReducer>
+
+    private var zoneItems: [CareItem] { store.careItems.filter { $0.kind == .zone } }
 
     /// Starters not already on the board, matched by name — lets the card persist for multi-add.
     private var remainingYardStarters: [YardSuggestion] {
@@ -391,9 +558,35 @@ public struct ChoresView: View {
         return YardSuggestion.starters.filter { !existing.contains($0.name) }
     }
 
-    /// Seasonal-starters card mirroring the House-care one: each row one-tap-adds a yard zone anchored
-    /// to the next occurrence of its month, repeating yearly. Persists (filtered) for multi-add;
-    /// dismissable.
+    var body: some View {
+        List {
+            Section("Yard & garden") {
+                ForEach(zoneItems) { item in
+                    CareRow(
+                        item: item,
+                        members: store.members,
+                        onEdit: { store.send(.editCareItemTapped(item)) },
+                        onMarkDone: { taskID in
+                            store.send(.markCareTaskDone(itemID: item.id, taskID: taskID))
+                        }
+                    )
+                }
+                if !remainingYardStarters.isEmpty, !store.yardSuggestionsDismissed {
+                    yardSuggestionsCard
+                } else if zoneItems.isEmpty {
+                    Text("Nothing in the yard yet — add a seasonal job.")
+                        .foregroundStyle(Color.inkSoft)
+                }
+                addYardZoneButton
+            }
+            .listRowBackground(Color.familySurface)
+        }
+        .scrollContentBackground(.hidden)
+        .background(Color.familyCanvas)
+        .navigationTitle("Yard & garden")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+
     private var yardSuggestionsCard: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Seasonal jobs")
@@ -448,11 +641,18 @@ public struct ChoresView: View {
         .buttonStyle(.pressable)
         .accessibilityIdentifier("add-yard-zone-button")
     }
+}
 
-    // MARK: Pets (P10)
+// MARK: - Pets detail
 
-    /// The soonest-expiring Family-Brain document linked to `pet` whose expiry is within 30 days (or
-    /// past) — drives the terracotta countdown chip on the pet's row. `nil` when nothing's expiring.
+/// The pack, moved behind the "Pets" hub card. Pet rows (sticker-slap mark-done + terracotta doc-expiry
+/// chip), "The pack" starters, and add-a-pet unchanged.
+private struct PetsDetailView: View {
+    @Bindable var store: StoreOf<ChoresReducer>
+
+    private var petItems: [CareItem] { store.careItems.filter { $0.kind == .pet } }
+
+    /// The soonest-expiring linked doc within 30 days (or past) for a pet — drives its terracotta chip.
     private func expiringDoc(for pet: CareItem) -> FamilyDomain.Document? {
         store.documents
             .filter { $0.linkedPetIds.contains(pet.id) }
@@ -466,16 +666,43 @@ public struct ChoresView: View {
             .0
     }
 
-    /// Dogs not already on the board, matched by name — lets "The pack" card persist for multi-add
-    /// (adding Fajita still offers Sprinkle).
+    /// Dogs not already on the board, matched by name — lets "The pack" card persist for multi-add.
     private var remainingPackStarters: [PetSuggestion] {
         let existing = Set(petItems.map(\.name))
         return PetSuggestion.starters.filter { !existing.contains($0.name) }
     }
 
-    /// The hyper-personal Pets starter — "The pack": one-tap adds for Fajita and Sprinkle (each
-    /// pre-filled with the dog-care schedule), plus a blank pet and the dismiss line. Sky-accented,
-    /// mirroring the yard seasonal-starters card.
+    var body: some View {
+        List {
+            Section("Pets") {
+                ForEach(petItems) { item in
+                    PetRow(
+                        item: item,
+                        members: store.members,
+                        photo: item.photoPath.flatMap { store.carePhotos[$0] },
+                        expiringDoc: expiringDoc(for: item),
+                        onEdit: { store.send(.editCareItemTapped(item)) },
+                        onMarkDone: { taskID in
+                            store.send(.markCareTaskDone(itemID: item.id, taskID: taskID))
+                        }
+                    )
+                }
+                if !remainingPackStarters.isEmpty, !store.petSuggestionsDismissed {
+                    packStarterCard
+                } else if petItems.isEmpty {
+                    Text("No pets yet — add one of the crew.")
+                        .foregroundStyle(Color.inkSoft)
+                }
+                addPetButton
+            }
+            .listRowBackground(Color.familySurface)
+        }
+        .scrollContentBackground(.hidden)
+        .background(Color.familyCanvas)
+        .navigationTitle("Pets")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+
     private var packStarterCard: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 8) {
@@ -541,6 +768,31 @@ public struct ChoresView: View {
         }
         .buttonStyle(.pressable)
         .accessibilityIdentifier("add-pet-button")
+    }
+}
+
+// MARK: - Recent activity detail
+
+/// The full activity feed, moved behind the "Recent activity" hub card.
+private struct ActivityDetailView: View {
+    @Bindable var store: StoreOf<ChoresReducer>
+
+    var body: some View {
+        List {
+            Section("Recent activity") {
+                ForEach(store.activity.prefix(30)) { item in
+                    HStack(spacing: 10) {
+                        Image(systemName: item.systemImage).foregroundStyle(Color.bacanGreen)
+                        Text(item.text).font(.callout).foregroundStyle(Color.ink)
+                    }
+                }
+            }
+            .listRowBackground(Color.familySurface)
+        }
+        .scrollContentBackground(.hidden)
+        .background(Color.familyCanvas)
+        .navigationTitle("Recent activity")
+        .navigationBarTitleDisplayMode(.inline)
     }
 }
 

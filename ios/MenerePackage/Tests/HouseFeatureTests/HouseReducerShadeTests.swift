@@ -4,7 +4,7 @@ import HueClient
 import LutronClient
 import Testing
 
-@testable import TodayFeature
+@testable import HouseFeature
 
 /// Locks the P15-C1 shade verbs on `HouseReducer`: shades load on `.task`, the slider debounces its
 /// `GoToLevel` writes (≥150ms, same floor as the Hue brightness sliders — bridges dislike write spam),

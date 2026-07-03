@@ -3,7 +3,7 @@ import FamilyDomain
 import HueClient
 import Testing
 
-@testable import TodayFeature
+@testable import HouseFeature
 
 /// Locks the P12-C4 slider-debounce contract: Hue bridges dislike >10 req/s, so brightness sliders
 /// MUST NOT fire a PUT per drag delta. `HouseReducer` schedules each write behind a `continuousClock`
