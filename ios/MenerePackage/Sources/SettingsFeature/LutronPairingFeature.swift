@@ -147,6 +147,12 @@ public struct LutronPairingReducer {
             case .countdownTick:
                 guard state.step == .linkButton, state.countdown > 0 else { return .none }
                 state.countdown -= 1
+                // The visual countdown is the AUTHORITATIVE timeout. When it reaches zero we always
+                // surface a diagnosable failure — even if the pairing handshake is wedged (a silent TLS
+                // stall that never throws) or the bridge simply never pushed the button status. Round 1
+                // only failed when `pair()` itself threw, so a hung socket left the user staring at "0s"
+                // with no message; routing expiry through `.pairWindowExpired` also cancels the handshake.
+                if state.countdown == 0 { return .send(.pairWindowExpired) }
                 return .none
 
             case .pairWindowExpired:

@@ -137,7 +137,10 @@ enum LutronPairingSession {
     /// (so the UI can say "we reached the bridge but didn't see the button"); a TLS/connect failure
     /// throws `.networkError` / `.bridgeUnreachable` instead (so the UI can say "couldn't reach the
     /// bridge") — the caller distinguishes these to surface the right guidance.
-    static func pair(bridgeIP: String, buttonTimeout: TimeInterval = 30) async throws -> LutronPairingResult {
+    // The transport window is deliberately a few seconds longer than the reducer's 30s visual countdown
+    // so the *UI* countdown is the authoritative timeout (it cancels this handshake on expiry). This
+    // avoids a race at exactly 30s and guarantees a diagnosable failure even if this socket is wedged.
+    static func pair(bridgeIP: String, buttonTimeout: TimeInterval = 35) async throws -> LutronPairingResult {
         let keypair = try LutronCrypto.makePairingKeypair()
         let conn = try await LutronConnection.openPairing(host: bridgeIP, port: pairingPort)
         defer { conn.close() }
@@ -183,6 +186,11 @@ final class LutronConnection: @unchecked Sendable {
         if let secIdentity = sec_identity_create(identity) {
             sec_protocol_options_set_local_identity(tls.securityProtocolOptions, secIdentity)
         }
+        // Pin TLS 1.2 exactly, as on the pairing socket — pylutron-caseta builds the signed control
+        // context with `ssl.PROTOCOL_TLSv1_2`; the bridge's LEAP endpoint only speaks 1.2 and mishandles
+        // a negotiated-1.3 mutual-auth handshake.
+        sec_protocol_options_set_min_tls_protocol_version(tls.securityProtocolOptions, .TLSv12)
+        sec_protocol_options_set_max_tls_protocol_version(tls.securityProtocolOptions, .TLSv12)
         // Trust the bridge's server cert (self-signed by its own CA). We pin loosely — a private LAN
         // device — accepting the presented chain (the bridge CA is carried in `config.bridgeCAPEM`).
         sec_protocol_options_set_verify_block(
@@ -195,8 +203,16 @@ final class LutronConnection: @unchecked Sendable {
 
     /// Open the pairing TLS connection (port 8083): present the bundled well-known LAP client identity
     /// (mutual TLS — REQUIRED for the bridge to open the pairing session and push the button status),
-    /// pin TLS 1.2 (the bridge's pairing endpoint), and accept the bridge's self-signed server cert.
+    /// pin TLS **exactly 1.2**, and accept the bridge's self-signed server cert.
     /// A missing/failed LAP identity throws `credentialError` rather than silently connecting anonymously.
+    ///
+    /// **Round-2 fix:** we now pin *both* the min AND max TLS version to 1.2. pylutron-caseta builds its
+    /// pairing context with `ssl.PROTOCOL_TLSv1_2` (TLS 1.2 *only*). Caséta bridges run old firmware whose
+    /// LAP endpoint only speaks TLS 1.2; when we set only the *minimum* to 1.2 the client still offered
+    /// 1.3 in the ClientHello, and under the negotiated 1.3 flow the bridge did not treat our client
+    /// certificate as authenticated — so the socket looked "connected" (the countdown started) but the
+    /// bridge silently never pushed the `PhysicalAccess` button status. Capping the max to 1.2 forces the
+    /// exact TLS 1.2 mutual-auth handshake the bridge arms pairing on.
     static func openPairing(host: String, port: UInt16) async throws -> LutronConnection {
         let identity = try LutronCrypto.makeLAPPairingIdentity()
         let tls = NWProtocolTLS.Options()
@@ -205,6 +221,7 @@ final class LutronConnection: @unchecked Sendable {
         }
         sec_protocol_options_set_local_identity(tls.securityProtocolOptions, secIdentity)
         sec_protocol_options_set_min_tls_protocol_version(tls.securityProtocolOptions, .TLSv12)
+        sec_protocol_options_set_max_tls_protocol_version(tls.securityProtocolOptions, .TLSv12)
         sec_protocol_options_set_verify_block(
             tls.securityProtocolOptions,
             { _, _, complete in complete(true) },

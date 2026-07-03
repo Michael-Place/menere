@@ -112,8 +112,9 @@ final class LutronPairingReducerTests: XCTestCase {
         }
     }
 
-    /// The visual countdown decrements once per second and clamps at 0.
-    func testCountdownTickDecrementsAndClamps() async {
+    /// The visual countdown decrements once per second; reaching 0 authoritatively fails the flow, and
+    /// further ticks are clamped no-ops (step is no longer `.linkButton`).
+    func testCountdownTickDecrementsThenFailsAtZero() async {
         let store = TestStore(initialState: {
             var s = LutronPairingReducer.State(hid: "hid-1")
             s.step = .linkButton
@@ -127,6 +128,52 @@ final class LutronPairingReducerTests: XCTestCase {
 
         await store.send(.countdownTick) { $0.countdown = 1 }
         await store.send(.countdownTick) { $0.countdown = 0 }
-        await store.send(.countdownTick)   // clamped at 0 — no state change
+        await store.receive(\.pairWindowExpired) {
+            $0.step = .failed
+            $0.errorMessage = "We reached your bridge, but didn't see the button press in time. Press the small black button on the back of the bridge, then tap Try again."
+        }
+        await store.send(.countdownTick)   // step is .failed now — clamped, no state change
+    }
+
+    /// Round-2 regression: a wedged handshake that never returns (a silent TLS stall) must STILL fail
+    /// visibly when the countdown expires — the reducer no longer depends on `pair()` throwing. The
+    /// visual countdown drives `.pairWindowExpired`, which also cancels the in-flight handshake.
+    func testWedgedHandshakeStillFailsWhenCountdownExpires() async {
+        let clock = TestClock()
+        let bridge = self.bridge
+
+        let store = TestStore(initialState: LutronPairingReducer.State(hid: "hid-1")) {
+            LutronPairingReducer()
+        } withDependencies: {
+            $0.continuousClock = clock
+            $0.lutron.discoverBridges = { [bridge] }
+            // Never returns and never throws — mimics a socket wedged mid-handshake on-device.
+            $0.lutron.pair = { _ in
+                try await Task.sleep(for: .seconds(3600))
+                return LutronPairingResult(clientCertPEM: "", clientKeyPEM: "", bridgeCAPEM: "", bridgeId: nil, bridgeName: nil)
+            }
+        }
+
+        await store.send(.task)
+        await store.receive(\.bridgesDiscovered) { $0.bridges = [bridge] }
+        await store.receive(\.bridgeSelected) {
+            $0.selectedBridge = bridge
+            $0.step = .linkButton
+            $0.countdown = 30
+        }
+        await store.receive(\.startPairing)
+
+        // Drive the 30s visual countdown; ticks 1…29 just decrement.
+        for remaining in stride(from: 29, through: 1, by: -1) {
+            await clock.advance(by: .seconds(1))
+            await store.receive(\.countdownTick) { $0.countdown = remaining }
+        }
+        // The 30th tick hits zero and forces a diagnosable failure (cancelling the wedged handshake).
+        await clock.advance(by: .seconds(1))
+        await store.receive(\.countdownTick) { $0.countdown = 0 }
+        await store.receive(\.pairWindowExpired) {
+            $0.step = .failed
+            $0.errorMessage = "We reached your bridge, but didn't see the button press in time. Press the small black button on the back of the bridge, then tap Try again."
+        }
     }
 }
