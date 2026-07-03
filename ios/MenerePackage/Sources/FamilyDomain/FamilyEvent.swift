@@ -29,8 +29,19 @@ public enum RecurrenceOption: String, CaseIterable, Equatable, Sendable, Codable
     }
 }
 
-/// A shared family calendar event. Ported from Fambo's `FamboEvent`, trimmed to Menere's needs
-/// (dropped: email/photo/share sources, confidence, drafts, EventKit mirroring, child-visibility).
+/// Where a `FamilyEvent` originated. Drives the two-way EventKit sync (P2.1):
+/// - `.manual` / `.email` events are PUSHED into the dedicated "Bacán" Apple calendar
+///   (email-extracted events carry no `source` and decode as `manual`, so forwarded school
+///   emails also appear on both parents' Apple calendars — the desired behavior).
+/// - `.calendarImport` events came FROM Apple; they are never pushed back (loop prevention).
+public enum EventSource: String, Codable, Sendable, Equatable {
+    case manual
+    case calendarImport = "calendar_import"
+    case email
+}
+
+/// A shared family calendar event. Ported from Fambo's `FamboEvent`, trimmed to Menere's needs.
+/// P2.1 re-added two decode-safe EventKit-sync fields (`eventKitIdentifier`, `source`).
 ///
 /// Persisted at `households/{hid}/events/{id}`.
 public struct FamilyEvent: Codable, Equatable, Identifiable, Sendable {
@@ -47,6 +58,22 @@ public struct FamilyEvent: Codable, Equatable, Identifiable, Sendable {
     public var createdAt: Date
     public var updatedAt: Date
 
+    // MARK: EventKit sync (P2.1) — both decode-safe (nil for pre-P2.1 events).
+
+    /// Link back to the Apple EventKit item this event mirrors.
+    /// - For imported events (`source == .calendarImport`): the **dedup key**
+    ///   `"<EKEvent.eventIdentifier>#<ISO8601 occurrence-start>"` — recurring Apple events expand to
+    ///   ONE `FamilyEvent` per occurrence, each with a distinct key (fixes Fambo's series-collapse bug).
+    /// - For pushed events (`source == .manual` / `.email`): the plain `EKEvent.eventIdentifier` of the
+    ///   copy we created in the "Bacán" calendar (nil until first push).
+    public var eventKitIdentifier: String?
+    /// Origin of the event; nil decodes as `.manual` (see `resolvedSource`).
+    public var source: EventSource?
+
+    /// The effective origin — nil `source` (legacy / email-Function events) resolves to `.manual`,
+    /// so those events push into Apple Calendar.
+    public var resolvedSource: EventSource { source ?? .manual }
+
     public init(
         id: String = UUID().uuidString,
         title: String,
@@ -58,7 +85,9 @@ public struct FamilyEvent: Codable, Equatable, Identifiable, Sendable {
         recurrence: RecurrenceOption = .none,
         assigneeIDs: [String] = [],
         createdAt: Date = Date(),
-        updatedAt: Date = Date()
+        updatedAt: Date = Date(),
+        eventKitIdentifier: String? = nil,
+        source: EventSource? = nil
     ) {
         self.id = id
         self.title = title
@@ -71,6 +100,8 @@ public struct FamilyEvent: Codable, Equatable, Identifiable, Sendable {
         self.assigneeIDs = assigneeIDs
         self.createdAt = createdAt
         self.updatedAt = updatedAt
+        self.eventKitIdentifier = eventKitIdentifier
+        self.source = source
     }
 
     public init(from decoder: Decoder) throws {
@@ -86,6 +117,9 @@ public struct FamilyEvent: Codable, Equatable, Identifiable, Sendable {
         assigneeIDs = try c.decodeIfPresent([String].self, forKey: .assigneeIDs) ?? []
         createdAt = try c.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
         updatedAt = try c.decodeIfPresent(Date.self, forKey: .updatedAt) ?? Date()
+        eventKitIdentifier = try c.decodeIfPresent(String.self, forKey: .eventKitIdentifier)
+        // nil `source` (legacy events + email-Function-written events) resolves to `.manual`.
+        source = try c.decodeIfPresent(EventSource.self, forKey: .source)
     }
 
     /// Materializes the occurrence start-dates of this event that fall within `[from, to]`.

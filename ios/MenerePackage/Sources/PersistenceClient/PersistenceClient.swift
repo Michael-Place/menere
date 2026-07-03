@@ -205,6 +205,14 @@ public struct PersistenceClient: Sendable {
     public var activity: @Sendable (_ hid: String) async throws -> [ActivityItem]
     /// Append an activity-feed entry (fire-and-forget at call sites).
     public var logActivity: @Sendable (_ hid: String, _ item: ActivityItem) async throws -> Void
+
+    // MARK: Apple Calendar sync prefs (P2.1)
+    /// The user's EventKit sync prefs at `users/{uid}/settings/calendarSync`, or nil when never set up.
+    /// Decode-safe (a partial doc still resolves). Per-USER (not household) — each member syncs their
+    /// own device calendars. Follows the `users/{uid}` accessor pattern from `ensureHousehold`.
+    public var calendarSyncPrefs: @Sendable (_ uid: String) async throws -> CalendarSyncPrefs?
+    /// Full-document write of the sync prefs (merge: false so cleared fields actually clear).
+    public var saveCalendarSyncPrefs: @Sendable (_ uid: String, _ prefs: CalendarSyncPrefs) async throws -> Void
 }
 
 extension PersistenceClient: DependencyKey {
@@ -594,6 +602,19 @@ extension PersistenceClient: DependencyKey {
                 try await households().document(hid).collection("activity").document(item.id).setData(
                     Firestore.Encoder().encode(item)
                 )
+            },
+            calendarSyncPrefs: { uid in
+                let s = try await db().collection("users").document(uid)
+                    .collection("settings").document("calendarSync").getDocument()
+                guard let d = s.data() else { return nil }
+                return try Firestore.Decoder().decode(CalendarSyncPrefs.self, from: d)
+            },
+            saveCalendarSyncPrefs: { uid, prefs in
+                // Full-doc replace (merge: false) — same rationale as the smart-home config saves.
+                try await db().collection("users").document(uid)
+                    .collection("settings").document("calendarSync").setData(
+                        Firestore.Encoder().encode(prefs)
+                    )
             }
         )
     }()

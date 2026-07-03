@@ -24,6 +24,14 @@ public struct CalendarView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
+                Button { store.send(.syncSettingsTapped) } label: {
+                    Image(systemName: store.isSyncing ? "arrow.triangle.2.circlepath" : "calendar.badge.clock")
+                        .symbolEffect(.rotate, isActive: store.isSyncing)
+                }
+                .accessibilityLabel("Calendar sync")
+                .accessibilityIdentifier("calendar-sync-button")
+            }
+            ToolbarItem(placement: .primaryAction) {
                 Button { store.send(.addTapped) } label: { Image(systemName: "plus") }
                     .accessibilityIdentifier("add-event-button")
             }
@@ -31,6 +39,9 @@ public struct CalendarView: View {
         .task { store.send(.task) }
         .sheet(item: $store.scope(state: \.form, action: \.form)) { formStore in
             EventFormView(store: formStore)
+        }
+        .sheet(item: $store.scope(state: \.syncSettings, action: \.syncSettings)) { syncStore in
+            CalendarSyncSettingsView(store: syncStore)
         }
     }
 
@@ -133,7 +144,16 @@ public struct CalendarView: View {
     private func agendaRow(_ item: EventOccurrence) -> some View {
         HStack(spacing: 12) {
             VStack(alignment: .leading, spacing: 2) {
-                Text(item.event.title).foregroundStyle(Color.ink)
+                HStack(spacing: 5) {
+                    Text(item.event.title).foregroundStyle(Color.ink)
+                    // Imported-from-Apple events wear a small ink-soft Apple glyph.
+                    if item.event.resolvedSource == .calendarImport {
+                        Image(systemName: "applelogo")
+                            .font(.system(size: 10))
+                            .foregroundStyle(Color.inkSoft)
+                            .accessibilityLabel("From Apple Calendar")
+                    }
+                }
                 Text(item.event.isAllDay ? "All day" : timeString(item.date))
                     .font(.caption)
                     .foregroundStyle(Color.inkSoft)

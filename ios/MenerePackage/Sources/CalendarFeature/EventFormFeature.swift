@@ -1,3 +1,4 @@
+import CalendarSyncClient
 import ComposableArchitecture
 import FamilyDomain
 import MenereUI
@@ -85,9 +86,17 @@ public struct EventFormReducer {
             case .deleteTapped:
                 guard let hid = hid() else { return .none }
                 let id = state.event.id
+                // Propagate deletes of Bacán-origin (manual/email) events to their Apple mirror. Imported
+                // events are left alone (deleting the Apple original from a mirror would be too destructive;
+                // they simply re-import on the next sync).
+                let ekIDToDelete = state.event.resolvedSource != .calendarImport ? state.event.eventKitIdentifier : nil
                 return .run { send in
                     @Dependency(\.persistence) var persistence
+                    @Dependency(\.calendarSyncClient) var calendarSyncClient
                     try await persistence.deleteEvent(hid, id)
+                    if let ekIDToDelete {
+                        try? await calendarSyncClient.deleteEvent(ekIDToDelete)
+                    }
                     await send(.delegate(.didChange))
                     await dismiss()
                 }

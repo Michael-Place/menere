@@ -20,6 +20,7 @@ let package = Package(
         .library(name: "ListsFeature", targets: ["ListsFeature"]),
         .library(name: "DocsFeature", targets: ["DocsFeature"]),
         .library(name: "CalendarFeature", targets: ["CalendarFeature"]),
+        .library(name: "CalendarSyncClient", targets: ["CalendarSyncClient"]),
         .library(name: "ChoresFeature", targets: ["ChoresFeature"]),
         .library(name: "RecipesFeature", targets: ["RecipesFeature"]),
         .library(name: "PersistenceClient", targets: ["PersistenceClient"]),
@@ -185,6 +186,15 @@ let package = Package(
                 "FamilyDomain",
                 "PersistenceClient",
                 "UserDomain",
+                "CalendarSyncClient",
+            ]
+        ),
+        .target(
+            name: "CalendarSyncClient",
+            dependencies: [
+                .product(name: "Dependencies", package: "swift-dependencies"),
+                .product(name: "DependenciesMacros", package: "swift-dependencies"),
+                "FamilyDomain",
             ]
         ),
         .target(
@@ -580,6 +590,24 @@ let package = Package(
                 "FamilyDomain",
                 "PersistenceClient",
                 "StorageClient",
+                "UserDomain",
+            ]
+        ),
+        .testTarget(
+            name: "CalendarSyncClientTests",
+            dependencies: [
+                "CalendarSyncClient",
+                "FamilyDomain",
+            ]
+        ),
+        .testTarget(
+            name: "CalendarFeatureTests",
+            dependencies: [
+                .product(name: "ComposableArchitecture", package: "swift-composable-architecture"),
+                "CalendarFeature",
+                "CalendarSyncClient",
+                "FamilyDomain",
+                "PersistenceClient",
                 "UserDomain",
             ]
         ),
