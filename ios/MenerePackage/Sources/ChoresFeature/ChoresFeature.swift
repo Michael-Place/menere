@@ -77,6 +77,10 @@ public struct ChoresReducer {
         case addCareItemTapped
         case editCareItemTapped(CareItem)
         case markCareTaskDone(itemID: String, taskID: String)
+        /// P19-C2 — batch "water this room": mark the due Water task done for every plant in `location`
+        /// (nil ⇒ the "no room yet" bucket) whose water is due, each via the shared ``CareCompletion``/
+        /// `writeCareDone` path (server-consistent, one activity entry per plant).
+        case waterRoomDone(location: String?)
         case careSuggestionTapped(CareSuggestion)
         case dismissCareSuggestions
         // P9-C3 — Yard & garden (kind == .zone)
@@ -287,6 +291,34 @@ public struct ChoresReducer {
                     try await persistence.writeCareDone(hid: hid, outcome)
                 }
 
+            case let .waterRoomDone(location):
+                guard let (hid, uid) = ctx() else { return .none }
+                // Normalize both sides so a trimmed/empty location matches the same "no room" bucket the
+                // roster groups on.
+                let target = location?.trimmingCharacters(in: .whitespacesAndNewlines)
+                    .nilIfEmpty
+                var outcomes: [CareCompletion.Outcome] = []
+                for i in state.careItems.indices {
+                    let item = state.careItems[i]
+                    guard item.kind == .plant else { continue }
+                    let itemRoom = item.location?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+                    guard itemRoom == target else { continue }
+                    guard let water = item.tasks.first(where: {
+                        PlantCarePreset.matching($0.title) == .water && $0.isDue()
+                    }) else { continue }
+                    guard let outcome = CareCompletion.markDone(
+                        item: state.careItems[i], taskID: water.id, byMemberID: uid, members: state.members
+                    ) else { continue }
+                    state.careItems[i] = outcome.updated
+                    if let activity = outcome.activity { state.activity.insert(activity, at: 0) }
+                    outcomes.append(outcome)
+                }
+                guard !outcomes.isEmpty else { return .none }
+                return .run { [outcomes] _ in
+                    @Dependency(\.persistence) var persistence
+                    for outcome in outcomes { try await persistence.writeCareDone(hid: hid, outcome) }
+                }
+
             case let .careSuggestionTapped(suggestion):
                 guard let (hid, _) = ctx() else { return .none }
                 let item = suggestion.makeItem()
@@ -408,4 +440,10 @@ public struct ChoresReducer {
         if let i = all.firstIndex(where: { $0.memberID == stats.memberID }) { all[i] = stats }
         else { all.append(stats) }
     }
+}
+
+private extension String {
+    /// `nil` when the string is empty, else `self` — used to fold a blank room string into the same
+    /// "no room yet" bucket as a `nil` location.
+    var nilIfEmpty: String? { isEmpty ? nil : self }
 }

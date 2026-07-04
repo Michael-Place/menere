@@ -568,9 +568,9 @@ public struct ChoresView: View {
     private var plantsStatus: String {
         let plants = store.careItems.filter { $0.kind == .plant }
         guard !plants.isEmpty else { return "No plants yet" }
-        let thirsty = plants.filter { ($0.soonestDueTask()?.daysUntilDue() ?? 1) <= 0 }.count
-        let base = "\(plants.count) plant\(plants.count == 1 ? "" : "s")"
-        return thirsty > 0 ? "\(base) · \(thirsty) thirsty" : base
+        // The hub card's status line IS the triage summary (P19-C2) — leads with the urgent water count
+        // ("6 need water today"), else the soonest care, else "All 32 happy 🌿". Same math as the roster.
+        return PlantTriage.compute(plants).hubStatus
     }
 
     private var yardStatus: String {
@@ -863,44 +863,277 @@ private struct HouseCareDetailView: View {
     }
 }
 
+// MARK: - Plants triage (P19-C2)
+
+/// A pure, UI-free read of "what needs doing across ALL plants," grouped **by task type** — so the
+/// Plants overview header and the Home-hub Plants card always agree. Water is the urgent bucket
+/// (counted *due today / overdue*, `days <= 0`); every other care type (fertilize, prune, mist, …) is
+/// counted *due within the week* (`days <= 7`, overdue included) since those cadences are longer.
+/// "Happy" = plants whose soonest task is comfortably beyond a week (or has no cadence at all).
+private struct PlantTriage: Equatable {
+    /// Plants with a Water task due today or overdue.
+    let waterNowCount: Int
+    /// Non-water care types coming due this week, ordered by ``PlantCarePreset`` declaration (fertilize
+    /// first), each with the number of distinct plants needing it.
+    let otherSoon: [(preset: PlantCarePreset, count: Int)]
+    /// Plants with nothing due inside the week.
+    let happyCount: Int
+    let totalCount: Int
+
+    static func == (lhs: PlantTriage, rhs: PlantTriage) -> Bool {
+        lhs.waterNowCount == rhs.waterNowCount && lhs.happyCount == rhs.happyCount
+            && lhs.totalCount == rhs.totalCount
+            && lhs.otherSoon.map(\.preset) == rhs.otherSoon.map(\.preset)
+            && lhs.otherSoon.map(\.count) == rhs.otherSoon.map(\.count)
+    }
+
+    /// Nothing needs doing across the whole collection — the warm "all happy" state.
+    var nothingDue: Bool { waterNowCount == 0 && otherSoon.isEmpty }
+
+    static func compute(_ plants: [CareItem], now: Date = Date()) -> PlantTriage {
+        var waterNow = 0
+        var otherCounts: [PlantCarePreset: Int] = [:]
+        for plant in plants {
+            var needsWaterNow = false
+            var soonPresets: Set<PlantCarePreset> = []
+            for task in plant.tasks {
+                guard let days = task.daysUntilDue(now: now) else { continue }
+                let preset = PlantCarePreset.matching(task.title)
+                if preset == .water {
+                    if days <= 0 { needsWaterNow = true }
+                } else if days <= 7, let preset {
+                    soonPresets.insert(preset)
+                }
+            }
+            if needsWaterNow { waterNow += 1 }
+            for preset in soonPresets { otherCounts[preset, default: 0] += 1 }
+        }
+        let ordered = PlantCarePreset.allCases.compactMap { preset -> (PlantCarePreset, Int)? in
+            guard preset != .water, let count = otherCounts[preset], count > 0 else { return nil }
+            return (preset, count)
+        }
+        // Happy = soonest task is > 7 days out (or a manual/no-task plant → nil days).
+        let happy = plants.filter {
+            (($0.soonestDueTask(now: now)?.daysUntilDue(now: now)) ?? 8) > 7
+        }.count
+        return PlantTriage(
+            waterNowCount: waterNow, otherSoon: ordered, happyCount: happy, totalCount: plants.count
+        )
+    }
+
+    /// The verb phrase for a care type in triage copy — "need water", "to fertilize", … Count is
+    /// prepended by the caller ("6 need water", "3 to fertilize").
+    static func phrase(_ preset: PlantCarePreset) -> String {
+        switch preset {
+        case .water: "need water"
+        case .fertilize: "to fertilize"
+        case .repot: "to re-pot"
+        case .prune: "to prune"
+        case .rotate: "to rotate"
+        case .mist: "to mist"
+        case .cleanLeaves: "to clean"
+        case .pestCheck: "to check for pests"
+        }
+    }
+
+    /// The single glanceable status line for the Home-hub Plants card — leads with the urgent water
+    /// count, else the soonest other care, else the warm all-happy line.
+    var hubStatus: String {
+        if nothingDue { return "All \(totalCount) happy 🌿" }
+        if waterNowCount > 0 {
+            return "\(waterNowCount) need\(waterNowCount == 1 ? "s" : "") water today"
+        }
+        if let first = otherSoon.first {
+            return "\(first.count) \(PlantTriage.phrase(first.preset)) this week"
+        }
+        return "All \(totalCount) happy 🌿"
+    }
+}
+
 // MARK: - Plants detail
 
-/// The plant roster, moved behind the "Plants" hub card. Rows play the ``LeafUnfurl`` water motion;
-/// "Add a plant" still launches the capture wizard (presented from the hub root).
+/// The plant roster, moved behind the "Plants" hub card. P19-C2 turns the flat list into an OVERVIEW:
+/// a TRIAGE HEADER (what needs doing across all 32 plants, by task type) atop plants **grouped by room**
+/// (`location`), due-first within each room, with a per-room "Water this room" batch action. Rows keep
+/// the ``LeafUnfurl`` water motion and still tap into the plant DETAIL page (P19-C1).
 private struct PlantsDetailView: View {
     @Bindable var store: StoreOf<ChoresReducer>
 
+    /// A transient "Watered N" confirmation per room key (keyed by the room's display name), shown in
+    /// the section header for a beat after a batch water.
+    @State private var wateredNote: [String: Int] = [:]
+
     private var plantItems: [CareItem] { store.careItems.filter { $0.kind == .plant } }
+
+    /// The "no room yet" bucket's display name (rooms sort it last).
+    private static let noRoom = "No room yet"
+
+    /// Normalize a plant's `location` into a room key: trimmed non-empty, else `nil`.
+    private func roomKey(_ location: String?) -> String? {
+        let trimmed = location?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return (trimmed?.isEmpty ?? true) ? nil : trimmed
+    }
+
+    /// Plants grouped by room, sorted for display: rooms containing due plants float up (ties
+    /// alphabetical), "No room yet" always last. Within a room, due-first (overdue → soonest → happy).
+    private var roomGroups: [(name: String, key: String?, plants: [CareItem])] {
+        let grouped = Dictionary(grouping: plantItems) { roomKey($0.location) }
+        return grouped
+            .map { key, plants -> (name: String, key: String?, plants: [CareItem]) in
+                let sorted = plants.sorted {
+                    let a = $0.soonestDueTask()?.daysUntilDue() ?? Int.max
+                    let b = $1.soonestDueTask()?.daysUntilDue() ?? Int.max
+                    return a == b ? $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending : a < b
+                }
+                return (name: key ?? Self.noRoom, key: key, plants: sorted)
+            }
+            .sorted { lhs, rhs in
+                if (rhs.key == nil) != (lhs.key == nil) { return rhs.key == nil }   // no-room last
+                let lDue = dueWaterCount(in: lhs.plants) > 0
+                let rDue = dueWaterCount(in: rhs.plants) > 0
+                if lDue != rDue { return lDue }                                     // due rooms first
+                return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
+            }
+    }
+
+    /// Plants in a room whose Water task is due today/overdue — the batch-water eligible set.
+    private func dueWaterCount(in plants: [CareItem]) -> Int {
+        plants.filter { plant in
+            plant.tasks.contains { PlantCarePreset.matching($0.title) == .water && $0.isDue() }
+        }.count
+    }
 
     var body: some View {
         List {
-            // SEAM (P19-C2): plant triage + room grouping lands here — a TRIAGE HEADER ("5 need water ·
-            // 2 fertilize this week · rest happy") and plants grouped by room/location with a per-room
-            // "water this room / mark all watered" batch action. The flat single "Plants" section below
-            // is the seam it splits; the roster already reads `item.location`, so C2 groups on that.
-            Section("Plants") {
-                if plantItems.isEmpty {
+            if plantItems.isEmpty {
+                Section("Plants") {
                     plantsEmptyCard
-                } else {
-                    ForEach(plantItems) { item in
-                        PlantRow(
-                            item: item,
-                            members: store.members,
-                            photo: item.photoPath.flatMap { store.carePhotos[$0] },
-                            onMarkDone: { taskID in
-                                store.send(.markCareTaskDone(itemID: item.id, taskID: taskID))
-                            }
-                        )
+                }
+                .listRowBackground(Color.familySurface)
+            } else {
+                Section {
+                    triageHeader
+                }
+                .listRowBackground(Color.clear)
+                .listRowInsets(EdgeInsets(top: 4, leading: 0, bottom: 8, trailing: 0))
+
+                ForEach(roomGroups, id: \.name) { group in
+                    Section {
+                        ForEach(group.plants) { item in
+                            PlantRow(
+                                item: item,
+                                members: store.members,
+                                photo: item.photoPath.flatMap { store.carePhotos[$0] },
+                                onMarkDone: { taskID in
+                                    store.send(.markCareTaskDone(itemID: item.id, taskID: taskID))
+                                }
+                            )
+                        }
+                    } header: {
+                        roomHeader(group)
                     }
+                    .listRowBackground(Color.familySurface)
+                }
+
+                Section {
                     addPlantButton
                 }
+                .listRowBackground(Color.familySurface)
             }
-            .listRowBackground(Color.familySurface)
         }
         .scrollContentBackground(.hidden)
         .background(Color.familyCanvas)
         .navigationTitle("Plants")
         .navigationBarTitleDisplayMode(.inline)
+    }
+
+    // MARK: Triage header
+
+    /// The overwhelm-killer: one warm card summarizing what needs doing across ALL plants, by task type.
+    @ViewBuilder
+    private var triageHeader: some View {
+        let triage = PlantTriage.compute(plantItems)
+        let copy = triageCopy(triage)
+        HStack(alignment: .top, spacing: 14) {
+            ZStack {
+                Circle().fill(copy.tint.opacity(0.15))
+                Image(systemName: copy.symbol).font(.title3).foregroundStyle(copy.tint)
+            }
+            .frame(width: 44, height: 44)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(copy.headline)
+                    .familyTitle(.headline).foregroundStyle(Color.ink)
+                    .fixedSize(horizontal: false, vertical: true)
+                if let subhead = copy.subhead {
+                    Text(subhead)
+                        .font(.system(.subheadline, design: .rounded))
+                        .foregroundStyle(Color.inkSoft)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity)
+        .background(RoundedRectangle(cornerRadius: 18, style: .continuous).fill(Color.familySurface))
+        .accessibilityIdentifier("plants-triage-header")
+    }
+
+    /// Headline + optional subhead + icon/tint for the triage card, derived from the ``PlantTriage``.
+    private func triageCopy(_ t: PlantTriage) -> (headline: String, subhead: String?, symbol: String, tint: Color) {
+        if t.nothingDue {
+            return ("All your plants are happy 🌿", "Nothing needs doing today.", "leaf.fill", .bacanGreen)
+        }
+        // Build the ordered list of "N phrase" fragments (water first, then this-week care).
+        var fragments: [String] = []
+        if t.waterNowCount > 0 {
+            fragments.append("\(t.waterNowCount) need\(t.waterNowCount == 1 ? "s" : "") water today")
+        }
+        for entry in t.otherSoon {
+            fragments.append("\(entry.count) \(PlantTriage.phrase(entry.preset))")
+        }
+        let headline = fragments.first ?? "Some plants need care"
+        var tail = Array(fragments.dropFirst())
+        if t.happyCount > 0 {
+            tail.append("everyone else is happy 🌿")
+        }
+        let symbol = t.waterNowCount > 0 ? "drop.fill" : "leaf.fill"
+        let tint: Color = t.waterNowCount > 0 ? .sky : .bacanGreen
+        return (headline, tail.isEmpty ? nil : tail.joined(separator: " · "), symbol, tint)
+    }
+
+    // MARK: Room section header + batch water
+
+    @ViewBuilder
+    private func roomHeader(_ group: (name: String, key: String?, plants: [CareItem])) -> some View {
+        let dueWater = dueWaterCount(in: group.plants)
+        HStack(spacing: 8) {
+            Text(group.name)
+            Spacer(minLength: 8)
+            if let watered = wateredNote[group.name] {
+                Label("Watered \(watered)", systemImage: "checkmark.circle.fill")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(Color.bacanGreen)
+                    .textCase(nil)
+                    .transition(.opacity)
+            } else if dueWater > 0 {
+                Button {
+                    store.send(.waterRoomDone(location: group.key))
+                    withAnimation { wateredNote[group.name] = dueWater }
+                    Task {
+                        try? await Task.sleep(for: .seconds(2))
+                        withAnimation { wateredNote[group.name] = nil }
+                    }
+                } label: {
+                    Label("Water this room", systemImage: "drop.fill")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(Color.sky)
+                        .textCase(nil)
+                }
+                .buttonStyle(.pressable)
+                .accessibilityIdentifier("water-room-\(group.key ?? "none")")
+            }
+        }
     }
 
     private var plantsEmptyCard: some View {
