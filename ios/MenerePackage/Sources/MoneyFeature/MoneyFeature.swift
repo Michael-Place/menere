@@ -24,6 +24,14 @@ public struct MoneyReducer {
         var isLoading = false
         var currentUid: String?
 
+        // P22 — Spending intelligence.
+        /// Whether the spending-insights sheet is presented.
+        var showInsights = false
+        /// The AI "This month, in a nutshell" recap (nil until generated for the current month).
+        var spendingSummary: SpendingSummary?
+        /// True while the `summarizeSpending` call is in flight (drives the shimmer).
+        var isSummarizing = false
+
         @Presents var addExpense: ExpenseFormReducer.State?
         @Presents var budgetEditor: BudgetEditorReducer.State?
 
@@ -43,6 +51,12 @@ public struct MoneyReducer {
             expenses
                 .filter { MoneyRollup.isInMonth($0.date, of: monthAnchor) }
                 .sorted { $0.date > $1.date }
+        }
+
+        /// The P22 spending-intelligence report for the anchored month + the whole history
+        /// (Expenses ⊕ amount-bearing Brain docs, deduped, categorized, one-time-bucketed).
+        var report: SpendingInsights.Report {
+            SpendingInsights.report(expenses: expenses, documents: documents, month: monthAnchor)
         }
 
         /// "New from the Brain": documents carrying an amount that aren't yet an expense and haven't
@@ -66,6 +80,10 @@ public struct MoneyReducer {
         case budgetsLoaded(BudgetConfig?)
         case previousMonthTapped
         case nextMonthTapped
+        case insightsOpened
+        case generateSummary
+        case summaryResponse(SpendingSummary?)
+        case refreshSummaryTapped
         case addTapped
         case editBudgetsTapped
         case fileFromBrainTapped(FamilyDomain.Document)
@@ -82,6 +100,7 @@ public struct MoneyReducer {
     @Dependency(\.uuid) var uuid
     @Dependency(\.date) var date
     @Dependency(\.analytics) var analytics   // P25 telemetry (fire-and-forget)
+    @Dependency(\.spending) var spendingClient // P22 AI monthly summary
 
     private func hid() -> String? {
         @Shared(.user) var user
@@ -125,11 +144,41 @@ public struct MoneyReducer {
 
             case .previousMonthTapped:
                 state.monthAnchor = MoneyRollup.shiftMonth(state.monthAnchor, by: -1)
+                state.spendingSummary = nil // month changed — recap no longer applies
                 return .none
 
             case .nextMonthTapped:
                 state.monthAnchor = MoneyRollup.shiftMonth(state.monthAnchor, by: 1)
+                state.spendingSummary = nil
                 return .none
+
+            case .insightsOpened:
+                state.showInsights = true
+                analytics.log("spending_insights_opened")
+                // Kick off the AI recap once per month view (refresh regenerates).
+                guard state.spendingSummary == nil, !state.isSummarizing else { return .none }
+                return .send(.generateSummary)
+
+            case .generateSummary:
+                guard !state.isSummarizing else { return .none }
+                state.isSummarizing = true
+                let month = MoneyView.monthTitle(state.monthAnchor)
+                let lines = state.report.monthLines.map(SpendingLinePayload.init(line:))
+                return .run { send in
+                    let result = try? await spendingClient.summarize(month, lines)
+                    await send(.summaryResponse(result))
+                }
+
+            case let .summaryResponse(summary):
+                state.isSummarizing = false
+                if let summary {
+                    state.spendingSummary = summary
+                    analytics.log("spending_summary_generated")
+                }
+                return .none
+
+            case .refreshSummaryTapped:
+                return .send(.generateSummary)
 
             case .addTapped:
                 state.addExpense = ExpenseFormReducer.State(

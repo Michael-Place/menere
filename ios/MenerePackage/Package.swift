@@ -459,6 +459,9 @@ let package = Package(
             name: "MoneyFeature",
             dependencies: [
                 .product(name: "ComposableArchitecture", package: "swift-composable-architecture"),
+                .product(name: "Dependencies", package: "swift-dependencies"),
+                .product(name: "DependenciesMacros", package: "swift-dependencies"),
+                .product(name: "FirebaseFunctions", package: "firebase-ios-sdk"),
                 "MenereUI",
                 "FamilyDomain",
                 "PersistenceClient",

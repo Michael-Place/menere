@@ -14,6 +14,7 @@ public struct MoneyView: View {
     public var body: some View {
         List {
             monthHeaderSection
+            insightsSection
             if !store.inboxDocuments.isEmpty { inboxSection }
             categoryBarsSection
             ledgerSection
@@ -23,6 +24,13 @@ public struct MoneyView: View {
         .navigationTitle("Money")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                Button { store.send(.insightsOpened) } label: {
+                    Image(systemName: "chart.bar.xaxis")
+                }
+                .buttonStyle(.pressable)
+                .accessibilityIdentifier("spending-insights-button")
+            }
             ToolbarItem(placement: .primaryAction) {
                 Button { store.send(.editBudgetsTapped) } label: {
                     Image(systemName: "slider.horizontal.3")
@@ -46,6 +54,49 @@ public struct MoneyView: View {
         .sheet(item: $store.scope(state: \.budgetEditor, action: \.budgetEditor)) { editorStore in
             BudgetEditorView(store: editorStore)
         }
+        .sheet(isPresented: $store.showInsights) {
+            SpendingInsightsView(store: store)
+        }
+    }
+
+    // MARK: Insights entry card
+
+    private var insightsSection: some View {
+        Section {
+            Button { store.send(.insightsOpened) } label: {
+                HStack(spacing: 12) {
+                    Image(systemName: "sparkles")
+                        .font(.title3)
+                        .foregroundStyle(Color.bacanGreen)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Spending insights")
+                            .font(.system(.subheadline, design: .rounded).weight(.semibold))
+                            .foregroundStyle(Color.ink)
+                        Text(insightsSubtitle)
+                            .font(.caption)
+                            .foregroundStyle(Color.inkSoft)
+                    }
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                        .font(.footnote.weight(.semibold))
+                        .foregroundStyle(Color.inkSoft)
+                }
+            }
+            .buttonStyle(.pressable)
+            .accessibilityIdentifier("spending-insights-card")
+        }
+        .listRowBackground(Color.familySurface)
+    }
+
+    private var insightsSubtitle: String {
+        let report = store.report
+        if !report.recurring.isEmpty {
+            return "Breakdown, trend & \(report.recurring.count) recurring"
+        }
+        if report.trend.hasComparison, report.trend.isUp || report.trend.isDown {
+            return report.trend.isUp ? "Where it went + you're up vs. last month" : "Where it went + you're down vs. last month"
+        }
+        return "Where it went, trends & recurring charges"
     }
 
     // MARK: Month header + total

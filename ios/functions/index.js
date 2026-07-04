@@ -23,6 +23,7 @@ const { identifyPlant } = require("./plantIdentify");
 const { troubleshootPlant } = require("./plantTroubleshoot");
 const { runAgentTurn } = require("./agentTurn");
 const { planMealWeek } = require("./mealPlanWeek");
+const { summarizeSpending } = require("./spendingSummarize");
 const { notifyHousehold, memberName } = require("./notifications");
 const { awardChoreXP, reverseChoreXP } = require("./choreXP");
 
@@ -368,6 +369,38 @@ exports.planMealWeek = onCall(
       return await planMealWeek({ recipes, days, apiKey: ANTHROPIC_API_KEY.value() });
     } catch (err) {
       throw new HttpsError("internal", `Meal planning failed: ${err.message}`);
+    }
+  }
+);
+
+/**
+ * `summarizeSpending` is a v2 HTTPS callable (us-central1) — the P22 "This month, in a nutshell"
+ * AI recap. Input `{ month, currency?, lines: [{category, vendor, amount, date}] }` (the featured
+ * month's already-categorized line items, computed by the client's SpendingInsights aggregator) →
+ * ONE `claude-sonnet-5` forced-tool-use call → `{ summary, insight }` in the family's warm,
+ * non-judgmental voice. NO finance logic runs server-side beyond forwarding a single model call —
+ * aggregation/dedup/one-time bucketing all happen on the phone. Auth-required; logs only line COUNT
+ * (never vendor names or amounts). Reuses the existing ANTHROPIC_API_KEY secret.
+ */
+exports.summarizeSpending = onCall(
+  { timeoutSeconds: 60, memory: "512MiB", secrets: [ANTHROPIC_API_KEY] },
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError("unauthenticated", "You must be signed in.");
+    }
+    const data = request.data || {};
+    const month = typeof data.month === "string" ? data.month : undefined;
+    const currency = typeof data.currency === "string" ? data.currency : undefined;
+    const lines = Array.isArray(data.lines) ? data.lines : [];
+    try {
+      return await summarizeSpending({
+        apiKey: ANTHROPIC_API_KEY.value(),
+        month,
+        currency,
+        lines,
+      });
+    } catch (err) {
+      throw new HttpsError("internal", `Spending summary failed: ${err.message}`);
     }
   }
 );

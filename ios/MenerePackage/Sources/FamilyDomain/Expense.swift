@@ -49,7 +49,7 @@ public enum ExpenseCategory: String, Codable, CaseIterable, Sendable, Equatable 
         (.pets, ["vet", "veterinar", "pet", "dog", "cat", "kibble", "groomer"]),
         (.groceries, ["grocery", "groceries", "supermarket", "costco", "market", "trader joe", "whole foods", "safeway"]),
         (.dining, ["restaurant", "dining", "cafe", "coffee", "takeout", "bar & grill", "pizzeria", "diner"]),
-        (.house, ["hardware", "home depot", "lowes", "repair", "plumb", "electric", "furnitur", "appliance", "utility", "utilities"]),
+        (.house, ["hardware", "home depot", "lowes", "repair", "plumb", "electric", "furnitur", "appliance", "utility", "utilities", "septic", "home maintenance", "hvac", "roof", "handyman"]),
         (.fun, ["movie", "cinema", "toy", "game", "entertainment", "concert", "museum", "amusement"]),
     ]
 
