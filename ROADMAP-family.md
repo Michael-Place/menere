@@ -132,6 +132,25 @@ Remaining (Postmark dashboard, your account):
 
 Emerged from Michael actually LIVING in the app. Four items:
 
+### Home tab IA STANDARD — two tiers per entity: OVERVIEW + ELEMENT DETAIL
+Michael's principle (2026-07-03): every Home section is a consistent two-tier drill:
+**Home hub card → OVERVIEW screen (triage/rollup glance for the whole entity) →
+ELEMENT DETAIL (a rich page per plant / pet / care item / zone / room / chore).**
+All overview + detail screens share one family of card components (hero, overview
+card, task list w/ inline mark-done, timeline). Status per entity:
+
+| Entity | OVERVIEW (the top-level screen) | ELEMENT DETAIL (per item) |
+|---|---|---|
+| **Plants** | triage header (N need water / fertilize / etc., grouped BY ROOM, batch "water this room"), due floated up — **P19-C2** (next) | per-plant page: hero photo, species/light, overview glance, all care tasks + mark-done, context + Troubleshoot — **P19-C1 ✓**, context/AI = **P19-C3** |
+| **Pets** | the pack's health: each pet's soonest care + next vaccine/record expiry, overdue flagged — **NEW (P19-C2b)** | per-pet page: hero, breed·age, tappable vet contact, care tasks, Vet Records timeline (linked docs) — **P19-C1b ✓** |
+| **House care** | house-health rollup ("The house is happy" / "N overdue") + what's due, by area — banner exists; make it the section overview — **refine** | per-care-item page: tasks + history — **P19-C1b ✓** |
+| **Yard & garden** | seasonal what's-coming + overdue seasonal tasks — **NEW** | per-zone page: seasonal tasks — **P19-C1b ✓** |
+| **Chores & rewards** | leaderboard + due chores + rewards — **P16 ✓** | per-chore detail (history / assignee / streak) + per-member "their day" — **NEW (future)** |
+| **Smart home** | House control screen (rooms/devices/climate summary) — **✓** | per-room control screen — **✓** |
+
+Guiding rule for any NEW Home section: build its overview + element detail to this
+standard. Next up: P19-C2 (plants overview) + the pets/yard overviews.
+
 ### P16 — Home tab as the physical-home HUB (overview cards + drill-in)
 Problem: the **Home** tab (renamed Chores tab) is getting very long — House care,
 Plants, Yard & garden, Pets, Recent Activity, Leaderboard, Chores, Rewards — and
