@@ -1,4 +1,5 @@
 import ComposableArchitecture
+import DocsFeature
 import FamilyDomain
 import Foundation
 import MenereUI
@@ -56,6 +57,11 @@ public struct MoneyView: View {
         }
         .sheet(isPresented: $store.showInsights) {
             SpendingInsightsView(store: store)
+        }
+        .navigationDestination(
+            item: $store.scope(state: \.docDetail, action: \.docDetail)
+        ) { detailStore in
+            DocumentDetailView(store: detailStore)
         }
     }
 
@@ -193,12 +199,22 @@ public struct MoneyView: View {
                     .foregroundStyle(Color.inkSoft)
             } else {
                 ForEach(store.monthExpenses) { expense in
-                    ExpenseRow(expense: expense)
+                    ExpenseRow(
+                        expense: expense,
+                        sourceDocTitle: sourceDocTitle(for: expense),
+                        onOpenSource: { store.send(.expenseDocTapped(expense)) }
+                    )
                 }
                 .onDelete { store.send(.deleteExpenses($0)) }
             }
         }
         .listRowBackground(Color.familySurface)
+    }
+
+    /// Title of the Brain document an expense was promoted from (P24 backlink), if it's still around.
+    private func sourceDocTitle(for expense: Expense) -> String? {
+        guard let docId = expense.documentId else { return nil }
+        return store.documents.first { $0.id == docId }?.title
     }
 
     // MARK: Formatting
@@ -328,32 +344,56 @@ private struct CategoryBarRow: View {
 
 private struct ExpenseRow: View {
     let expense: Expense
+    /// Title of the Brain document this expense was promoted from (P24 backlink), if any.
+    var sourceDocTitle: String?
+    /// Open the source document detail.
+    var onOpenSource: () -> Void = {}
 
     var body: some View {
-        HStack(spacing: 12) {
-            Image(systemName: expense.category.symbolName)
-                .foregroundStyle(expense.category.tint)
-                .frame(width: 26)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title)
-                    .font(.body.weight(.medium))
-                    .foregroundStyle(Color.ink)
-                HStack(spacing: 6) {
-                    Text(expense.category.displayName)
-                        .font(.caption2.weight(.semibold))
-                        .padding(.horizontal, 7)
-                        .padding(.vertical, 2)
-                        .background(expense.category.tint.opacity(0.15), in: Capsule())
-                        .foregroundStyle(expense.category.tint)
-                    Text(Self.dayFormatter.string(from: expense.date))
-                        .font(.caption)
-                        .foregroundStyle(Color.inkSoft)
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 12) {
+                Image(systemName: expense.category.symbolName)
+                    .foregroundStyle(expense.category.tint)
+                    .frame(width: 26)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title)
+                        .font(.body.weight(.medium))
+                        .foregroundStyle(Color.ink)
+                    HStack(spacing: 6) {
+                        Text(expense.category.displayName)
+                            .font(.caption2.weight(.semibold))
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 2)
+                            .background(expense.category.tint.opacity(0.15), in: Capsule())
+                            .foregroundStyle(expense.category.tint)
+                        Text(Self.dayFormatter.string(from: expense.date))
+                            .font(.caption)
+                            .foregroundStyle(Color.inkSoft)
+                    }
                 }
+                Spacer()
+                Text(MoneyView.currency(expense.amount))
+                    .font(.body.weight(.semibold).monospacedDigit())
+                    .foregroundStyle(Color.ink)
             }
-            Spacer()
-            Text(MoneyView.currency(expense.amount))
-                .font(.body.weight(.semibold).monospacedDigit())
-                .foregroundStyle(Color.ink)
+
+            if let sourceDocTitle {
+                Button(action: onOpenSource) {
+                    HStack(spacing: 5) {
+                        Image(systemName: "brain")
+                            .font(.caption2)
+                        Text("From: \(sourceDocTitle)")
+                            .font(.caption)
+                            .lineLimit(1)
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 9, weight: .semibold))
+                    }
+                    .foregroundStyle(Color.sky)
+                    .padding(.leading, 38)
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("expense-source-doc")
+            }
         }
         .padding(.vertical, 2)
     }

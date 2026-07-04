@@ -1,3 +1,4 @@
+import AnalyticsClient
 import ComposableArchitecture
 import FamilyDomain
 import Foundation
@@ -27,6 +28,11 @@ public struct DocumentDetailReducer {
         var members: [HouseholdMember] = []
         /// The household's pets (CareItems with kind == .pet), for the Pets field row + link menu (P10).
         var pets: [CareItem] = []
+        /// The full document set + expenses, loaded so the "Related" card can compute cross-links (P24).
+        var allDocuments: [FamilyDomain.Document] = []
+        var expenses: [Expense] = []
+        /// A related document pushed from the "Related" card (recursive navigation, P24).
+        @Presents var relatedDoc: DocumentDetailReducer.State?
         var showFullText = false
         var isEditingTitle = false
         var titleDraft = ""
@@ -51,6 +57,12 @@ public struct DocumentDetailReducer {
             }
         }
 
+        /// The cross-entity graph for this document (same-vendor + shared-tag projects + linked
+        /// expense + linked pets/members), computed against the family's full doc / expense sets (P24).
+        var related: EntityGraph.RelatedItems {
+            EntityGraph.related(for: doc, documents: allDocuments, expenses: expenses)
+        }
+
         /// Whether an all-day event with this doc's title already sits on the `dueDate` day.
         var onCalendar: Bool {
             guard let due = doc.dueDate else { return false }
@@ -67,6 +79,10 @@ public struct DocumentDetailReducer {
         case eventsLoaded([FamilyEvent])
         case membersLoaded([HouseholdMember])
         case petsLoaded([CareItem])
+        case allDocumentsLoaded([FamilyDomain.Document])
+        case expensesLoaded([Expense])
+        case relatedDocTapped(FamilyDomain.Document)
+        indirect case relatedDoc(PresentationAction<Action>)
         case petToggled(String)
         case addToCalendarTapped
         case eventAdded(FamilyEvent)
@@ -91,6 +107,7 @@ public struct DocumentDetailReducer {
     @Dependency(\.persistence) var persistence
     @Dependency(\.storage) var storage
     @Dependency(\.docs) var docs
+    @Dependency(\.analytics) var analytics
     @Dependency(\.uuid) var uuid
     @Dependency(\.date) var date
     @Dependency(\.dismiss) var dismiss
@@ -114,13 +131,18 @@ public struct DocumentDetailReducer {
                 let pagePaths = state.doc.pagePaths.filter { $0.hasSuffix(".jpg") }
                 state.pagesLoading = !pagePaths.isEmpty
                 return .run { send in
-                    // Pages, events, members, and pets load in parallel; each degrades independently.
+                    // Pages, events, members, pets, and the full doc/expense sets load in parallel;
+                    // each degrades independently. The doc/expense sets feed the P24 "Related" card.
                     async let events = persistence.events(hid)
                     async let members = persistence.members(hid)
                     async let careItems = persistence.careItems(hid)
+                    async let documents = persistence.documents(hid)
+                    async let expenses = persistence.expenses(hid)
                     await send(.eventsLoaded((try? await events) ?? []))
                     await send(.membersLoaded((try? await members) ?? []))
                     await send(.petsLoaded(((try? await careItems) ?? []).filter { $0.kind == .pet }))
+                    await send(.allDocumentsLoaded((try? await documents) ?? []))
+                    await send(.expensesLoaded((try? await expenses) ?? []))
                     var loaded: [String: Data] = [:]
                     for path in pagePaths {
                         if let data = try? await storage.downloadData(path) {
@@ -145,6 +167,26 @@ public struct DocumentDetailReducer {
 
             case let .petsLoaded(pets):
                 state.pets = pets
+                return .none
+
+            case let .allDocumentsLoaded(documents):
+                state.allDocuments = documents
+                return .none
+
+            case let .expensesLoaded(expenses):
+                state.expenses = expenses
+                return .none
+
+            case let .relatedDocTapped(doc):
+                analytics.log("related_item_tapped", ["kind": "document"])
+                state.relatedDoc = DocumentDetailReducer.State(doc: doc)
+                return .none
+
+            // Bubble a nested detail's edits/deletes up so the library stays in sync.
+            case let .relatedDoc(.presented(.delegate(delegate))):
+                return .send(.delegate(delegate))
+
+            case .relatedDoc:
                 return .none
 
             case let .petToggled(petID):
@@ -242,6 +284,9 @@ public struct DocumentDetailReducer {
                 return .none
             }
         }
+        .ifLet(\.$relatedDoc, action: \.relatedDoc) {
+            DocumentDetailReducer()
+        }
     }
 }
 
@@ -267,6 +312,7 @@ public struct DocumentDetailView: View {
                     calendarAction
                 }
                 fieldsSection
+                relatedSection
                 if doc.processingState != .processed {
                     processingSection
                 }
@@ -279,6 +325,11 @@ public struct DocumentDetailView: View {
         .background(Color.familyCanvas)
         .navigationTitle("Document")
         .navigationBarTitleDisplayMode(.inline)
+        .navigationDestination(
+            item: $store.scope(state: \.relatedDoc, action: \.relatedDoc)
+        ) { relatedStore in
+            DocumentDetailView(store: relatedStore)
+        }
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Menu {
@@ -458,36 +509,6 @@ public struct DocumentDetailView: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
-            let linked = store.members.filter { doc.linkedMemberIds.contains($0.id) }
-            if !linked.isEmpty {
-                VStack(alignment: .leading, spacing: 6) {
-                    fieldLabel("Linked to")
-                    ForEach(linked) { member in
-                        HStack(spacing: 8) {
-                            let rgb = member.color.rgb
-                            Circle()
-                                .fill(Color(red: rgb.red, green: rgb.green, blue: rgb.blue))
-                                .frame(width: 10, height: 10)
-                            Text(member.name).foregroundStyle(Color.ink)
-                        }
-                    }
-                }
-            }
-            let linkedPets = store.pets.filter { doc.linkedPetIds.contains($0.id) }
-            if !linkedPets.isEmpty {
-                VStack(alignment: .leading, spacing: 6) {
-                    fieldLabel("Pets")
-                    ForEach(linkedPets) { pet in
-                        HStack(spacing: 8) {
-                            Image(systemName: "pawprint.fill")
-                                .font(.caption)
-                                .foregroundStyle(Color.sky)
-                            Text(pet.name).foregroundStyle(Color.ink)
-                        }
-                        .accessibilityIdentifier("detail-pet-\(pet.id)")
-                    }
-                }
-            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(16)
@@ -500,6 +521,136 @@ public struct DocumentDetailView: View {
             Spacer()
             Text(value).foregroundStyle(Color.ink).multilineTextAlignment(.trailing)
         }
+    }
+
+    // MARK: Related (P24 — the navigable graph)
+
+    /// Cross-entity connections for this document: the expense it became, other docs from the same
+    /// vendor, the "projects" (shared tags) it belongs to, and the pets / members it's linked to.
+    /// Every group hides itself when empty; each doc row pushes another `DocumentDetailView`.
+    @ViewBuilder
+    private var relatedSection: some View {
+        let related = store.related
+        let linkedMembers = store.members.filter { doc.linkedMemberIds.contains($0.id) }
+        let linkedPets = store.pets.filter { doc.linkedPetIds.contains($0.id) }
+        if !related.isEmpty {
+            VStack(alignment: .leading, spacing: 14) {
+                Text("Related")
+                    .familyTitle(.subheadline)
+                    .foregroundStyle(Color.ink)
+                    .accessibilityIdentifier("detail-related-header")
+
+                if let expense = related.linkedExpense {
+                    relatedExpenseRow(expense)
+                }
+
+                if !related.sameVendor.isEmpty {
+                    relatedGroup(
+                        title: "More from \(related.vendorName ?? "this vendor")",
+                        docs: related.sameVendor
+                    )
+                }
+
+                ForEach(related.projects) { project in
+                    relatedGroup(title: "Part of: \(project.title)", docs: project.documents)
+                }
+
+                if !linkedPets.isEmpty || !linkedMembers.isEmpty {
+                    VStack(alignment: .leading, spacing: 6) {
+                        fieldLabel("Linked to")
+                        FlexibleWrap(linkChips, spacing: 6) { chip in
+                            HStack(spacing: 5) {
+                                Image(systemName: chip.symbol)
+                                    .font(.caption2)
+                                    .foregroundStyle(chip.color)
+                                Text(chip.name)
+                                    .font(.caption)
+                                    .foregroundStyle(Color.ink)
+                            }
+                            .padding(.horizontal, 9).padding(.vertical, 4)
+                            .background(chip.color.opacity(0.14), in: Capsule())
+                            .accessibilityIdentifier(chip.a11y)
+                        }
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(16)
+            .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Color.familySurface))
+            .accessibilityIdentifier("detail-related-section")
+        }
+    }
+
+    /// The linked-expense summary row (informational — the family's expenses live in the Money screen).
+    private func relatedExpenseRow(_ expense: Expense) -> some View {
+        HStack(spacing: 10) {
+            ZStack {
+                Circle().fill(Color.sage.opacity(0.18)).frame(width: 34, height: 34)
+                Image(systemName: "dollarsign.circle.fill")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(Color.sage)
+            }
+            VStack(alignment: .leading, spacing: 1) {
+                Text("Logged as a \(Self.currency(expense.amount)) \(expense.category.displayName) expense")
+                    .font(.subheadline)
+                    .foregroundStyle(Color.ink)
+                Text("In Money")
+                    .font(.caption)
+                    .foregroundStyle(Color.inkSoft)
+            }
+            Spacer(minLength: 0)
+        }
+        .accessibilityIdentifier("detail-related-expense")
+    }
+
+    /// A titled group of related documents, each a tappable row pushing its own detail.
+    private func relatedGroup(title: String, docs: [FamilyDomain.Document]) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 4) {
+                Text(title)
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(Color.inkSoft)
+                Text("(\(docs.count))")
+                    .font(.footnote)
+                    .foregroundStyle(Color.inkSoft)
+            }
+            ForEach(docs) { related in
+                Button {
+                    store.send(.relatedDocTapped(related))
+                } label: {
+                    RelatedDocRow(doc: related)
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("detail-related-doc-\(related.id)")
+            }
+        }
+    }
+
+    /// A compact "linked to" chip (a pet or a member).
+    struct LinkChip: Hashable {
+        var id: String
+        var name: String
+        var symbol: String
+        var color: Color
+        var a11y: String
+    }
+
+    /// Linked pets + members rendered as compact chips (single "connections" home, P24).
+    private var linkChips: [LinkChip] {
+        let pets = store.pets.filter { doc.linkedPetIds.contains($0.id) }
+            .map { LinkChip(id: "pet-\($0.id)", name: $0.name, symbol: "pawprint.fill", color: .sky, a11y: "detail-pet-\($0.id)") }
+        let members = store.members.filter { doc.linkedMemberIds.contains($0.id) }
+            .map { member -> LinkChip in
+                let rgb = member.color.rgb
+                return LinkChip(
+                    id: "member-\(member.id)",
+                    name: member.name,
+                    symbol: "person.fill",
+                    color: Color(red: rgb.red, green: rgb.green, blue: rgb.blue),
+                    a11y: "detail-member-\(member.id)"
+                )
+            }
+        return pets + members
     }
 
     private func fieldLabel(_ text: String) -> some View {
@@ -580,6 +731,53 @@ public struct DocumentDetailView: View {
         let df = DateFormatter()
         df.dateStyle = .medium
         return df.string(from: date)
+    }
+}
+
+/// A lightweight related-document row for the "Related" card — type icon + title + a vendor/amount
+/// meta line + a chevron. Tapping (handled by the enclosing Button) pushes another detail.
+struct RelatedDocRow: View {
+    let doc: FamilyDomain.Document
+    private var tint: Color { DocumentRow.tint(for: doc.type) }
+
+    var body: some View {
+        HStack(spacing: 10) {
+            ZStack {
+                Circle().fill(tint.opacity(0.16)).frame(width: 32, height: 32)
+                Image(systemName: doc.type.symbolName)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(tint)
+            }
+            VStack(alignment: .leading, spacing: 1) {
+                Text(doc.title)
+                    .font(.subheadline)
+                    .foregroundStyle(Color.ink)
+                    .lineLimit(1)
+                if let meta = metaLine {
+                    Text(meta)
+                        .font(.caption2)
+                        .foregroundStyle(Color.inkSoft)
+                        .lineLimit(1)
+                }
+            }
+            Spacer(minLength: 0)
+            Image(systemName: "chevron.right")
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.tertiary)
+        }
+        .padding(.vertical, 4)
+        .contentShape(Rectangle())
+    }
+
+    private var metaLine: String? {
+        var parts: [String] = [doc.type.displayName]
+        if let vendor = doc.vendor?.trimmingCharacters(in: .whitespacesAndNewlines), !vendor.isEmpty {
+            parts.append(vendor)
+        }
+        if let amount = doc.amount, amount > 0 {
+            parts.append(DocumentDetailView.currency(amount))
+        }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
 }
 

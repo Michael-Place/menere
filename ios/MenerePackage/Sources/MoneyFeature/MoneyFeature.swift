@@ -1,5 +1,6 @@
 import AnalyticsClient
 import ComposableArchitecture
+import DocsFeature
 import FamilyDomain
 import Foundation
 import MenereUI
@@ -34,6 +35,8 @@ public struct MoneyReducer {
 
         @Presents var addExpense: ExpenseFormReducer.State?
         @Presents var budgetEditor: BudgetEditorReducer.State?
+        /// The source Family-Brain document a promoted expense links back to (P24 backlink).
+        @Presents var docDetail: DocumentDetailReducer.State?
 
         public init(monthAnchor: Date = Date()) {
             self.monthAnchor = monthAnchor
@@ -89,8 +92,10 @@ public struct MoneyReducer {
         case fileFromBrainTapped(FamilyDomain.Document)
         case dismissBrainDocument(FamilyDomain.Document)
         case deleteExpenses(IndexSet)
+        case expenseDocTapped(Expense)
         case addExpense(PresentationAction<ExpenseFormReducer.Action>)
         case budgetEditor(PresentationAction<BudgetEditorReducer.Action>)
+        case docDetail(PresentationAction<DocumentDetailReducer.Action>)
         case binding(BindingAction<State>)
     }
 
@@ -219,6 +224,16 @@ public struct MoneyReducer {
                     for expense in toDelete { try await persistence.deleteExpense(hid, expense.id) }
                 }
 
+            case let .expenseDocTapped(expense):
+                guard let docId = expense.documentId,
+                      let doc = state.documents.first(where: { $0.id == docId }) else { return .none }
+                analytics.log("related_item_tapped", ["kind": "expense_source"])
+                state.docDetail = DocumentDetailReducer.State(doc: doc)
+                return .none
+
+            case .docDetail:
+                return .none
+
             case let .addExpense(.presented(.delegate(.save(expense)))):
                 guard let hid = hid() else { state.addExpense = nil; return .none }
                 analytics.log("expense_logged", ["source": "manual"])
@@ -259,6 +274,9 @@ public struct MoneyReducer {
         }
         .ifLet(\.$budgetEditor, action: \.budgetEditor) {
             BudgetEditorReducer()
+        }
+        .ifLet(\.$docDetail, action: \.docDetail) {
+            DocumentDetailReducer()
         }
     }
 }

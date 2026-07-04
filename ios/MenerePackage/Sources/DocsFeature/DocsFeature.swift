@@ -1,3 +1,4 @@
+import AnalyticsClient
 import ComposableArchitecture
 import FamilyDomain
 import Foundation
@@ -17,6 +18,23 @@ public struct DocsReducer {
     public struct State: Equatable {
         var documents: [FamilyDomain.Document] = []
         var isLoading = false
+
+        // P24 — Collections lens. `showCollections` flips the flat list to a clustered view;
+        // `openedCollection` (when set) drills into one cluster's filtered document list.
+        var showCollections = false
+        var openedCollection: EntityGraph.Collection?
+
+        /// The vendor / project clusters computed from the whole Brain (≥2 docs each).
+        var collections: [EntityGraph.Collection] {
+            EntityGraph.collections(documents: documents)
+        }
+
+        /// The documents inside the currently-opened collection, in the collection's order.
+        var openedCollectionDocuments: [FamilyDomain.Document] {
+            guard let collection = openedCollection else { return [] }
+            let byId = Dictionary(documents.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+            return collection.documentIds.compactMap { byId[$0] }
+        }
 
         // Intake staging: raw picked/scanned image bytes (compressed at upload time) OR a PDF blob.
         var pendingPages: [Data] = []
@@ -62,6 +80,9 @@ public struct DocsReducer {
         case processDocument(String)      // docId — trigger/retry AI enrichment (also the retry action)
         // Library
         case documentTapped(FamilyDomain.Document)
+        // Collections lens (P24)
+        case collectionOpened(EntityGraph.Collection)
+        case collectionClosed
         case detail(PresentationAction<DocumentDetailReducer.Action>)
         case deleteDocuments(IndexSet)
         case dismissAlert
@@ -75,6 +96,7 @@ public struct DocsReducer {
     @Dependency(\.persistence) var persistence
     @Dependency(\.storage) var storage
     @Dependency(\.docs) var docs
+    @Dependency(\.analytics) var analytics
     @Dependency(\.uuid) var uuid
     @Dependency(\.date) var date
 
@@ -247,6 +269,15 @@ public struct DocsReducer {
 
             case let .documentTapped(doc):
                 state.detail = DocumentDetailReducer.State(doc: doc)
+                return .none
+
+            case let .collectionOpened(collection):
+                analytics.log("brain_collection_opened", ["kind": collection.kind.rawValue])
+                state.openedCollection = collection
+                return .none
+
+            case .collectionClosed:
+                state.openedCollection = nil
                 return .none
 
             // Keep the library in sync with edits/deletes made from the pushed detail.

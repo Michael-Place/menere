@@ -39,20 +39,37 @@ public struct DocsLibraryView: View {
                 }
                 .listRowBackground(Color.familySurface)
             } else {
-                Section {
-                    ForEach(store.documents) { doc in
-                        Button {
-                            store.send(.documentTapped(doc))
-                        } label: {
-                            DocumentRow(doc: doc) {
-                                store.send(.processDocument(doc.id))
-                            }
+                // P24 — lens picker: the flat list vs the clustered "Collections" view.
+                if !store.collections.isEmpty {
+                    Section {
+                        Picker("View", selection: $store.showCollections) {
+                            Text("All").tag(false)
+                            Text("Collections").tag(true)
                         }
-                        .buttonStyle(.plain)
+                        .pickerStyle(.segmented)
+                        .accessibilityIdentifier("docs-lens-picker")
                     }
-                    .onDelete { store.send(.deleteDocuments($0)) }
+                    .listRowBackground(Color.clear)
                 }
-                .listRowBackground(Color.familySurface)
+
+                if store.showCollections {
+                    collectionsContent
+                } else {
+                    Section {
+                        ForEach(store.documents) { doc in
+                            Button {
+                                store.send(.documentTapped(doc))
+                            } label: {
+                                DocumentRow(doc: doc) {
+                                    store.send(.processDocument(doc.id))
+                                }
+                            }
+                            .buttonStyle(.plain)
+                        }
+                        .onDelete { store.send(.deleteDocuments($0)) }
+                    }
+                    .listRowBackground(Color.familySurface)
+                }
             }
         }
         .scrollContentBackground(.hidden)
@@ -169,6 +186,111 @@ public struct DocsLibraryView: View {
         } message: {
             Text(store.alertMessage ?? "")
         }
+    }
+
+    // MARK: Collections lens (P24)
+
+    @ViewBuilder
+    private var collectionsContent: some View {
+        if let collection = store.openedCollection {
+            // Drilled into one cluster → its filtered documents, with a "back to collections" header.
+            Section {
+                Button {
+                    store.send(.collectionClosed)
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "chevron.left")
+                            .font(.footnote.weight(.semibold))
+                        Text("All collections")
+                    }
+                    .foregroundStyle(Color.bacanGreen)
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("collection-back-button")
+            }
+            .listRowBackground(Color.familySurface)
+
+            Section {
+                ForEach(store.openedCollectionDocuments) { doc in
+                    Button {
+                        store.send(.documentTapped(doc))
+                    } label: {
+                        DocumentRow(doc: doc) { store.send(.processDocument(doc.id)) }
+                    }
+                    .buttonStyle(.plain)
+                }
+            } header: {
+                Text(collection.title).foregroundStyle(Color.inkSoft)
+            }
+            .listRowBackground(Color.familySurface)
+        } else {
+            // The list of clusters.
+            Section {
+                ForEach(store.collections) { collection in
+                    Button {
+                        store.send(.collectionOpened(collection))
+                    } label: {
+                        CollectionRow(collection: collection)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("collection-row-\(collection.id)")
+                }
+            } footer: {
+                Text("Documents that share a vendor or a project. Singletons stay in the full list.")
+                    .font(.caption)
+                    .foregroundStyle(Color.inkSoft)
+            }
+            .listRowBackground(Color.familySurface)
+        }
+    }
+}
+
+/// A single Brain-collection row: a vendor or a project cluster with its doc count + running total.
+struct CollectionRow: View {
+    let collection: EntityGraph.Collection
+
+    private var symbol: String {
+        collection.kind == .vendor ? "building.2.fill" : "folder.fill"
+    }
+    private var tint: Color {
+        collection.kind == .vendor ? .sky : .marigold
+    }
+
+    var body: some View {
+        HStack(spacing: 12) {
+            ZStack {
+                Circle().fill(tint.opacity(0.18)).frame(width: 38, height: 38)
+                Image(systemName: symbol)
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(tint)
+            }
+            VStack(alignment: .leading, spacing: 2) {
+                Text(collection.title)
+                    .foregroundStyle(Color.ink)
+                    .lineLimit(1)
+                Text(subtitle)
+                    .font(.caption)
+                    .foregroundStyle(Color.inkSoft)
+            }
+            Spacer(minLength: 0)
+            Image(systemName: "chevron.right")
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(.tertiary)
+        }
+        .padding(.vertical, 2)
+        .contentShape(Rectangle())
+    }
+
+    private var subtitle: String {
+        var parts = ["\(collection.count) docs"]
+        if collection.total > 0 {
+            parts.append(Self.currency(collection.total))
+        }
+        return parts.joined(separator: " · ")
+    }
+
+    static func currency(_ value: Double) -> String {
+        value.formatted(.currency(code: "USD").precision(.fractionLength(value == value.rounded() ? 0 : 2)))
     }
 }
 

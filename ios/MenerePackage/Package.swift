@@ -206,6 +206,7 @@ let package = Package(
                 "FamilyDomain",
                 "PersistenceClient",
                 "StorageClient",
+                "AnalyticsClient",
                 "UserDomain",
             ]
         ),
@@ -467,6 +468,7 @@ let package = Package(
                 "PersistenceClient",
                 "AnalyticsClient",
                 "UserDomain",
+                "DocsFeature",
             ]
         ),
         .target(
