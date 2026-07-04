@@ -607,28 +607,18 @@ public struct ChoresView: View {
     }
 
     private var yardStatus: String {
-        let soonest = store.careItems.filter { $0.kind == .zone }
-            .compactMap { zone -> (name: String, due: Date)? in
-                guard let due = zone.soonestDueTask()?.dueAt else { return nil }
-                return (zone.name, due)
-            }
-            .min { $0.due < $1.due }
-        guard let soonest else { return "Nothing scheduled" }
-        return "Next: \(soonest.name) · \(soonest.due.formatted(.dateTime.month(.abbreviated).day()))"
+        // Mirror the plants card: lead with the urgent (overdue) seasonal job, else the next dated one,
+        // else the warm empty line. Same season math as the Yard overview header.
+        let season = YardSeason.compute(store.careItems.filter { $0.kind == .zone })
+        return season.hubStatus
     }
 
     private var petsStatus: String {
         let pets = store.careItems.filter { $0.kind == .pet }
         guard !pets.isEmpty else { return "No pets yet" }
-        let names = pets.map(\.name).joined(separator: ", ")
-        let soonest = pets
-            .compactMap { pet -> (label: String, days: Int)? in
-                guard let task = pet.soonestDueTask(), let days = task.daysUntilDue(), days <= 30 else { return nil }
-                return ("\(pet.name) \(task.title.lowercased())", days)
-            }
-            .min { $0.days < $1.days }
-        guard let soonest else { return names }
-        return "\(names) · \(soonest.label) · \(soonest.days)d"
+        // The pack's health drives the line (P19-C2b): an expired/expiring vaccine reads loudest,
+        // then an overdue care task, else the warm all-set line. Same math as the pack overview.
+        return PackHealth.compute(pets: pets, documents: store.documents).hubStatus
     }
 
     private var activityStatus: String {
@@ -980,6 +970,145 @@ private struct PlantTriage: Equatable {
             return "\(first.count) \(PlantTriage.phrase(first.preset)) this week"
         }
         return "All \(totalCount) happy 🌿"
+    }
+}
+
+// MARK: - Pack health (P19-C2b) — the pets OVERVIEW rollup
+
+/// A pure, UI-free read of "the pack's health": per-pet, the soonest care task and the soonest linked
+/// vet-doc expiry, with overdue/expired flagged. The pets OVERVIEW header and the Home-hub Pets card
+/// share this so they always speak with one voice — an EXPIRED vaccine (Sprinkle's rabies) reads loud
+/// in both places.
+private struct PackHealth: Equatable {
+    struct PetStatus: Equatable, Identifiable {
+        let pet: CareItem
+        /// Soonest care task and whole-days-until-due (`nil` days = manual / no cadence).
+        let careTask: CareTask?
+        let careDays: Int?
+        /// Soonest-expiring linked vet document and whole-days-to-expiry (negative = already expired).
+        let doc: FamilyDomain.Document?
+        let docDays: Int?
+        var id: String { pet.id }
+
+        /// A care task due today or overdue.
+        var careUrgent: Bool { (careDays ?? Int.max) <= 0 }
+        /// A linked doc already past its expiry — the loudest signal.
+        var docExpired: Bool { doc != nil && (docDays ?? Int.max) < 0 }
+        /// A linked doc expiring within the 30-day attention window (expired included).
+        var docSoon: Bool { doc != nil && (docDays ?? Int.max) <= 30 }
+        /// This pet contributes to the "needs attention" rollup.
+        var needsAttention: Bool { careUrgent || docSoon }
+        /// Distinct signals this pet flags (a due task + an expiring doc = 2).
+        var attentionCount: Int { (careUrgent ? 1 : 0) + (docSoon ? 1 : 0) }
+    }
+
+    let pets: [PetStatus]
+
+    static func compute(
+        pets: [CareItem], documents: [FamilyDomain.Document], now: Date = Date()
+    ) -> PackHealth {
+        let statuses = pets.map { pet -> PetStatus in
+            let task = pet.soonestDueTask(now: now)
+            let care = task?.daysUntilDue(now: now)
+            let doc = documents
+                .filter { $0.linkedPetIds.contains(pet.id) && $0.expiryDate != nil }
+                .min { ($0.expiryDate ?? .distantFuture) < ($1.expiryDate ?? .distantFuture) }
+            let docDays = doc?.expiryDate.map { FamilyDomain.Document.dayCount(from: now, to: $0) }
+            return PetStatus(pet: pet, careTask: task, careDays: care, doc: doc, docDays: docDays)
+        }
+        return PackHealth(pets: statuses)
+    }
+
+    /// Total distinct attention signals across the pack.
+    var attentionCount: Int { pets.reduce(0) { $0 + $1.attentionCount } }
+    var allSet: Bool { attentionCount == 0 }
+
+    /// Pets with an expired linked doc — the loudest signal (Sprinkle's rabies), most-overdue first.
+    var expired: [PetStatus] { pets.filter(\.docExpired).sorted { ($0.docDays ?? 0) < ($1.docDays ?? 0) } }
+
+    /// The single glanceable line for the Home-hub Pets card. Expired doc → overdue care → all set.
+    var hubStatus: String {
+        if let s = expired.first, let doc = s.doc {
+            return "\(Self.firstName(s.pet.name))'s \(Self.docLabel(doc, petName: s.pet.name)) is overdue"
+        }
+        if let s = pets.filter(\.careUrgent).min(by: { ($0.careDays ?? 0) < ($1.careDays ?? 0) }),
+           let task = s.careTask {
+            let due = (s.careDays ?? 0) < 0 ? "overdue" : "due today"
+            return "\(Self.firstName(s.pet.name))'s \(task.title.lowercased()) \(due)"
+        }
+        if let s = pets.filter(\.docSoon).min(by: { ($0.docDays ?? 0) < ($1.docDays ?? 0) }), let doc = s.doc {
+            return "\(Self.firstName(s.pet.name))'s \(Self.docLabel(doc, petName: s.pet.name)) · \(s.docDays ?? 0)d"
+        }
+        return "The pack is all set"
+    }
+
+    /// A pet's first-name token, for compact copy.
+    static func firstName(_ full: String) -> String {
+        full.split(whereSeparator: { $0.isWhitespace }).first.map(String.init) ?? full
+    }
+
+    /// A short human label for a vet doc — strips the pet's name and generic paperwork nouns so
+    /// "Sprinkle's Rabies Vaccination Certificate" reads as "rabies". Falls back to the full title.
+    static func docLabel(_ doc: FamilyDomain.Document, petName: String) -> String {
+        let petFirst = firstName(petName).lowercased()
+        let drop: Set<String> = [
+            "certificate", "certificates", "record", "records", "vaccine", "vaccines",
+            "vaccination", "vaccinations", "shot", "shots", "doc", "document", "report", "proof", "the",
+        ]
+        let words = doc.title.split(whereSeparator: { $0.isWhitespace }).compactMap { raw -> String? in
+            var w = String(raw).lowercased()
+            if w.hasSuffix("'s") { w = String(w.dropLast(2)) }
+            w = w.trimmingCharacters(in: .punctuationCharacters)
+            if w.isEmpty || w == petFirst || drop.contains(w) { return nil }
+            return w
+        }
+        let label = words.joined(separator: " ")
+        return label.isEmpty ? doc.title : label
+    }
+}
+
+// MARK: - Yard season (P19-C2b) — the yard OVERVIEW rollup
+
+/// A pure read of the yard's seasonal calendar: OVERDUE seasonal jobs and the NEXT dated ones. The Yard
+/// overview header and the Home-hub Yard card share it — lead with overdue, else what's coming.
+private struct YardSeason: Equatable {
+    struct Job: Equatable, Identifiable {
+        let zone: CareItem
+        let task: CareTask
+        let due: Date
+        let days: Int
+        var id: String { "\(zone.id)/\(task.id)" }
+        var name: String { zone.name }
+    }
+    /// Overdue seasonal jobs, most-overdue first.
+    let overdue: [Job]
+    /// Upcoming dated jobs, soonest first.
+    let upcoming: [Job]
+
+    static func compute(_ zones: [CareItem], now: Date = Date()) -> YardSeason {
+        var jobs: [Job] = []
+        for zone in zones {
+            for task in zone.tasks {
+                guard let due = task.dueAt, let days = task.daysUntilDue(now: now) else { continue }
+                jobs.append(Job(zone: zone, task: task, due: due, days: days))
+            }
+        }
+        let overdue = jobs.filter { $0.days < 0 && $0.task.isOverdue(now: now) }.sorted { $0.days < $1.days }
+        let upcoming = jobs.filter { $0.days >= 0 }.sorted { $0.days < $1.days }
+        return YardSeason(overdue: overdue, upcoming: upcoming)
+    }
+
+    var nothingScheduled: Bool { overdue.isEmpty && upcoming.isEmpty }
+
+    /// The Home-hub Yard card line — overdue first, else the next dated job, else the empty line.
+    var hubStatus: String {
+        if let worst = overdue.first {
+            return "\(worst.name) overdue by \(-worst.days)d"
+        }
+        if let next = upcoming.first {
+            return "Next: \(next.name) · \(next.due.formatted(.dateTime.month(.abbreviated).day()))"
+        }
+        return "Nothing scheduled"
     }
 }
 
@@ -2209,6 +2338,7 @@ private struct CareItemDetailView: View {
 /// for multi-add) + add-a-zone unchanged.
 private struct YardDetailView: View {
     @Bindable var store: StoreOf<ChoresReducer>
+    @Dependency(\.analytics) private var analytics
 
     private var zoneItems: [CareItem] { store.careItems.filter { $0.kind == .zone } }
 
@@ -2220,6 +2350,14 @@ private struct YardDetailView: View {
 
     var body: some View {
         List {
+            if !zoneItems.isEmpty {
+                Section {
+                    seasonHeader
+                }
+                .listRowBackground(Color.clear)
+                .listRowInsets(EdgeInsets(top: 4, leading: 0, bottom: 8, trailing: 0))
+            }
+
             Section("Yard & garden") {
                 ForEach(zoneItems) { item in
                     CareRow(
@@ -2244,6 +2382,63 @@ private struct YardDetailView: View {
         .background(Color.familyCanvas)
         .navigationTitle("Yard & garden")
         .navigationBarTitleDisplayMode(.inline)
+        .task { analytics.log("yard_overview_opened") }
+    }
+
+    // MARK: Seasonal OVERVIEW header (P19-C2b)
+
+    /// A seasonal "what's coming" card mirroring the Plants triage header: the NEXT dated zone job,
+    /// with any OVERDUE seasonal jobs flagged loud (terracotta), or a warm empty line when the yard
+    /// calendar is bare. Only shown when there are zones (the starter card covers the true-empty case).
+    private var seasonHeader: some View {
+        let season = YardSeason.compute(zoneItems)
+        let copy = seasonCopy(season)
+        return HStack(alignment: .top, spacing: 14) {
+            ZStack {
+                Circle().fill(copy.tint.opacity(0.15))
+                Image(systemName: copy.symbol).font(.title3).foregroundStyle(copy.tint)
+            }
+            .frame(width: 44, height: 44)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(copy.headline)
+                    .familyTitle(.headline).foregroundStyle(Color.ink)
+                    .fixedSize(horizontal: false, vertical: true)
+                if let sub = copy.subhead {
+                    Text(sub)
+                        .font(.system(.subheadline, design: .rounded))
+                        .foregroundStyle(copy.subheadTint)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity)
+        .background(RoundedRectangle(cornerRadius: 18, style: .continuous).fill(Color.familySurface))
+        .accessibilityIdentifier("yard-season-header")
+    }
+
+    /// Headline + subhead + icon/tint for the season card, derived from the ``YardSeason``.
+    private func seasonCopy(
+        _ s: YardSeason
+    ) -> (headline: String, subhead: String?, subheadTint: Color, symbol: String, tint: Color) {
+        func dateStr(_ d: Date) -> String { d.formatted(.dateTime.month(.abbreviated).day()) }
+        if s.nothingScheduled {
+            return ("Nothing on the yard calendar",
+                    "Add a seasonal job for the season ahead.", .inkSoft, "tree.fill", .marigold)
+        }
+        if let worst = s.overdue.first {
+            let n = s.overdue.count
+            let headline = "\(n) seasonal job\(n == 1 ? "" : "s") overdue"
+            var sub = "\(worst.name) overdue by \(-worst.days) day\(-worst.days == 1 ? "" : "s")"
+            if let next = s.upcoming.first { sub += " · Next: \(next.name) · \(dateStr(next.due))" }
+            return (headline, sub, .terracotta, "exclamationmark.triangle.fill", .terracotta)
+        }
+        // Upcoming only.
+        let next = s.upcoming[0]
+        let headline = "Next: \(next.name) · \(dateStr(next.due))"
+        let sub = s.upcoming.count > 1 ? "Then \(s.upcoming[1].name) · \(dateStr(s.upcoming[1].due))" : nil
+        return (headline, sub, .inkSoft, "calendar", .marigold)
     }
 
     private var yardSuggestionsCard: some View {
@@ -2308,6 +2503,7 @@ private struct YardDetailView: View {
 /// chip), "The pack" starters, and add-a-pet unchanged.
 private struct PetsDetailView: View {
     @Bindable var store: StoreOf<ChoresReducer>
+    @Dependency(\.analytics) private var analytics
 
     private var petItems: [CareItem] { store.careItems.filter { $0.kind == .pet } }
 
@@ -2333,6 +2529,14 @@ private struct PetsDetailView: View {
 
     var body: some View {
         List {
+            if !petItems.isEmpty {
+                Section {
+                    packHeader
+                }
+                .listRowBackground(Color.clear)
+                .listRowInsets(EdgeInsets(top: 4, leading: 0, bottom: 8, trailing: 0))
+            }
+
             Section("Pets") {
                 ForEach(petItems) { item in
                     PetRow(
@@ -2359,6 +2563,135 @@ private struct PetsDetailView: View {
         .background(Color.familyCanvas)
         .navigationTitle("Pets")
         .navigationBarTitleDisplayMode(.inline)
+        .task { analytics.log("pets_overview_opened") }
+    }
+
+    // MARK: The pack — health OVERVIEW header (P19-C2b)
+
+    /// A "The pack" summary card mirroring the Plants triage header: a rollup line ("2 things need
+    /// attention across the pack" / "The pack is all set.") atop a compact per-pet status — each pet's
+    /// soonest care task AND soonest linked vet-doc expiry, with an EXPIRED vaccine flagged loud in a
+    /// filled terracotta pill (Sprinkle's rabies).
+    private var packHeader: some View {
+        let health = PackHealth.compute(pets: petItems, documents: store.documents)
+        return VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .top, spacing: 14) {
+                ZStack {
+                    Circle().fill(rollupTint(health).opacity(0.15))
+                    Image(systemName: rollupSymbol(health)).font(.title3).foregroundStyle(rollupTint(health))
+                }
+                .frame(width: 44, height: 44)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("The pack").familyTitle(.headline).foregroundStyle(Color.ink)
+                    Text(rollupLine(health))
+                        .font(.system(.subheadline, design: .rounded).weight(health.allSet ? .regular : .semibold))
+                        .foregroundStyle(health.allSet ? Color.inkSoft : Color.terracotta)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 0)
+            }
+            VStack(spacing: 10) {
+                ForEach(health.pets) { petStatusRow($0) }
+            }
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity)
+        .background(RoundedRectangle(cornerRadius: 18, style: .continuous).fill(Color.familySurface))
+        .accessibilityIdentifier("pets-pack-header")
+    }
+
+    private func rollupLine(_ h: PackHealth) -> String {
+        if h.allSet { return "The pack is all set." }
+        let n = h.attentionCount
+        return "\(n) thing\(n == 1 ? "" : "s") need\(n == 1 ? "s" : "") attention across the pack."
+    }
+
+    private func rollupTint(_ h: PackHealth) -> Color { h.allSet ? .sky : .terracotta }
+    private func rollupSymbol(_ h: PackHealth) -> String { h.allSet ? "pawprint.fill" : "exclamationmark.triangle.fill" }
+
+    /// One pet's compact status: small avatar, name, its soonest care line, and its doc-expiry chip.
+    private func petStatusRow(_ s: PackHealth.PetStatus) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            packAvatar(s.pet)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(s.pet.name)
+                    .font(.system(.subheadline, design: .rounded).weight(.semibold))
+                    .foregroundStyle(Color.ink)
+                careLine(s)
+                docChip(s)
+            }
+            Spacer(minLength: 0)
+        }
+        .accessibilityIdentifier("pack-status-\(s.pet.id)")
+    }
+
+    private func packAvatar(_ pet: CareItem) -> some View {
+        Group {
+            if let path = pet.photoPath, let data = store.carePhotos[path], let img = UIImage(data: data) {
+                Image(uiImage: img).resizable().scaledToFill()
+            } else {
+                ZStack {
+                    Color.sky.opacity(0.15)
+                    Image(systemName: "pawprint.fill").font(.caption).foregroundStyle(Color.sky)
+                }
+            }
+        }
+        .frame(width: 32, height: 32)
+        .clipShape(Circle())
+    }
+
+    /// "Heartworm due today" / "Rabies overdue by 3d" / "All caught up" — the pet's soonest care.
+    @ViewBuilder
+    private func careLine(_ s: PackHealth.PetStatus) -> some View {
+        if let task = s.careTask, let d = s.careDays {
+            if d < 0 {
+                packStatusLabel("\(task.title) overdue by \(-d)d", .terracotta, "cross.case.fill", bold: true)
+            } else if d == 0 {
+                packStatusLabel("\(task.title) due today", .sky, "cross.case.fill", bold: true)
+            } else {
+                packStatusLabel("\(task.title) · \(d)d", .inkSoft, "cross.case.fill", bold: false)
+            }
+        } else {
+            packStatusLabel("All caught up", .inkSoft, "checkmark.circle", bold: false)
+        }
+    }
+
+    private func packStatusLabel(_ text: String, _ tint: Color, _ symbol: String, bold: Bool) -> some View {
+        Label(text, systemImage: symbol)
+            .font(.caption.weight(bold ? .semibold : .regular))
+            .foregroundStyle(tint)
+            .labelStyle(.titleAndIcon)
+            .imageScale(.small)
+    }
+
+    /// The linked-doc expiry chip. EXPIRED ⇒ a LOUD filled-terracotta pill; expiring-soon ⇒ the soft
+    /// terracotta chip; comfortably-future ⇒ nothing (the summary stays glanceable).
+    @ViewBuilder
+    private func docChip(_ s: PackHealth.PetStatus) -> some View {
+        if let doc = s.doc, let d = s.docDays {
+            let label = PackHealth.docLabel(doc, petName: s.pet.name).capitalizedFirst
+            if d < 0 {
+                HStack(spacing: 5) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                    Text("\(label) EXPIRED")
+                }
+                .font(.caption.weight(.bold))
+                .foregroundStyle(.white)
+                .padding(.horizontal, 9).padding(.vertical, 4)
+                .background(Capsule(style: .continuous).fill(Color.terracotta))
+                .accessibilityIdentifier("pack-doc-expired-\(s.pet.id)")
+            } else if d <= 30 {
+                HStack(spacing: 4) {
+                    Image(systemName: "hourglass")
+                    Text("\(label) · \(d)d")
+                }
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(Color.terracotta)
+                .padding(.horizontal, 8).padding(.vertical, 3)
+                .background(Capsule(style: .continuous).fill(Color.terracotta.opacity(0.15)))
+                .accessibilityIdentifier("pack-doc-soon-\(s.pet.id)")
+            }
+        }
     }
 
     private var packStarterCard: some View {
