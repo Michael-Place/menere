@@ -1,4 +1,5 @@
 import AnalyticsClient
+import CalendarFeature
 import ComposableArchitecture
 import DocsFeature
 import FamilyDomain
@@ -60,6 +61,13 @@ public struct TodayOccurrence: Identifiable, Equatable {
     public let event: FamilyEvent
     public let date: Date
     public var id: String { "\(event.id)@\(date.timeIntervalSince1970)" }
+}
+
+/// Identifies the member whose "day" sheet is presented (P17-C1). An `Identifiable` wrapper so the
+/// view can drive a `.sheet(item:)` off a plain member id.
+public struct MemberDaySelection: Identifiable, Equatable, Sendable {
+    public let id: String
+    public init(id: String) { self.id = id }
 }
 
 /// The "Today" dashboard — the family's front door. P6-C1 ships the scaffold: a time-of-day
@@ -131,6 +139,16 @@ public struct TodayReducer {
         /// The Family-Brain document pushed from a tapped Family Radar row (P20). Reuses the full
         /// `DocumentDetailReducer` (pages, fields, its own idempotent add-to-calendar).
         @Presents var docDetail: DocumentDetailReducer.State?
+
+        /// P17-C1 — tapping a schedule row opens the tapped event for edit in the SAME
+        /// `EventFormReducer` the Calendar tab uses (reschedule / edit / delete, one save path).
+        @Presents var eventForm: EventFormReducer.State?
+        /// P17-C1 — the member whose lightweight "day" sheet is open (their events + chores + care
+        /// today). Read-only, computed in the view from already-loaded state. nil = closed.
+        var memberDay: MemberDaySelection?
+        /// P17-C1 — drives the "Change dinner" recipe picker sheet (assigns tonight's meal-plan entry
+        /// through the same persistence path the Kitchen tab uses).
+        var showDinnerPicker = false
 
         public init() {}
 
@@ -243,6 +261,22 @@ public struct TodayReducer {
         /// A radar-driven event was written — reflected locally so the row swaps to its done state.
         case radarEventAdded(FamilyEvent)
         case docDetail(PresentationAction<DocumentDetailReducer.Action>)
+        // P17-C1 — actionable Today.
+        /// A schedule row was tapped → open that event for edit (logs `today_event_tapped`).
+        case eventTapped(FamilyEvent)
+        case eventForm(PresentationAction<EventFormReducer.Action>)
+        /// Reload just the events list after an edit/delete round-trips through the form.
+        case reloadEvents
+        case eventsReloaded([FamilyEvent])
+        /// A family member card was tapped → open their day sheet (logs `today_member_tapped`).
+        case memberTapped(String)
+        case memberDayDismissed
+        /// "Change dinner" tapped → open the recipe picker.
+        case changeDinnerTapped
+        case dinnerPickerDismissed
+        /// Assign a recipe as tonight's dinner from the picker (logs `today_dinner_changed`); reuses
+        /// the meal-plan persistence path.
+        case assignDinner(Recipe)
         case delegate(Delegate)
     }
 
@@ -691,12 +725,83 @@ public struct TodayReducer {
             case .docDetail:
                 return .none
 
+            case let .eventTapped(event):
+                @Dependency(\.analytics) var analytics
+                analytics.log("today_event_tapped")
+                // Seed the SAME form the Calendar tab uses — reschedule / edit / delete round-trip
+                // through its existing save path (no new persistence).
+                state.eventForm = EventFormReducer.State(event: event, isEditing: true, members: state.members)
+                return .none
+
+            case .eventForm(.presented(.delegate(.didChange))):
+                // The form saved or deleted the event — refresh the schedule so Today reflects it.
+                return .send(.reloadEvents)
+
+            case .eventForm:
+                return .none
+
+            case .reloadEvents:
+                guard let hid = hid() else { return .none }
+                return .run { send in
+                    @Dependency(\.persistence) var persistence
+                    let events = (try? await persistence.events(hid)) ?? []
+                    await send(.eventsReloaded(events))
+                }
+
+            case let .eventsReloaded(events):
+                state.events = events
+                return .none
+
+            case let .memberTapped(id):
+                @Dependency(\.analytics) var analytics
+                analytics.log("today_member_tapped")
+                state.memberDay = MemberDaySelection(id: id)
+                return .none
+
+            case .memberDayDismissed:
+                state.memberDay = nil
+                return .none
+
+            case .changeDinnerTapped:
+                state.showDinnerPicker = true
+                return .none
+
+            case .dinnerPickerDismissed:
+                state.showDinnerPicker = false
+                return .none
+
+            case let .assignDinner(recipe):
+                state.showDinnerPicker = false
+                guard let hid = hid() else { return .none }
+                @Dependency(\.analytics) var analytics
+                analytics.log("today_dinner_changed")
+                @Dependency(\.date.now) var now
+                let day = Calendar.current.startOfDay(for: now)
+                // Replace any existing entry for today — same shape as RecipesReducer.assignMeal.
+                let existing = state.mealPlan.first { Calendar.current.isDate($0.date, inSameDayAs: day) }
+                let entry = MealPlanEntry(
+                    id: existing?.id ?? UUID().uuidString,
+                    date: day, recipeID: recipe.id, recipeTitle: recipe.title
+                )
+                if let i = state.mealPlan.firstIndex(where: { $0.id == entry.id }) {
+                    state.mealPlan[i] = entry
+                } else {
+                    state.mealPlan.append(entry)
+                }
+                return .run { _ in
+                    @Dependency(\.persistence) var persistence
+                    try await persistence.saveMealPlanEntry(hid, entry)
+                }
+
             case .delegate:
                 return .none
             }
         }
         .ifLet(\.$docDetail, action: \.docDetail) {
             DocumentDetailReducer()
+        }
+        .ifLet(\.$eventForm, action: \.eventForm) {
+            EventFormReducer()
         }
     }
 }

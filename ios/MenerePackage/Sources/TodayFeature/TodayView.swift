@@ -1,3 +1,4 @@
+import CalendarFeature
 import ComposableArchitecture
 import DocsFeature
 import FamilyDomain
@@ -9,6 +10,9 @@ import SwiftUI
 public struct TodayView: View {
     @Bindable var store: StoreOf<TodayReducer>
     private let cal = Calendar.current
+    /// The single injected "now" that drives every time-aware decision (schedule split, dinner
+    /// evening state, greeting). Reads the sim/device clock live; overridable in previews/tests.
+    @Dependency(\.date.now) private var now
 
     public init(store: StoreOf<TodayReducer>) {
         self.store = store
@@ -41,6 +45,24 @@ public struct TodayView: View {
         .navigationDestination(item: $store.scope(state: \.docDetail, action: \.docDetail)) { detailStore in
             DocumentDetailView(store: detailStore)
         }
+        // P17-C1: tap a schedule row → edit the event in the Calendar tab's own form (sheet).
+        .sheet(item: $store.scope(state: \.eventForm, action: \.eventForm)) { formStore in
+            EventFormView(store: formStore)
+        }
+        // P17-C1: tap a family member card → their lightweight "day" sheet.
+        .sheet(item: Binding(
+            get: { store.memberDay },
+            set: { if $0 == nil { store.send(.memberDayDismissed) } }
+        )) { selection in
+            MemberDaySheet(store: store, memberID: selection.id)
+        }
+        // P17-C1: "Change dinner" → the recipe picker (reuses the meal-plan assignment path).
+        .sheet(isPresented: Binding(
+            get: { store.showDinnerPicker },
+            set: { if !$0 { store.send(.dinnerPickerDismissed) } }
+        )) {
+            DinnerPickerSheet(store: store)
+        }
         .task { store.send(.task) }
         .refreshable { await store.send(.task).finish() }
     }
@@ -60,7 +82,7 @@ public struct TodayView: View {
     }
 
     private var greetingLine: String {
-        let hour = cal.component(.hour, from: Date())
+        let hour = cal.component(.hour, from: now)
         let partOfDay: String
         switch hour {
         case 0..<12: partOfDay = "Good morning"
@@ -76,7 +98,7 @@ public struct TodayView: View {
     private var dateLine: String {
         let f = DateFormatter()
         f.dateFormat = "EEEE, MMMM d"
-        return "\(f.string(from: Date())) at the Place house"
+        return "\(f.string(from: now)) at the Place house"
     }
 
     // MARK: AI daily briefing (P6-C3)
@@ -144,33 +166,79 @@ public struct TodayView: View {
 
     // MARK: Today's schedule
 
+    /// Time-aware schedule (P17-C1). The day is split at `now`: all-day events pin at the top,
+    /// upcoming/in-progress timed events follow, and events whose end already passed collapse under
+    /// an "Earlier today" disclosure. When everything's behind us, a warm "that's a wrap" line.
     private var scheduleCard: some View {
-        let items = todaysOccurrences()
+        let all = todaysOccurrences()
+        let allDay = all.filter { $0.event.isAllDay }
+        let timed = all.filter { !$0.event.isAllDay }
+        let upcoming = timed.filter { occurrenceEnd($0) >= now }
+        let earlier = timed.filter { occurrenceEnd($0) < now }
+        let primary = allDay + upcoming
         return card {
             cardHeader("Today's schedule", symbol: "calendar")
-            if items.isEmpty {
+            if all.isEmpty {
                 emptyLine("Nothing on the books — a rare quiet day.")
             } else {
                 VStack(spacing: 12) {
-                    ForEach(items) { item in
-                        scheduleRow(item)
+                    if primary.isEmpty {
+                        emptyLine("That's a wrap on today 🌙")
+                    } else {
+                        ForEach(primary) { item in scheduleRow(item) }
+                    }
+                    if !earlier.isEmpty {
+                        DisclosureGroup {
+                            VStack(spacing: 12) {
+                                ForEach(earlier) { item in scheduleRow(item, past: true) }
+                            }
+                            .padding(.top, 8)
+                        } label: {
+                            Text("Earlier today (\(earlier.count))")
+                                .font(.system(.caption, design: .rounded).weight(.semibold))
+                                .foregroundStyle(Color.inkSoft)
+                        }
+                        .tint(Color.inkSoft)
+                        .accessibilityIdentifier("today-schedule-earlier")
                     }
                 }
             }
         }
     }
 
-    private func scheduleRow(_ item: TodayOccurrence) -> some View {
-        HStack(spacing: 12) {
-            Text(item.event.isAllDay ? "All day" : timeString(item.date))
-                .font(.system(.caption, design: .rounded).weight(.semibold))
-                .foregroundStyle(Color.bacanGreen)
-                .frame(width: 64, alignment: .leading)
-            Text(item.event.title)
-                .foregroundStyle(Color.ink)
-            Spacer()
-            assigneeDots(item.event.assigneeIDs)
+    private func scheduleRow(_ item: TodayOccurrence, past: Bool = false) -> some View {
+        Button {
+            store.send(.eventTapped(item.event))
+        } label: {
+            HStack(spacing: 12) {
+                Text(item.event.isAllDay ? "All day" : timeString(item.date))
+                    .font(.system(.caption, design: .rounded).weight(.semibold))
+                    .foregroundStyle(past ? Color.inkSoft : Color.bacanGreen)
+                    .frame(width: 64, alignment: .leading)
+                Text(item.event.title)
+                    .foregroundStyle(past ? Color.inkSoft : Color.ink)
+                    .strikethrough(past, color: Color.inkSoft)
+                Spacer()
+                assigneeDots(item.event.assigneeIDs)
+                Image(systemName: "chevron.right")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(Color.inkSoft.opacity(0.5))
+            }
+            .contentShape(Rectangle())
+            .opacity(past ? 0.7 : 1)
         }
+        .buttonStyle(.pressable)
+        .accessibilityIdentifier("today-schedule-row-\(item.event.id)")
+    }
+
+    /// The occurrence's end instant: the base event's duration applied to this occurrence's start
+    /// (recurring events keep their length), falling back to the start when there's no end.
+    private func occurrenceEnd(_ item: TodayOccurrence) -> Date {
+        if let end = item.event.endDate {
+            let duration = end.timeIntervalSince(item.event.startDate)
+            if duration > 0 { return item.date.addingTimeInterval(duration) }
+        }
+        return item.date
     }
 
     private func assigneeDots(_ ids: [String]) -> some View {
@@ -187,25 +255,55 @@ public struct TodayView: View {
 
     // MARK: Tonight's dinner
 
+    /// After the dinner cutoff hour (8pm local) the card stops prompting and flips to a warm
+    /// done/rest state. Uses the injected `now` so the sim clock drives it.
+    private let dinnerCutoffHour = 20
+    private var isPastDinnerHour: Bool { cal.component(.hour, from: now) >= dinnerCutoffHour }
+
     private var dinnerCard: some View {
         card {
-            cardHeader("Tonight's dinner", symbol: "fork.knife")
-            if let entry = tonightsEntry, entry.isEatingOut {
-                eatingOutContent(entry)
-            } else if let title = tonightsDinnerTitle {
-                Text(title)
-                    .familyTitle()
-                    .foregroundStyle(Color.ink)
-            } else {
-                VStack(alignment: .leading, spacing: 10) {
-                    emptyLine("Nothing planned — cereal night?")
-                    Button { store.send(.planDinnerTapped) } label: {
-                        Label("Plan dinner", systemImage: "plus.circle.fill")
-                            .font(.system(.subheadline, design: .rounded).weight(.semibold))
-                            .foregroundStyle(Color.bacanGreen)
-                    }
-                    .buttonStyle(.pressable)
+            HStack {
+                cardHeader("Tonight's dinner", symbol: "fork.knife")
+                Spacer()
+                // P17-C1 — always-available "Change dinner" (opens the recipe picker).
+                Button { store.send(.changeDinnerTapped) } label: {
+                    Label("Change", systemImage: "arrow.triangle.2.circlepath")
+                        .font(.system(.caption, design: .rounded).weight(.semibold))
+                        .foregroundStyle(Color.bacanGreen)
                 }
+                .buttonStyle(.pressable)
+                .accessibilityIdentifier("today-dinner-change")
+            }
+            dinnerBody
+        }
+    }
+
+    @ViewBuilder
+    private var dinnerBody: some View {
+        if isPastDinnerHour {
+            // Evening rest state — stop nagging once dinnertime has passed.
+            let line = tonightsEntry != nil
+                ? "Dinner's done — hope it was good 🌙"
+                : "Kitchen's closed for the night 🌙"
+            Text(line)
+                .foregroundStyle(Color.inkSoft)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .accessibilityIdentifier("today-dinner-evening")
+        } else if let entry = tonightsEntry, entry.isEatingOut {
+            eatingOutContent(entry)
+        } else if let title = tonightsDinnerTitle {
+            Text(title)
+                .familyTitle()
+                .foregroundStyle(Color.ink)
+        } else {
+            VStack(alignment: .leading, spacing: 10) {
+                emptyLine("Nothing planned — cereal night?")
+                Button { store.send(.planDinnerTapped) } label: {
+                    Label("Plan dinner", systemImage: "plus.circle.fill")
+                        .font(.system(.subheadline, design: .rounded).weight(.semibold))
+                        .foregroundStyle(Color.bacanGreen)
+                }
+                .buttonStyle(.pressable)
             }
         }
     }
@@ -285,7 +383,7 @@ public struct TodayView: View {
     }
 
     private var tonightsEntry: MealPlanEntry? {
-        store.mealPlan.first { cal.isDateInToday($0.date) }
+        store.mealPlan.first { cal.isDate($0.date, inSameDayAs: now) }
     }
 
     private var tonightsDinnerTitle: String? {
@@ -330,7 +428,7 @@ public struct TodayView: View {
     /// today. Sorted overdue → today → undated; within a bucket, by due date (undated by createdAt).
     /// Future-dated incomplete chores are excluded.
     private func choresToday() -> [Chore] {
-        let startOfToday = cal.startOfDay(for: Date())
+        let startOfToday = cal.startOfDay(for: now)
         let endOfToday = cal.date(byAdding: .day, value: 1, to: startOfToday)!
         func bucket(_ c: Chore) -> Int? {
             guard let due = c.dueDate else { return 2 }   // undated
@@ -647,33 +745,40 @@ public struct TodayView: View {
 
     private func memberTile(_ member: HouseholdMember) -> some View {
         let color = memberColor(member)
-        return VStack(spacing: 6) {
-            Image(systemName: member.avatarSystemName)
-                .font(.title2)
-                .foregroundStyle(color)
-            Text(firstName(member.name))
-                .font(.system(.subheadline, design: .rounded).weight(.semibold))
-                .foregroundStyle(Color.ink)
-            Text("Lv \(level(for: member.id))")
+        return Button {
+            store.send(.memberTapped(member.id))
+        } label: {
+            VStack(spacing: 6) {
+                Image(systemName: member.avatarSystemName)
+                    .font(.title2)
+                    .foregroundStyle(color)
+                Text(firstName(member.name))
+                    .font(.system(.subheadline, design: .rounded).weight(.semibold))
+                    .foregroundStyle(Color.ink)
+                Text("Lv \(level(for: member.id))")
+                    .font(.caption2)
+                    .foregroundStyle(Color.inkSoft)
+                HStack(spacing: 12) {
+                    Label("\(eventsToday(for: member.id))", systemImage: "calendar")
+                    Label("\(openChores(for: member.id))", systemImage: "checklist")
+                }
                 .font(.caption2)
                 .foregroundStyle(Color.inkSoft)
-            HStack(spacing: 12) {
-                Label("\(eventsToday(for: member.id))", systemImage: "calendar")
-                Label("\(openChores(for: member.id))", systemImage: "checklist")
             }
-            .font(.caption2)
-            .foregroundStyle(Color.inkSoft)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 12)
+            .background(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(color.opacity(0.12))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .stroke(color.opacity(0.35), lineWidth: 1)
+            )
+            .contentShape(Rectangle())
         }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 12)
-        .background(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(color.opacity(0.12))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .stroke(color.opacity(0.35), lineWidth: 1)
-        )
+        .buttonStyle(.pressable)
+        .accessibilityIdentifier("today-member-\(member.id)")
     }
 
     // MARK: Member helpers
@@ -735,7 +840,7 @@ public struct TodayView: View {
     // MARK: Occurrence helpers (reuse the Calendar agenda's client-side expansion)
 
     private func todaysOccurrences() -> [TodayOccurrence] {
-        let start = cal.startOfDay(for: Date())
+        let start = cal.startOfDay(for: now)
         let end = cal.date(byAdding: .day, value: 1, to: start)!.addingTimeInterval(-1)
         return store.events
             .flatMap { event in
@@ -944,6 +1049,216 @@ private struct RadarDetailView: View {
                 .padding(16)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(RoundedRectangle(cornerRadius: 18, style: .continuous).fill(Color.familySurface))
+            }
+        }
+    }
+}
+
+/// A member's "day at a glance" (P17-C1) — a lightweight, read-mostly sheet reached by tapping a
+/// family card on Today. Reuses the already-loaded events + chores in the Today store (no new fetch):
+/// the member's avatar/level, their timed & all-day events today, and their open chores.
+private struct MemberDaySheet: View {
+    let store: StoreOf<TodayReducer>
+    let memberID: String
+    @Environment(\.dismiss) private var dismiss
+    @Dependency(\.date.now) private var now
+    private let cal = Calendar.current
+
+    private var member: HouseholdMember? { store.members.first { $0.id == memberID } }
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    if let member {
+                        header(member)
+                        eventsSection
+                        choresSection
+                    } else {
+                        Text("This member's day isn't available.")
+                            .foregroundStyle(Color.inkSoft)
+                    }
+                }
+                .padding(.horizontal)
+                .padding(.vertical, 12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .background(Color.familyCanvas)
+            .navigationTitle(member.map { firstName($0.name) } ?? "Member")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { dismiss() }
+                }
+            }
+        }
+    }
+
+    private func header(_ member: HouseholdMember) -> some View {
+        let rgb = member.color.rgb
+        let color = Color(red: rgb.red, green: rgb.green, blue: rgb.blue)
+        let level = (store.stats.first { $0.memberID == member.id } ?? MemberStats(id: member.id, memberID: member.id)).level
+        return HStack(spacing: 14) {
+            Image(systemName: member.avatarSystemName)
+                .font(.largeTitle)
+                .foregroundStyle(color)
+                .frame(width: 56, height: 56)
+                .background(Circle().fill(color.opacity(0.14)))
+            VStack(alignment: .leading, spacing: 4) {
+                Text(member.name)
+                    .familyTitle(.title3)
+                    .foregroundStyle(Color.ink)
+                Text("Level \(level)")
+                    .font(.system(.subheadline, design: .rounded))
+                    .foregroundStyle(Color.inkSoft)
+            }
+            Spacer()
+        }
+    }
+
+    @ViewBuilder
+    private var eventsSection: some View {
+        let events = memberEvents()
+        section("On the calendar", symbol: "calendar") {
+            if events.isEmpty {
+                Text("Nothing scheduled today.").foregroundStyle(Color.inkSoft)
+            } else {
+                ForEach(events) { item in
+                    HStack(spacing: 12) {
+                        Text(item.event.isAllDay ? "All day" : shortTime(item.date))
+                            .font(.system(.caption, design: .rounded).weight(.semibold))
+                            .foregroundStyle(Color.bacanGreen)
+                            .frame(width: 64, alignment: .leading)
+                        Text(item.event.title).foregroundStyle(Color.ink)
+                        Spacer(minLength: 0)
+                    }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var choresSection: some View {
+        let chores = memberChores()
+        section("Chores", symbol: "checklist") {
+            if chores.isEmpty {
+                Text("No open chores today. 🎉").foregroundStyle(Color.inkSoft)
+            } else {
+                ForEach(chores) { chore in
+                    HStack(spacing: 12) {
+                        Image(systemName: "circle").foregroundStyle(Color.inkSoft)
+                        Text(chore.title).foregroundStyle(Color.ink)
+                        Spacer(minLength: 0)
+                        Text("\(chore.effectiveXP) XP")
+                            .font(.system(.caption, design: .rounded).weight(.semibold))
+                            .foregroundStyle(Color.bacanGreen)
+                    }
+                }
+            }
+        }
+    }
+
+    private func section<Content: View>(
+        _ title: String, symbol: String, @ViewBuilder _ content: () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 8) {
+                Image(systemName: symbol).font(.subheadline).foregroundStyle(Color.inkSoft)
+                Text(title).familyTitle(.headline).foregroundStyle(Color.ink)
+            }
+            content()
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(16)
+        .background(RoundedRectangle(cornerRadius: 18, style: .continuous).fill(Color.familySurface))
+    }
+
+    // MARK: Data (reuses the Today store — no new fetch)
+
+    private func memberEvents() -> [TodayOccurrence] {
+        let start = cal.startOfDay(for: now)
+        let end = cal.date(byAdding: .day, value: 1, to: start)!.addingTimeInterval(-1)
+        return store.events
+            .filter { $0.assigneeIDs.contains(memberID) }
+            .flatMap { event in
+                event.occurrences(from: start, to: end, calendar: cal)
+                    .map { TodayOccurrence(event: event, date: $0) }
+            }
+            .sorted { $0.date < $1.date }
+    }
+
+    private func memberChores() -> [Chore] {
+        let startOfToday = cal.startOfDay(for: now)
+        let endOfToday = cal.date(byAdding: .day, value: 1, to: startOfToday)!
+        return store.chores.filter { chore in
+            guard chore.assigneeID == memberID, !chore.isCompleted else { return false }
+            guard let due = chore.dueDate else { return true }   // undated counts as on-deck
+            return due < endOfToday                                // overdue or today
+        }
+        .sorted { ($0.dueDate ?? $0.createdAt) < ($1.dueDate ?? $1.createdAt) }
+    }
+
+    private func firstName(_ full: String) -> String {
+        full.split(whereSeparator: { $0.isWhitespace }).first.map(String.init) ?? full
+    }
+
+    private func shortTime(_ date: Date) -> String {
+        let f = DateFormatter(); f.timeStyle = .short; f.dateStyle = .none
+        return f.string(from: date)
+    }
+}
+
+/// The "Change dinner" picker (P17-C1) — a plain recipe list reached from the Today dinner card. A
+/// tap assigns tonight's meal-plan entry through the same `saveMealPlanEntry` path the Kitchen tab
+/// uses; there's no bespoke persistence here.
+private struct DinnerPickerSheet: View {
+    let store: StoreOf<TodayReducer>
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 12) {
+                    if store.recipes.isEmpty {
+                        Text("No recipes yet — add some in Kitchen first.")
+                            .foregroundStyle(Color.inkSoft)
+                            .padding(.top, 40)
+                            .frame(maxWidth: .infinity, alignment: .center)
+                    } else {
+                        ForEach(store.recipes) { recipe in
+                            Button {
+                                store.send(.assignDinner(recipe))
+                                dismiss()
+                            } label: {
+                                HStack(spacing: 12) {
+                                    Image(systemName: recipe.isFavorite ? "star.fill" : "fork.knife")
+                                        .foregroundStyle(recipe.isFavorite ? Color.marigold : Color.bacanGreen)
+                                        .frame(width: 24)
+                                    Text(recipe.title).foregroundStyle(Color.ink)
+                                    Spacer(minLength: 0)
+                                    Image(systemName: "chevron.right")
+                                        .font(.caption2.weight(.semibold))
+                                        .foregroundStyle(Color.inkSoft.opacity(0.5))
+                                }
+                                .contentShape(Rectangle())
+                                .padding(14)
+                                .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Color.familySurface))
+                            }
+                            .buttonStyle(.pressable)
+                            .accessibilityIdentifier("today-dinner-pick-\(recipe.id)")
+                        }
+                    }
+                }
+                .padding(.horizontal)
+                .padding(.vertical, 12)
+            }
+            .background(Color.familyCanvas)
+            .navigationTitle("Change dinner")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
             }
         }
     }
