@@ -1,3 +1,4 @@
+import AnalyticsClient
 import ComposableArchitecture
 import DocsFeature
 import FamilyDomain
@@ -18,6 +19,9 @@ public struct ChoresView: View {
     @Bindable var store: StoreOf<ChoresReducer>
     /// The signed-in member — resolves "my" level for the Chores card summary.
     @Shared(.user) private var user
+    /// P25 telemetry — the Home hub's card taps + detail opens (fire-and-forget). Logged from the
+    /// view because the hub navigates view-side (`NavigationLink(value:)`), not through the reducer.
+    @Dependency(\.analytics) private var analytics
 
     public init(store: StoreOf<ChoresReducer>) {
         self.store = store
@@ -62,6 +66,9 @@ public struct ChoresView: View {
                         }
                         .buttonStyle(.plain)
                         .accessibilityIdentifier("home-card-smart-home")
+                        .simultaneousGesture(TapGesture().onEnded {
+                            analytics.log("home_card_tapped", ["card": "smart_home"])
+                        })
                         smartHomePreview(config)
                     }
                 }
@@ -89,17 +96,23 @@ public struct ChoresView: View {
         .background(Color.familyCanvas)
         .navigationTitle("Home")
         .navigationDestination(for: Destination.self) { destination in
-            switch destination {
-            case .choresRewards: ChoresRewardsDetailView(store: store)
-            case .houseCare: HouseCareDetailView(store: store)
-            case .plants: PlantsDetailView(store: store)
-            case let .plantDetail(id): PlantDetailView(store: store, plantID: id)
-            case let .petDetail(id): PetDetailView(store: store, petID: id)
-            case let .careDetail(id): CareItemDetailView(store: store, itemID: id)
-            case .yard: YardDetailView(store: store)
-            case .pets: PetsDetailView(store: store)
-            case .activity: ActivityDetailView(store: store)
+            Group {
+                switch destination {
+                case .choresRewards: ChoresRewardsDetailView(store: store)
+                case .houseCare: HouseCareDetailView(store: store)
+                case .plants: PlantsDetailView(store: store)
+                case let .plantDetail(id): PlantDetailView(store: store, plantID: id)
+                case let .petDetail(id): PetDetailView(store: store, petID: id)
+                case let .careDetail(id): CareItemDetailView(store: store, itemID: id)
+                case .yard: YardDetailView(store: store)
+                case .pets: PetsDetailView(store: store)
+                case .activity: ActivityDetailView(store: store)
+                }
             }
+            // P25 telemetry: one clean touch logs both the card tap (overview screens) and the
+            // per-element detail open (plant/pet/care). Plants is logged distinctly so we can compare
+            // opens-vs-detail-taps — the exact friction signal we lacked.
+            .onAppear { logDestinationOpened(destination) }
         }
         .overlay {
             // A level-up that arrives while the hub is visible still celebrates here.
@@ -124,6 +137,23 @@ public struct ChoresView: View {
                 .keyboardType(.numberPad)
             Button("Cancel", role: .cancel) { store.showAddReward = false }
             Button("Add") { store.send(.createReward) }
+        }
+    }
+
+    /// P25 telemetry: map a pushed hub ``Destination`` to its analytics event. Overview screens →
+    /// `home_card_tapped {card}`; per-element pages → `home_detail_opened {kind}`; the Plants overview
+    /// gets its own `plants_opened` (opens-vs-detail-taps signal).
+    private func logDestinationOpened(_ destination: Destination) {
+        switch destination {
+        case .choresRewards: analytics.log("home_card_tapped", ["card": "chores_rewards"])
+        case .houseCare: analytics.log("home_card_tapped", ["card": "house_care"])
+        case .plants: analytics.log("plants_opened")
+        case .yard: analytics.log("home_card_tapped", ["card": "yard"])
+        case .pets: analytics.log("home_card_tapped", ["card": "pets"])
+        case .activity: analytics.log("home_card_tapped", ["card": "activity"])
+        case .plantDetail: analytics.log("home_detail_opened", ["kind": "plant"])
+        case .petDetail: analytics.log("home_detail_opened", ["kind": "pet"])
+        case .careDetail: analytics.log("home_detail_opened", ["kind": "care"])
         }
     }
 

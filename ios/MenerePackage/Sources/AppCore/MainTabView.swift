@@ -1,3 +1,4 @@
+import AnalyticsClient
 import AssistantFeature
 import CalendarFeature
 import ChoresFeature
@@ -61,11 +62,21 @@ public struct MainTabReducer {
         Scope(state: \.assistant, action: \.assistant, child: AssistantReducer.init)
 
         Reduce { state, action in
+            @Dependency(\.analytics) var analytics   // P25 telemetry (fire-and-forget)
             switch action {
             case .tabSelected(let tab):
                 state.selectedTab = tab
+                analytics.log("tab_selected", ["tab": tab.eventName])
                 // Re-selecting Today re-aggregates its cards (cheap one-shot fetches).
                 return tab == .today ? .send(.today(.task)) : .none
+
+            case .binding(\.showAssistant):
+                if state.showAssistant { analytics.log("assistant_opened") }
+                return .none
+
+            case .binding(\.showSearch):
+                if state.showSearch { analytics.log("search_opened") }
+                return .none
 
             // Today quick-action deep links → switch to the target tab.
             case .today(.delegate(.openCalendar)):
@@ -109,6 +120,17 @@ public enum TabItem: Int, CaseIterable, Equatable {
         case .chores: "Home"           // P8: the Chores tab became the Home care hub (enum case
                                        // kept `chores` to avoid churn — display-only rename).
         case .recipes: "Kitchen"
+        }
+    }
+
+    /// Stable snake_case name for analytics (`chores` = the Home tab).
+    var eventName: String {
+        switch self {
+        case .today: "today"
+        case .calendar: "calendar"
+        case .lists: "lists"
+        case .chores: "home"
+        case .recipes: "kitchen"
         }
     }
 

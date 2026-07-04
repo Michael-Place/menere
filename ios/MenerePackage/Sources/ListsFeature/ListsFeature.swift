@@ -1,3 +1,4 @@
+import AnalyticsClient
 import CellarFeature
 import ComposableArchitecture
 import DocsFeature
@@ -135,6 +136,8 @@ public struct ListsReducer {
                 return .none
 
             case .docsTapped:
+                @Dependency(\.analytics) var analytics
+                analytics.log("family_brain_opened")   // P25 telemetry (fire-and-forget)
                 state.docs = DocsReducer.State()
                 return .none
 

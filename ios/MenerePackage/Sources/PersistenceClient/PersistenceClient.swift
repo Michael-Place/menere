@@ -200,6 +200,12 @@ public struct PersistenceClient: Sendable {
     /// replaced, mirroring `saveHueConfig` et al., so a cleared limit actually clears.
     public var saveBudgetConfig: @Sendable (_ hid: String, _ config: BudgetConfig) async throws -> Void
 
+    // MARK: Bacán wishlist (P25)
+    /// The family's "Ideas for Bacán" wishlist at `households/{hid}/wishlist`, newest-first.
+    public var wishlist: @Sendable (_ hid: String) async throws -> [WishlistIdea]
+    /// Add one wishlist idea (fire-and-forget at call sites).
+    public var addWishlistIdea: @Sendable (_ hid: String, _ idea: WishlistIdea) async throws -> Void
+
     // MARK: Activity feed
     /// Recent activity, newest first (capped at 50).
     public var activity: @Sendable (_ hid: String) async throws -> [ActivityItem]
@@ -589,6 +595,17 @@ extension PersistenceClient: DependencyKey {
                 // Full-doc replace (merge: false) — same rationale as saveHueConfig et al.
                 try await households().document(hid).collection("config").document("budgets").setData(
                     Firestore.Encoder().encode(config)
+                )
+            },
+            wishlist: { hid in
+                let snapshot = try await households().document(hid).collection("wishlist")
+                    .order(by: "at", descending: true)
+                    .getDocuments()
+                return try snapshot.documents.map { try Firestore.Decoder().decode(WishlistIdea.self, from: $0.data()) }
+            },
+            addWishlistIdea: { hid, idea in
+                try await households().document(hid).collection("wishlist").document(idea.id).setData(
+                    Firestore.Encoder().encode(idea)
                 )
             },
             activity: { hid in

@@ -1,3 +1,4 @@
+import AnalyticsClient
 import ComposableArchitecture
 import FamilyDomain
 import Foundation
@@ -80,6 +81,7 @@ public struct MoneyReducer {
     @Dependency(\.persistence) var persistence
     @Dependency(\.uuid) var uuid
     @Dependency(\.date) var date
+    @Dependency(\.analytics) var analytics   // P25 telemetry (fire-and-forget)
 
     private func hid() -> String? {
         @Shared(.user) var user
@@ -142,6 +144,7 @@ public struct MoneyReducer {
 
             case let .fileFromBrainTapped(doc):
                 guard let hid = hid() else { return .none }
+                analytics.log("expense_logged", ["source": "brain"])
                 let expense = Expense.promoting(document: doc, id: uuid().uuidString, now: date.now)
                 state.expenses.append(expense)
                 return .run { _ in
@@ -169,6 +172,7 @@ public struct MoneyReducer {
 
             case let .addExpense(.presented(.delegate(.save(expense)))):
                 guard let hid = hid() else { state.addExpense = nil; return .none }
+                analytics.log("expense_logged", ["source": "manual"])
                 state.addExpense = nil
                 state.expenses.append(expense)
                 return .run { _ in

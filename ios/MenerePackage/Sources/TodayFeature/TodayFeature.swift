@@ -1,3 +1,4 @@
+import AnalyticsClient
 import ComposableArchitecture
 import FamilyDomain
 import Foundation
@@ -243,6 +244,8 @@ public struct TodayReducer {
         Reduce { state, action in
             switch action {
             case .task:
+                @Dependency(\.analytics) var analytics
+                analytics.log("today_opened")   // P25 telemetry (fire-and-forget)
                 guard let hid = hid() else {
                     // No household yet — leave every card in its empty state, never block.
                     state.firstName = firstName(from: [])

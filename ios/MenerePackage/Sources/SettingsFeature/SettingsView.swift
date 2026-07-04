@@ -27,6 +27,8 @@ public struct SettingsReducer {
         var isJoining = false
         var joinError: String?
         @Presents var profileEdit: ProfileEditReducer.State?
+        /// P25 — "Ideas for Bacán" wishlist capture sheet.
+        @Presents var wishlist: WishlistReducer.State?
 
         // MARK: Smart home (Hue, P12-C3 — multi-bridge)
         /// The household's Hue config, or nil when never paired (→ the "Set up" row).
@@ -122,6 +124,9 @@ public struct SettingsReducer {
         case dismissJoinSheet
         case editProfileTapped
         case profileEdit(PresentationAction<ProfileEditReducer.Action>)
+        // P25 — Ideas for Bacán wishlist
+        case ideasTapped
+        case wishlist(PresentationAction<WishlistReducer.Action>)
         case binding(BindingAction<State>)
 
         // Smart home (Hue, multi-bridge)
@@ -200,7 +205,24 @@ public struct SettingsReducer {
 
     public var body: some ReducerOf<Self> {
         BindingReducer()
+
+        // P25 — Ideas for Bacán wishlist. Kept in its own small reducer so the (already very large)
+        // main switch below doesn't blow the Swift type-checker's time budget.
         Reduce { state, action in
+            switch action {
+            case .ideasTapped:
+                state.wishlist = WishlistReducer.State()
+                return .none
+            case .wishlist:
+                return .none
+            default:
+                return .none
+            }
+        }
+
+        // Explicit closure signature: the main switch is large enough that letting Swift *infer*
+        // the closure/return types blows the type-check time budget — spelling them out fixes it.
+        Reduce { (state: inout State, action: Action) -> Effect<Action> in
             switch action {
             case .editProfileTapped:
                 guard let me = state.myMember else { return .none }
@@ -706,10 +728,18 @@ public struct SettingsReducer {
 
             case .binding:
                 return .none
+
+            // P25 wishlist actions are handled in the dedicated Reduce above; default keeps this
+            // (already very large) switch within the compiler's type-check budget.
+            default:
+                return .none
             }
         }
         .ifLet(\.$profileEdit, action: \.profileEdit) {
             ProfileEditReducer()
+        }
+        .ifLet(\.$wishlist, action: \.wishlist) {
+            WishlistReducer()
         }
         .ifLet(\.$huePairing, action: \.huePairing) {
             HuePairingReducer()
@@ -835,6 +865,26 @@ public struct SettingsView: View {
 
             smartHomeSection
 
+            // P25 — Ideas for Bacán: always-discoverable wishlist capture.
+            Section {
+                Button {
+                    store.send(.ideasTapped)
+                } label: {
+                    HStack(spacing: 12) {
+                        Image(systemName: "lightbulb.fill")
+                            .foregroundStyle(Color.marigold)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Ideas for Bacán").foregroundStyle(Color.ink)
+                            Text("Got an idea? We're all ears.")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Image(systemName: "chevron.right").font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+                .accessibilityIdentifier("ideas-for-bacan-row")
+            }
+
             Section {
                 Button(role: .destructive) {
                     store.send(.signOutTapped)
@@ -861,6 +911,9 @@ public struct SettingsView: View {
         }
         .sheet(item: $store.scope(state: \.profileEdit, action: \.profileEdit)) { editStore in
             ProfileEditView(store: editStore)
+        }
+        .sheet(item: $store.scope(state: \.wishlist, action: \.wishlist)) { wishlistStore in
+            WishlistView(store: wishlistStore)
         }
         .sheet(item: $store.scope(state: \.huePairing, action: \.huePairing)) { pairingStore in
             HuePairingView(store: pairingStore)

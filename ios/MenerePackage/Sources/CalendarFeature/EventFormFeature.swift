@@ -1,3 +1,4 @@
+import AnalyticsClient
 import CalendarSyncClient
 import ComposableArchitecture
 import FamilyDomain
@@ -71,6 +72,10 @@ public struct EventFormReducer {
                 state.event.updatedAt = Date()
                 let event = state.event
                 let isNew = !state.isEditing
+                if isNew {
+                    @Dependency(\.analytics) var analytics
+                    analytics.log("event_added")   // P25 telemetry (fire-and-forget)
+                }
                 @Shared(.user) var user
                 let actorID = user?.id
                 return .run { send in

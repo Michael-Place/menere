@@ -1,3 +1,4 @@
+import AnalyticsClient
 import AuthenticationDomain
 import AuthenticationFeature
 import ComposableArchitecture
@@ -51,7 +52,13 @@ public struct AppReducer {
     public var body: some ReducerOf<AppReducer> {
         Reduce { state, action in
             switch action {
-            case .scenePhaseChanged:
+            case .scenePhaseChanged(let phase):
+                // P25 telemetry: app came to the foreground (a "session"). No-ops until a household
+                // is resolved. Fire-and-forget.
+                if phase == .active {
+                    @Dependency(\.analytics) var analytics
+                    analytics.log("session_start")
+                }
                 return .none
 
             case .task:

@@ -1,3 +1,4 @@
+import AnalyticsClient
 import ComposableArchitecture
 import FamilyDomain
 import MenereUI
@@ -90,6 +91,8 @@ public struct RecipeFormReducer {
 
             case let .importResponse(.success(imported)):
                 state.isImporting = false
+                @Dependency(\.analytics) var analytics
+                analytics.log("recipe_imported")   // P25 telemetry (fire-and-forget)
                 // Keep the existing id/favorite; overlay imported content.
                 state.recipe.title = imported.title
                 state.recipe.servings = imported.servings

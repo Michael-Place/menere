@@ -1,3 +1,4 @@
+import AnalyticsClient
 import ComposableArchitecture
 import FamilyDomain
 import HouseFeature
@@ -118,6 +119,7 @@ public struct ChoresReducer {
         BindingReducer()
         Scope(state: \.houseCard, action: \.houseCard) { HouseCardReducer() }
         Reduce { state, action in
+            @Dependency(\.analytics) var analytics   // P25 telemetry (fire-and-forget)
             switch action {
             case .task:
                 guard let (hid, _) = ctx() else { return .none }
@@ -207,6 +209,7 @@ public struct ChoresReducer {
                       let idx = state.chores.firstIndex(where: { $0.id == chore.id }) else { return .none }
                 // Shared completion logic (see ``ChoreCompletion``) so Today and Chores behave
                 // identically. XP is reversed/awarded server-side by onChoreToggled either way.
+                if !chore.isCompleted { analytics.log("chore_completed") }
                 let outcome = chore.isCompleted
                     ? ChoreCompletion.uncomplete(chore)
                     : ChoreCompletion.complete(chore, fallbackCreditID: uid, members: state.members)
@@ -263,6 +266,7 @@ public struct ChoresReducer {
                 return .none
 
             case .addPlantTapped:
+                analytics.log("plant_capture_started")
                 // P9.1 — ADD now opens the Planta-inspired capture wizard (photo → identify → nickname →
                 // home → watering → welcome). EDIT still uses ``careForm``. Seed the Home step's chips
                 // with the family's existing care-item locations.
@@ -282,6 +286,7 @@ public struct ChoresReducer {
                           item: state.careItems[i], taskID: taskID, byMemberID: uid, members: state.members
                       )
                 else { return .none }
+                analytics.log("care_marked_done", ["kind": state.careItems[i].kind.rawValue])
                 // Shared care-completion logic (see ``CareCompletion``) so Today and Home behave
                 // identically: stamp who-did-it-last + a best-effort "took care of…" activity entry.
                 state.careItems[i] = outcome.updated
@@ -389,6 +394,7 @@ public struct ChoresReducer {
                 guard state.recallingRitual == nil,
                       let config = state.houseCard.config,
                       let bridge = config.bridge(ritual.bridgeId) else { return .none }
+                analytics.log("ritual_recalled", ["ritual": ritual.key])
                 state.recallingRitual = ritual.key
                 return .run { send in
                     @Dependency(\.hue) var hue

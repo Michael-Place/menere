@@ -1,3 +1,4 @@
+import AnalyticsClient
 import ComposableArchitecture
 import FamilyDomain
 import LocationClient
@@ -88,6 +89,7 @@ public struct RecipesReducer {
     public var body: some ReducerOf<Self> {
         BindingReducer()
         Reduce { state, action in
+            @Dependency(\.analytics) var analytics   // P25 telemetry (fire-and-forget)
             switch action {
             case .task:
                 guard let hid = hid() else { return .none }
@@ -120,6 +122,7 @@ public struct RecipesReducer {
                 return .none
 
             case let .editTapped(recipe):
+                analytics.log("recipe_opened")
                 state.form = RecipeFormReducer.State(recipe: recipe, isEditing: true)
                 return .none
 
@@ -134,6 +137,7 @@ public struct RecipesReducer {
 
             case let .assignMeal(date, recipe):
                 guard let hid = hid() else { return .none }
+                analytics.log("meal_planned")
                 let day = Calendar.current.startOfDay(for: date)
                 // Replace any existing entry for that day.
                 let existing = state.mealPlan.first { Calendar.current.isDate($0.date, inSameDayAs: day) }

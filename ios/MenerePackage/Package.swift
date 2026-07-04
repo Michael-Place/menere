@@ -25,6 +25,7 @@ let package = Package(
         .library(name: "ChoresFeature", targets: ["ChoresFeature"]),
         .library(name: "RecipesFeature", targets: ["RecipesFeature"]),
         .library(name: "PersistenceClient", targets: ["PersistenceClient"]),
+        .library(name: "AnalyticsClient", targets: ["AnalyticsClient"]),
         .library(name: "StorageClient", targets: ["StorageClient"]),
         .library(name: "LocationClient", targets: ["LocationClient"]),
         .library(name: "HueClient", targets: ["HueClient"]),
@@ -73,6 +74,7 @@ let package = Package(
                 "WineDomain",
                 "FamilyDomain",
                 "PersistenceClient",
+                "AnalyticsClient",
                 "StorageClient",
                 "IdentifyClient",
                 "ScanFeature",
@@ -126,6 +128,7 @@ let package = Package(
                 "WineDomain",
                 "FamilyDomain",
                 "PersistenceClient",
+                "AnalyticsClient",
                 "HouseholdClient",
                 "HueClient",
                 "LutronClient",
@@ -164,6 +167,7 @@ let package = Package(
                 "FamilyDomain",
                 "HouseFeature",
                 "PersistenceClient",
+                "AnalyticsClient",
                 "UserDomain",
                 "DocsFeature",
                 "LocationClient",
@@ -183,6 +187,7 @@ let package = Package(
                 "MenereUI",
                 "FamilyDomain",
                 "PersistenceClient",
+                "AnalyticsClient",
                 "UserDomain",
                 "CellarFeature",
                 "ScanFeature",
@@ -210,6 +215,7 @@ let package = Package(
                 "MenereUI",
                 "FamilyDomain",
                 "PersistenceClient",
+                "AnalyticsClient",
                 "UserDomain",
                 "CalendarSyncClient",
             ]
@@ -232,6 +238,7 @@ let package = Package(
                 "HouseFeature",
                 "HueClient",
                 "PersistenceClient",
+                "AnalyticsClient",
                 "StorageClient",
                 "UserDomain",
                 "DocsFeature",
@@ -245,6 +252,7 @@ let package = Package(
                 "MenereUI",
                 "FamilyDomain",
                 "PersistenceClient",
+                "AnalyticsClient",
                 "UserDomain",
                 "LocationClient",
             ]
@@ -296,6 +304,19 @@ let package = Package(
                 .product(name: "Dependencies", package: "swift-dependencies"),
                 .product(name: "DependenciesMacros", package: "swift-dependencies"),
                 .product(name: "FirebaseStorage", package: "firebase-ios-sdk"),
+            ]
+        ),
+        // Private, family-only usage telemetry (P25 — the signal loop). Writes to the family's own
+        // member-gated Firestore `households/{hid}/analytics`. No third-party analytics.
+        .target(
+            name: "AnalyticsClient",
+            dependencies: [
+                .product(name: "Dependencies", package: "swift-dependencies"),
+                .product(name: "DependenciesMacros", package: "swift-dependencies"),
+                .product(name: "Sharing", package: "swift-sharing"),
+                .product(name: "FirebaseFirestore", package: "firebase-ios-sdk"),
+                "FamilyDomain",
+                "UserDomain",
             ]
         ),
         .target(
@@ -440,6 +461,7 @@ let package = Package(
                 "MenereUI",
                 "FamilyDomain",
                 "PersistenceClient",
+                "AnalyticsClient",
                 "UserDomain",
             ]
         ),
