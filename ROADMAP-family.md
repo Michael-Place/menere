@@ -266,6 +266,66 @@ Michael's playtest feedback, turned around same-day (commits 9ced9db…39b9571):
   SwiftPM EventKit tests; recurring-import E2E is unit-tested only.
 - Also: Hubspace mock cleared via Admin SDK (unblocked login); `idb` works again.
 
+# Act IV — The intelligence era (2026-07-04)
+
+**Reframe (from a step-back review of the real data + integrations):** the app has
+become a **family knowledge graph** — people, pets, plants, rooms, devices,
+documents, money, recipes, calendar, all *relationally linked*. The next frontier is
+NOT more features; it's **intelligence ACROSS the graph**, with the assistant (P14) as
+interface and self-instrumentation as the improvement loop. Every entity connects
+(the Green Thumb receipt → plants → rooms → Hue sensors + shades → care schedule → an
+expense; Sprinkle's expired-rabies doc → pet → should-be-a-calendar-event). The value
+is surfacing those connections.
+
+### P20 — Family Radar (proactive alerts from latent data)
+The app is sitting on unsurfaced alerts — **Sprinkle's rabies is EXPIRED and nothing
+says so loudly.** Dozens of Brain docs carry expiry/due/renewal dates. Build a
+first-class, can't-miss "radar": health (vaccines, checkups), legal/registration,
+warranty, subscription/renewal expirations surfaced ahead of time, one-tap → calendar.
+Mostly plumbing on `needsAttention` + document dates we already extract.
+
+### P21 — Plant–sensor bridge (sensor-driven plant care) ⭐ flagship "only-you"
+Hue motion sensors report **temperature + light-level per room**; plants live in those
+rooms (`location`). So P19-C3's context-aware watering can be **sensor-driven, not
+typed**: a warm/bright room auto-shortens the water interval, a dark/cool room
+lengthens it. The Balcony plants dry fast — and the sensors can *prove* that room is
+warm+bright. Almost no consumer app can do this (needs both halves); Michael has both.
+Supersedes/powers the P19-C3 typed-context idea.
+
+### P22 — Spending intelligence (finish P13 Money)
+80% built and dormant: the Brain already extracts vendor+amount on receipts
+(Closing Disclosure $41k, Green Thumb $84, Kindercare $175). Add categorized
+spend-over-time, recurring detection, "~$X/season on the garden," and the optional
+Plaid trial-tier bank sync (researched in P13). Small lift on data already captured.
+
+### P23 — Meal rhythm (recipes → plan → list → calendar)
+31 recipes reveal the family's identity (Chilean/Latin staples, baby food, weekend
+bakes). Weekly meal planning that respects **weeknight-quick vs weekend-project**,
+generates the grocery list, and lands dinners on the calendar. The payoff of the
+recipe corpus.
+
+### P24 — The graph, made navigable (cross-entity linking)
+Tap the Green Thumb receipt → the plants it bought; open the deck project → its quotes
++ HOA approval + expense + dates in one place. Entity cross-links (receipt↔plant,
+doc↔project↔expense↔calendar) make the app feel *smart*, not just organized.
+
+### P25 — The signal loop (instrument → learn → improve) — RECOMMENDED FIRST
+For a ~2-adult-user private app the playbook is behavioral+qualitative from a tiny
+KNOWN population — cheap because it's our own Firestore:
+- **Passive telemetry** → a private `analytics` collection: screen opens, card taps,
+  feature usage, flow-abandon points. Turns "we think the plant list is overwhelming"
+  into "we SAW 40 opens, 0 detail taps."
+- **The assistant as a UX sensor:** what people *ask* reveals UI gaps (already log tool
+  names, privacy-safe — mine the frequency; most-asked → most-surfaced).
+- **In-the-moment capture:** a shared "Bacán wishlist" List (reuse the Lists feature) +
+  optional shake-to-suggest. Zero new infra.
+- **Behavioral signals:** are chores done? plants watered on schedule or always late
+  (→ intervals wrong)? which recipes get meal-planned (favorites emerge)?
+- **Meta-move:** a weekly job feeds the telemetry to Claude → "opened Plants 40×, never
+  used fertilize, asked dinner 8×; here are 3 UX fixes." A self-improving loop, on-brand
+  for an AI-native app.
+Highest leverage because it makes every future decision data-informed, and it's small.
+
 # Act II — Make it *ours* (the personal era)
 
 Act I built a working family hub. Act II makes it unmistakably the **Place family's**
