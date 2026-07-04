@@ -1,5 +1,6 @@
 import AnalyticsClient
 import ComposableArchitecture
+import DocsFeature
 import FamilyDomain
 import Foundation
 import HueClient
@@ -127,7 +128,34 @@ public struct TodayReducer {
         /// `clearRitualSuccess` fires.
         var succeededRitual: String?
 
+        /// The Family-Brain document pushed from a tapped Family Radar row (P20). Reuses the full
+        /// `DocumentDetailReducer` (pages, fields, its own idempotent add-to-calendar).
+        @Presents var docDetail: DocumentDetailReducer.State?
+
         public init() {}
+
+        /// The household's pets (care items of kind `.pet`) — the Family Radar names pet-linked docs
+        /// ("Sprinkle's rabies") from these.
+        var pets: [CareItem] { careItems.filter { $0.kind == .pet } }
+
+        /// The Family Radar over every document + pet — the pure model behind the card and the detail
+        /// list. Recomputed on demand (cheap at family scale) so it always reflects the latest docs.
+        func radar(now: Date = Date()) -> FamilyRadar {
+            FamilyRadar.compute(documents: documents, pets: pets, now: now)
+        }
+
+        /// Whether an all-day event with this doc's title already sits on its `dueDate` day — drives
+        /// the radar row's idempotent "Add to calendar" done-state (mirrors `DocumentDetailReducer`).
+        func radarOnCalendar(_ item: FamilyRadar.Item) -> Bool {
+            guard let due = item.doc.dueDate else { return false }
+            let cal = Calendar.current
+            return events.contains { $0.title == item.doc.title && cal.isDate($0.startDate, inSameDayAs: due) }
+        }
+
+        /// Whether a "Renew …" reminder for an expired vaccine has already been dropped on the calendar.
+        func radarRenewScheduled(_ item: FamilyRadar.Item) -> Bool {
+            events.contains { $0.title == item.renewTitle }
+        }
 
         func stats(for memberID: String) -> MemberStats {
             stats.first { $0.memberID == memberID } ?? MemberStats(id: memberID, memberID: memberID)
@@ -203,6 +231,18 @@ public struct TodayReducer {
         case quickAddEventTapped
         case quickAddListTapped
         case planDinnerTapped
+        // Family Radar (P20).
+        /// The Radar detail list appeared — telemetry (`family_radar_opened`).
+        case radarOpened
+        /// A radar row was tapped — logs `radar_item_tapped` and pushes the linked document detail.
+        case radarItemTapped(docID: String)
+        /// One-tap idempotent "Add to calendar" from a radar item's due date.
+        case radarAddToCalendarTapped(docID: String)
+        /// One-tap "Add a reminder to renew" for an expired vaccine — an all-day nudge ~today+3d.
+        case radarRenewReminderTapped(docID: String)
+        /// A radar-driven event was written — reflected locally so the row swaps to its done state.
+        case radarEventAdded(FamilyEvent)
+        case docDetail(PresentationAction<DocumentDetailReducer.Action>)
         case delegate(Delegate)
     }
 
@@ -578,9 +618,85 @@ public struct TodayReducer {
             case .planDinnerTapped:
                 return .send(.delegate(.openKitchen))
 
+            case .radarOpened:
+                @Dependency(\.analytics) var analytics
+                analytics.log("family_radar_opened")
+                return .none
+
+            case let .radarItemTapped(docID):
+                guard let doc = state.documents.first(where: { $0.id == docID }) else { return .none }
+                @Dependency(\.analytics) var analytics
+                analytics.log("radar_item_tapped", ["type": doc.type.rawValue])
+                state.docDetail = DocumentDetailReducer.State(doc: doc)
+                return .none
+
+            case let .radarAddToCalendarTapped(docID):
+                // Idempotent: mirror DocumentDetailReducer — one all-day event on the due day.
+                guard let hid = hid(),
+                      let doc = state.documents.first(where: { $0.id == docID }),
+                      let due = doc.dueDate else { return .none }
+                let item = FamilyRadar.Item(doc: doc, date: due, kind: .due, days: 0, petName: nil)
+                guard !state.radarOnCalendar(item) else { return .none }
+                let event = FamilyEvent(
+                    title: doc.title, startDate: due, isAllDay: true, notes: "From Family Brain"
+                )
+                @Shared(.user) var user
+                let actorID = user?.id
+                return .run { send in
+                    @Dependency(\.persistence) var persistence
+                    try await persistence.saveEvent(hid, event)
+                    try? await persistence.logActivity(hid, .eventAdded(title: event.title, actorID: actorID))
+                    await send(.radarEventAdded(event))
+                }
+
+            case let .radarRenewReminderTapped(docID):
+                // A gentle nudge ~3 days out to renew an expired vaccine — idempotent by title.
+                guard let hid = hid(),
+                      let doc = state.documents.first(where: { $0.id == docID }) else { return .none }
+                let petName = state.pets.first { doc.linkedPetIds.contains($0.id) }?.name
+                let radarItem = FamilyRadar.Item(
+                    doc: doc, date: doc.expiryDate ?? Date(), kind: .expiry, days: -1, petName: petName
+                )
+                guard !state.radarRenewScheduled(radarItem) else { return .none }
+                let cal = Calendar.current
+                let when = cal.date(byAdding: .day, value: 3, to: cal.startOfDay(for: Date())) ?? Date()
+                let event = FamilyEvent(
+                    title: radarItem.renewTitle, startDate: when, isAllDay: true,
+                    notes: "Family Radar reminder"
+                )
+                @Shared(.user) var user
+                let actorID = user?.id
+                return .run { send in
+                    @Dependency(\.persistence) var persistence
+                    try await persistence.saveEvent(hid, event)
+                    try? await persistence.logActivity(hid, .eventAdded(title: event.title, actorID: actorID))
+                    await send(.radarEventAdded(event))
+                }
+
+            case let .radarEventAdded(event):
+                state.events.append(event)
+                return .none
+
+            case let .docDetail(.presented(.delegate(.didChange(doc)))):
+                // Keep the radar fresh when the pushed detail edits a doc (rename / retype / link pet).
+                if let i = state.documents.firstIndex(where: { $0.id == doc.id }) {
+                    state.documents[i] = doc
+                }
+                return .none
+
+            case let .docDetail(.presented(.delegate(.didDelete(id)))):
+                state.documents.removeAll { $0.id == id }
+                return .none
+
+            case .docDetail:
+                return .none
+
             case .delegate:
                 return .none
             }
+        }
+        .ifLet(\.$docDetail, action: \.docDetail) {
+            DocumentDetailReducer()
         }
     }
 }

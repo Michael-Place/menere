@@ -28,7 +28,7 @@ public struct TodayView: View {
                 choresCard
                 homeCareCard
                 houseCard
-                needsAttentionCard
+                familyRadarCard
                 familyCard
             }
             .padding(.horizontal)
@@ -37,6 +37,10 @@ public struct TodayView: View {
         .background(Color.familyCanvas)
         .navigationTitle("Today")
         .navigationBarTitleDisplayMode(.inline)
+        // Tapping a radar row (from the card OR the pushed detail list) pushes the linked document.
+        .navigationDestination(item: $store.scope(state: \.docDetail, action: \.docDetail)) { detailStore in
+            DocumentDetailView(store: detailStore)
+        }
         .task { store.send(.task) }
         .refreshable { await store.send(.task).finish() }
     }
@@ -576,54 +580,50 @@ public struct TodayView: View {
         return !entry.recipeID.isEmpty || !entry.recipeTitle.isEmpty
     }
 
-    // MARK: Needs attention (Family Brain, P7-C3)
+    // MARK: Family Radar (P20 — proactive alerts from latent document/vaccine dates)
 
-    /// Documents whose dueDate/expiryDate is past-due or within the next 30 days, soonest first.
-    private func needsAttentionDocs() -> [FamilyDomain.Document] {
-        let now = Date()
-        return store.documents
-            .filter { $0.needsAttention(now: now, within: 30) }
-            .sorted { ($0.soonestActionableDate ?? .distantFuture) < ($1.soonestActionableDate ?? .distantFuture) }
-    }
-
-    /// Hidden entirely when nothing is due/expiring — the dashboard stays quiet when it can.
+    /// The radar's LOUD front door: EXPIRED items (a pet's rabies past its expiry) shouted first, then
+    /// due/expiring-soon items, each tappable → the linked document. When there ARE documents but
+    /// nothing needs attention, a calm caught-up line; nothing at all when the Brain is empty.
     @ViewBuilder
-    private var needsAttentionCard: some View {
-        let docs = needsAttentionDocs()
-        if !docs.isEmpty {
+    private var familyRadarCard: some View {
+        let radar = store.state.radar()
+        if radar.isEmpty {
+            if !store.documents.isEmpty {
+                HStack(spacing: 8) {
+                    Image(systemName: "checkmark.seal.fill").foregroundStyle(Color.bacanGreen)
+                    Text("Nothing needs your attention 🟢").foregroundStyle(Color.inkSoft)
+                }
+                .font(.system(.subheadline, design: .rounded))
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .accessibilityIdentifier("today-radar-caughtup")
+            }
+        } else {
+            let top = radar.topItems()
             card {
-                cardHeader("Needs attention", symbol: "exclamationmark.circle")
+                cardHeader("Family Radar", symbol: "dot.radiowaves.left.and.right")
                 VStack(spacing: 12) {
-                    ForEach(Array(docs.prefix(3))) { doc in
-                        HStack(spacing: 12) {
-                            Text(doc.title)
-                                .foregroundStyle(Color.ink)
-                                .lineLimit(1)
-                            Spacer()
-                            if let expiry = doc.expiryDate,
-                               (doc.dueDate == nil || expiry <= doc.dueDate!) {
-                                DocumentDateChip(date: expiry, kind: .expiry)
-                            } else if let due = doc.dueDate {
-                                DocumentDateChip(date: due, kind: .due)
+                    ForEach(top) { item in RadarRow(store: store, item: item) }
+                    if radar.all.count > top.count {
+                        NavigationLink {
+                            RadarDetailView(store: store)
+                        } label: {
+                            HStack(spacing: 6) {
+                                Image(systemName: "list.bullet")
+                                Text("See all (\(radar.all.count))")
+                                Spacer()
+                                Image(systemName: "chevron.right").font(.footnote.weight(.semibold))
                             }
+                            .font(.system(.subheadline, design: .rounded).weight(.semibold))
+                            .foregroundStyle(Color.bacanGreen)
+                            .contentShape(Rectangle())
                         }
+                        .buttonStyle(.pressable)
+                        .accessibilityIdentifier("today-radar-see-all")
                     }
-                    Button { store.send(.delegate(.openLists)) } label: {
-                        HStack(spacing: 6) {
-                            Image(systemName: "brain")
-                            Text("Family Brain")
-                            Spacer()
-                            Image(systemName: "chevron.right").font(.footnote.weight(.semibold))
-                        }
-                        .font(.system(.subheadline, design: .rounded).weight(.semibold))
-                        .foregroundStyle(Color.bacanGreen)
-                        .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.pressable)
-                    .accessibilityIdentifier("today-brain-link")
                 }
             }
-            .accessibilityIdentifier("today-needs-attention")
+            .accessibilityIdentifier("today-family-radar")
         }
     }
 
@@ -809,5 +809,142 @@ private struct TodayCareRow: View {
             .padding(.horizontal, 8)
             .padding(.vertical, 3)
             .background(Capsule().fill(color.opacity(0.14)))
+    }
+}
+
+/// A single Family Radar row (P20), shared by the Today card and the Radar detail list so they speak
+/// with one voice. The leading region (icon + humanized label + date chip) is a tap target → opens the
+/// linked document; the trailing region carries the item's one-tap, idempotent action (add-to-calendar
+/// for an upcoming due date, "renew" reminder for an expired vaccine).
+private struct RadarRow: View {
+    let store: StoreOf<TodayReducer>
+    let item: FamilyRadar.Item
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Button {
+                store.send(.radarItemTapped(docID: item.doc.id))
+            } label: {
+                HStack(spacing: 12) {
+                    Image(systemName: leadingSymbol)
+                        .font(.subheadline)
+                        .foregroundStyle(item.isExpired ? Color.terracotta : Color.marigold)
+                        .frame(width: 22)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(item.label)
+                            .foregroundStyle(Color.ink)
+                            .lineLimit(1)
+                        DocumentDateChip(date: item.date, kind: item.kind == .expiry ? .expiry : .due)
+                    }
+                    Spacer(minLength: 0)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.pressable)
+
+            trailingAction
+        }
+        .accessibilityIdentifier("today-radar-row-\(item.doc.id)")
+    }
+
+    /// EXPIRED reads LOUD with a warning triangle; otherwise the pet/doc-type glyph.
+    private var leadingSymbol: String {
+        item.isExpired ? "exclamationmark.triangle.fill" : item.iconSymbol
+    }
+
+    @ViewBuilder
+    private var trailingAction: some View {
+        if item.isExpired, item.isVaccine {
+            if store.state.radarRenewScheduled(item) {
+                doneChip
+            } else {
+                actionButton(systemImage: "bell.badge", tint: .terracotta) {
+                    store.send(.radarRenewReminderTapped(docID: item.doc.id))
+                }
+                .accessibilityLabel("Add a reminder to renew")
+                .accessibilityIdentifier("today-radar-renew-\(item.doc.id)")
+            }
+        } else if item.doc.dueDate != nil, !item.isExpired {
+            if store.state.radarOnCalendar(item) {
+                doneChip
+            } else {
+                actionButton(systemImage: "calendar.badge.plus", tint: .bacanGreen) {
+                    store.send(.radarAddToCalendarTapped(docID: item.doc.id))
+                }
+                .accessibilityLabel("Add to calendar")
+                .accessibilityIdentifier("today-radar-add-\(item.doc.id)")
+            }
+        }
+    }
+
+    private func actionButton(systemImage: String, tint: Color, _ action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: systemImage)
+                .font(.title3)
+                .foregroundStyle(tint)
+                .frame(width: 30, height: 30)
+        }
+        .buttonStyle(.pressable)
+    }
+
+    private var doneChip: some View {
+        Image(systemName: "checkmark.circle.fill")
+            .font(.title3)
+            .foregroundStyle(Color.bacanGreen)
+            .frame(width: 30, height: 30)
+            .accessibilityLabel("Done")
+    }
+}
+
+/// The full Family Radar list (P20) — every expired + upcoming item grouped Expired / This month /
+/// Later, most-urgent first. Reached via the card's "See all" row. Reuses ``RadarRow`` so a row taps
+/// through to its document and carries the same one-tap actions.
+private struct RadarDetailView: View {
+    let store: StoreOf<TodayReducer>
+
+    var body: some View {
+        ScrollView {
+            let radar = store.state.radar()
+            let thisMonth = radar.upcoming.filter { $0.days <= 30 }
+            let later = radar.upcoming.filter { $0.days > 30 }
+            VStack(alignment: .leading, spacing: 20) {
+                group("Expired", symbol: "exclamationmark.triangle.fill", tint: .terracotta, items: radar.expired)
+                group("This month", symbol: "calendar", tint: .marigold, items: thisMonth)
+                group("Later", symbol: "clock", tint: .inkSoft, items: later)
+                if radar.isEmpty {
+                    Text("Nothing needs your attention 🟢 You're all caught up.")
+                        .foregroundStyle(Color.inkSoft)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.top, 40)
+                }
+            }
+            .padding(.horizontal)
+            .padding(.vertical, 12)
+        }
+        .background(Color.familyCanvas)
+        .navigationTitle("Family Radar")
+        .navigationBarTitleDisplayMode(.inline)
+        .task { store.send(.radarOpened) }
+    }
+
+    @ViewBuilder
+    private func group(_ title: String, symbol: String, tint: Color, items: [FamilyRadar.Item]) -> some View {
+        if !items.isEmpty {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(spacing: 8) {
+                    Image(systemName: symbol).font(.subheadline).foregroundStyle(tint)
+                    Text(title).familyTitle(.headline).foregroundStyle(Color.ink)
+                    Text("\(items.count)")
+                        .font(.system(.caption, design: .rounded).weight(.semibold))
+                        .foregroundStyle(Color.inkSoft)
+                }
+                VStack(spacing: 12) {
+                    ForEach(items) { item in RadarRow(store: store, item: item) }
+                }
+                .padding(16)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(RoundedRectangle(cornerRadius: 18, style: .continuous).fill(Color.familySurface))
+            }
+        }
     }
 }
