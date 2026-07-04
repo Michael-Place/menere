@@ -38,6 +38,8 @@ public struct RecipesReducer {
         var segment: Segment = .recipes
         var weekStart: Date = RecipesReducer.startOfWeek(Date())
         var isLoading = false
+        /// True while "Plan my week ✨" is calling `planMealWeek` (drives the shimmer).
+        var isPlanningWeek = false
         var generatedMessage: String?
         /// The day currently being assigned an "Eating out…" restaurant (drives the search sheet).
         var eatingOutDay: Date?
@@ -67,6 +69,10 @@ public struct RecipesReducer {
         case saveEatingOut
         case eatingOutDismissed
         case clearMeal(MealPlanEntry)
+        /// "Plan my week ✨" — ask the AI to fill this week's dinners.
+        case planWeekTapped
+        case weekPlanned([MealWeekAssignment])
+        case weekPlanFailed
         case generateGroceryList
         case groceryListGenerated(itemCount: Int)
         case dismissGeneratedMessage
@@ -84,6 +90,41 @@ public struct RecipesReducer {
     static func startOfWeek(_ date: Date) -> Date {
         let cal = Calendar.current
         return cal.dateInterval(of: .weekOfYear, for: date)?.start ?? cal.startOfDay(for: date)
+    }
+
+    /// Merge a week's worth of ingredients into de-duplicated grocery lines. Same-name (and same-unit)
+    /// ingredients are combined — quantities summed when both have one — so "2 cups flour" + "1 cup
+    /// flour" becomes "3 cups flour", and exact repeats collapse to one line. Order of first
+    /// appearance is preserved.
+    static func mergedGroceryLines(from ingredients: [Ingredient]) -> [String] {
+        struct Bucket { var quantity: Double?; var unit: String?; var name: String; var summable: Bool }
+        var order: [String] = []
+        var buckets: [String: Bucket] = [:]
+        for ing in ingredients {
+            let name = ing.name.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !name.isEmpty else { continue }
+            let unit = (ing.unit ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            let key = name.lowercased() + "|" + unit.lowercased()
+            if var b = buckets[key] {
+                if b.summable, let q = ing.quantity, let existing = b.quantity {
+                    b.quantity = existing + q
+                } else {
+                    b.summable = false // can't cleanly sum (a quantity is missing) → keep as-is
+                }
+                buckets[key] = b
+            } else {
+                order.append(key)
+                buckets[key] = Bucket(quantity: ing.quantity, unit: ing.unit,
+                                      name: name, summable: ing.quantity != nil)
+            }
+        }
+        return order.compactMap { key in
+            guard let b = buckets[key] else { return nil }
+            let merged = Ingredient(name: b.name,
+                                    quantity: b.summable ? b.quantity : nil,
+                                    unit: b.unit)
+            return merged.displayLine
+        }
     }
 
     public var body: some ReducerOf<Self> {
@@ -137,7 +178,7 @@ public struct RecipesReducer {
 
             case let .assignMeal(date, recipe):
                 guard let hid = hid() else { return .none }
-                analytics.log("meal_planned")
+                analytics.log("meal_assigned")
                 let day = Calendar.current.startOfDay(for: date)
                 // Replace any existing entry for that day.
                 let existing = state.mealPlan.first { Calendar.current.isDate($0.date, inSameDayAs: day) }
@@ -252,6 +293,70 @@ public struct RecipesReducer {
                     try await persistence.deleteMealPlanEntry(hid, entry.id)
                 }
 
+            case .planWeekTapped:
+                guard !state.isPlanningWeek else { return .none }
+                // Build the recipe corpus + the 7 days of this week (weekend = Sat/Sun).
+                let recipes = state.recipes.map {
+                    MealWeekRecipe(id: $0.id, title: $0.title,
+                                   ingredientCount: $0.ingredients.count, servings: $0.servings)
+                }
+                guard !recipes.isEmpty else {
+                    state.generatedMessage = "Add a few recipes first, then I'll plan the week."
+                    return .none
+                }
+                let cal = Calendar.current
+                let weekStart = state.weekStart
+                let days: [MealWeekDay] = (0..<7).compactMap { offset in
+                    guard let day = cal.date(byAdding: .day, value: offset, to: weekStart) else { return nil }
+                    let wd = cal.component(.weekday, from: day) // 1 = Sun … 7 = Sat
+                    return MealWeekDay(date: day, isWeekend: wd == 1 || wd == 7)
+                }
+                state.isPlanningWeek = true
+                return .run { send in
+                    @Dependency(\.mealPlanClient) var mealPlanClient
+                    do {
+                        let plan = try await mealPlanClient.planWeek(recipes, days)
+                        await send(.weekPlanned(plan))
+                    } catch {
+                        await send(.weekPlanFailed)
+                    }
+                }
+
+            case let .weekPlanned(assignments):
+                state.isPlanningWeek = false
+                guard let hid = hid() else { return .none }
+                analytics.log("meal_week_planned", ["days": String(assignments.count)])
+                let cal = Calendar.current
+                let entries: [MealPlanEntry] = assignments.compactMap { a in
+                    guard let recipe = state.recipes.first(where: { $0.id == a.recipeID }) else { return nil }
+                    let day = cal.startOfDay(for: a.date)
+                    let existing = state.mealPlan.first { cal.isDate($0.date, inSameDayAs: day) }
+                    return MealPlanEntry(
+                        id: existing?.id ?? UUID().uuidString,
+                        date: day, recipeID: recipe.id, recipeTitle: recipe.title
+                    )
+                }
+                for entry in entries {
+                    if let i = state.mealPlan.firstIndex(where: { $0.id == entry.id }) {
+                        state.mealPlan[i] = entry
+                    } else {
+                        state.mealPlan.append(entry)
+                    }
+                }
+                if entries.isEmpty {
+                    state.generatedMessage = "Couldn't find enough dinner-worthy recipes to plan the week."
+                    return .none
+                }
+                return .run { _ in
+                    @Dependency(\.persistence) var persistence
+                    for entry in entries { try await persistence.saveMealPlanEntry(hid, entry) }
+                }
+
+            case .weekPlanFailed:
+                state.isPlanningWeek = false
+                state.generatedMessage = "The planner couldn't reach the kitchen just now — try again in a moment."
+                return .none
+
             case .generateGroceryList:
                 guard let hid = hid() else { return .none }
                 let cal = Calendar.current
@@ -270,10 +375,11 @@ public struct RecipesReducer {
                     return .none
                 }
                 let list = FamilyList(title: "Groceries", icon: "cart", color: .sage)
-                let items = ingredients.enumerated().map { idx, ing in
-                    ListItem(title: ing.displayLine, listID: list.id, sortOrder: idx)
+                let items = RecipesReducer.mergedGroceryLines(from: ingredients).enumerated().map { idx, line in
+                    ListItem(title: line, listID: list.id, sortOrder: idx)
                 }
                 let count = items.count
+                analytics.log("grocery_list_generated", ["items": String(count)])
                 return .run { send in
                     @Dependency(\.persistence) var persistence
                     try await persistence.saveList(hid, list)

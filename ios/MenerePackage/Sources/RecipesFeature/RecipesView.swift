@@ -79,10 +79,13 @@ public struct RecipesView: View {
                         Button { store.send(.editTapped(recipe)) } label: {
                             HStack(spacing: 12) {
                                 RecipeThumbnail(imageURL: recipe.imageURL)
-                                VStack(alignment: .leading, spacing: 2) {
+                                VStack(alignment: .leading, spacing: 3) {
                                     Text(recipe.title).foregroundStyle(Color.ink)
-                                    Text("\(recipe.ingredients.count) ingredients · serves \(recipe.servings)")
-                                        .font(.caption).foregroundStyle(Color.inkSoft)
+                                    HStack(spacing: 6) {
+                                        if let effort = recipe.effort { EffortChip(effort: effort) }
+                                        Text("\(recipe.ingredients.count) ingredients · serves \(recipe.servings)")
+                                            .font(.caption).foregroundStyle(Color.inkSoft)
+                                    }
                                 }
                                 Spacer(minLength: 0)
                                 Button { store.send(.toggleFavorite(recipe)) } label: {
@@ -113,53 +116,41 @@ public struct RecipesView: View {
         store.mealPlan.first { cal.isDate($0.date, inSameDayAs: day) }
     }
 
+    /// The full recipe backing a day's entry (for the thumbnail + effort chip), matched by id.
+    private func recipe(for entry: MealPlanEntry) -> Recipe? {
+        store.recipes.first { $0.id == entry.recipeID }
+    }
+
     private var mealPlan: some View {
         VStack(spacing: 0) {
+            // "Plan my week ✨" — the AI rhythm. Shimmers while Claude is thinking.
+            Button {
+                store.send(.planWeekTapped)
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: "sparkles")
+                    Text(store.isPlanningWeek ? "Planning the week…" : "Plan my week")
+                }
+                .fontWeight(.semibold)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 12)
+                .redacted(reason: store.isPlanningWeek ? .placeholder : [])
+                .shimmering(active: store.isPlanningWeek)
+            }
+            .background(Color.marigold.opacity(0.22))
+            .foregroundStyle(Color.terracotta)
+            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .disabled(store.isPlanningWeek)
+            .padding(.horizontal)
+            .padding(.bottom, 4)
+            .accessibilityIdentifier("plan-my-week-button")
+
             List {
                 ForEach(weekDays, id: \.self) { day in
-                    HStack {
-                        VStack(alignment: .leading) {
-                            Text(dayName(day)).foregroundStyle(Color.ink)
-                            if let e = entry(for: day) {
-                                if e.isEatingOut {
-                                    HStack(spacing: 4) {
-                                        Image(systemName: "storefront").foregroundStyle(Color.marigold)
-                                        VStack(alignment: .leading, spacing: 1) {
-                                            Text(eatingOutLine(e)).font(.caption).foregroundStyle(Color.marigold)
-                                            Text(e.restaurantAddress ?? "Eating out")
-                                                .font(.caption2).foregroundStyle(Color.inkSoft)
-                                                .lineLimit(1)
-                                        }
-                                    }
-                                } else {
-                                    Text(e.recipeTitle).font(.caption).foregroundStyle(Color.bacanGreen)
-                                }
-                            } else {
-                                Text("Nothing planned — cereal night?").font(.caption).foregroundStyle(Color.inkSoft)
-                            }
-                        }
-                        Spacer()
-                        Menu {
-                            Button {
-                                store.send(.eatingOutTapped(date: day))
-                            } label: {
-                                Label("Eating out…", systemImage: "fork.knife.circle")
-                            }
-                            if !store.recipes.isEmpty {
-                                Divider()
-                                ForEach(store.recipes) { recipe in
-                                    Button(recipe.title) { store.send(.assignMeal(date: day, recipe: recipe)) }
-                                }
-                            }
-                            if let e = entry(for: day) {
-                                Divider()
-                                Button("Clear", role: .destructive) { store.send(.clearMeal(e)) }
-                            }
-                        } label: {
-                            Image(systemName: "pencil.circle").foregroundStyle(Color.bacanGreen)
-                        }
-                    }
-                    .listRowBackground(Color.familyCanvas)
+                    dayRow(day)
+                        .listRowBackground(
+                            cal.isDateInToday(day) ? Color.bacanGreen.opacity(0.10) : Color.familyCanvas
+                        )
                 }
             }
             .listStyle(.plain)
@@ -181,6 +172,70 @@ public struct RecipesView: View {
         }
     }
 
+    @ViewBuilder
+    private func dayRow(_ day: Date) -> some View {
+        let e = entry(for: day)
+        HStack(spacing: 12) {
+            if let e, !e.isEatingOut, let r = recipe(for: e) {
+                RecipeThumbnail(imageURL: r.imageURL, size: 44)
+            } else if let e, e.isEatingOut {
+                thumbGlyph("storefront", tint: .marigold)
+            } else {
+                thumbGlyph("plus", tint: .inkSoft)
+            }
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 6) {
+                    Text(dayName(day)).foregroundStyle(Color.ink)
+                    if cal.isDateInToday(day) {
+                        Text("Today").font(.caption2).fontWeight(.bold)
+                            .foregroundStyle(Color.bacanGreen)
+                    }
+                }
+                if let e {
+                    if e.isEatingOut {
+                        Text(eatingOutLine(e)).font(.caption).foregroundStyle(Color.marigold)
+                    } else {
+                        HStack(spacing: 6) {
+                            Text(e.recipeTitle).font(.caption).foregroundStyle(Color.bacanGreen)
+                            if let r = recipe(for: e), let effort = r.effort { EffortChip(effort: effort) }
+                        }
+                    }
+                } else {
+                    Text("Add a dinner").font(.caption).foregroundStyle(Color.inkSoft)
+                }
+            }
+            Spacer()
+            Menu {
+                Button {
+                    store.send(.eatingOutTapped(date: day))
+                } label: {
+                    Label("Eating out…", systemImage: "fork.knife.circle")
+                }
+                if !store.recipes.isEmpty {
+                    Divider()
+                    ForEach(store.recipes) { recipe in
+                        Button(recipe.title) { store.send(.assignMeal(date: day, recipe: recipe)) }
+                    }
+                }
+                if let e {
+                    Divider()
+                    Button("Clear", role: .destructive) { store.send(.clearMeal(e)) }
+                }
+            } label: {
+                Image(systemName: "pencil.circle").foregroundStyle(Color.bacanGreen)
+            }
+        }
+    }
+
+    private func thumbGlyph(_ systemName: String, tint: Color) -> some View {
+        ZStack {
+            Color.bacanGreen.opacity(0.10)
+            Image(systemName: systemName).font(.system(size: 18, weight: .medium)).foregroundStyle(tint)
+        }
+        .frame(width: 44, height: 44)
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+    }
+
     private func dayName(_ date: Date) -> String {
         let f = DateFormatter()
         f.dateFormat = "EEEE, MMM d"
@@ -192,6 +247,23 @@ public struct RecipesView: View {
         let name = entry.restaurantName ?? ""
         if let time = entry.reservationTimeShort { return "\(name) · \(time)" }
         return name
+    }
+}
+
+/// A subtle "Quick" / "Project" pill (P23 — effort at a glance). Quick reads sage-green (a
+/// weeknight go), Project reads terracotta (a weekend cook).
+struct EffortChip: View {
+    let effort: RecipeEffort
+
+    private var tint: Color { effort == .quick ? .bacanGreen : .terracotta }
+
+    var body: some View {
+        Text(effort.label)
+            .font(.caption2).fontWeight(.semibold)
+            .padding(.horizontal, 7).padding(.vertical, 2)
+            .background(tint.opacity(0.16))
+            .foregroundStyle(tint)
+            .clipShape(Capsule())
     }
 }
 

@@ -105,6 +105,34 @@ public struct Recipe: Codable, Equatable, Identifiable, Sendable {
     }
 }
 
+/// A cheap, client-side effort read on a recipe (P23 — the "meal rhythm"). Inferred purely from
+/// ingredient + instruction counts — no model needed — so day rows can hint quick-weeknight vs
+/// weekend-project at a glance and the planner can bias accordingly.
+public enum RecipeEffort: String, Equatable, Sendable {
+    case quick   // few ingredients AND few steps → a weeknight dinner
+    case project // many ingredients OR many steps → a weekend cook
+
+    /// A short chip label ("Quick" / "Project").
+    public var label: String {
+        switch self {
+        case .quick: return "Quick"
+        case .project: return "Project"
+        }
+    }
+}
+
+public extension Recipe {
+    /// Heuristic effort read: `.quick` when ≤7 ingredients AND ≤6 steps, `.project` when ≥14
+    /// ingredients OR ≥12 steps, and `nil` in the ambiguous middle (no chip shown).
+    var effort: RecipeEffort? {
+        let ing = ingredients.count
+        let steps = instructions.count
+        if ing <= 7, steps <= 6 { return .quick }
+        if ing >= 14 || steps >= 12 { return .project }
+        return nil
+    }
+}
+
 /// One day's dinner assignment in the weekly meal plan.
 ///
 /// Persisted at `households/{hid}/mealPlan/{id}`, one doc per planned day.

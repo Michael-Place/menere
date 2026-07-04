@@ -22,6 +22,7 @@ const { processDocument } = require("./docProcess");
 const { identifyPlant } = require("./plantIdentify");
 const { troubleshootPlant } = require("./plantTroubleshoot");
 const { runAgentTurn } = require("./agentTurn");
+const { planMealWeek } = require("./mealPlanWeek");
 const { notifyHousehold, memberName } = require("./notifications");
 const { awardChoreXP, reverseChoreXP } = require("./choreXP");
 
@@ -321,6 +322,52 @@ exports.agentTurn = onCall(
       });
     } catch (err) {
       throw new HttpsError("internal", `Agent turn failed: ${err.message}`);
+    }
+  }
+);
+
+/**
+ * `planMealWeek` is a v2 HTTPS callable (us-central1) — the P23 "meal rhythm" planner. Given the
+ * family's recipes (title + ingredient count + servings) and the week's 7 days (each tagged
+ * weeknight/weekend), it asks Claude (Sonnet 5, forced tool-use) for a balanced, varied week of
+ * DINNERS — quick weeknights, project weekends — picking ONLY from the provided recipe ids and
+ * skipping clearly-non-dinner items (cookies, banana bread, etc.). Returns `{ plan: [{date,
+ * recipeId, reason}] }`, server-validated to known ids/dates with no repeats. Auth-required; logs
+ * only counts (never recipe contents). Reuses the existing ANTHROPIC_API_KEY secret.
+ */
+exports.planMealWeek = onCall(
+  { timeoutSeconds: 60, memory: "512MiB", secrets: [ANTHROPIC_API_KEY] },
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError("unauthenticated", "You must be signed in.");
+    }
+    const data = request.data || {};
+    const recipes = Array.isArray(data.recipes)
+      ? data.recipes
+          .map((r) => ({
+            id: typeof r.id === "string" ? r.id : "",
+            title: typeof r.title === "string" ? r.title : "",
+            ingredientCount: Number(r.ingredientCount) || 0,
+            servings: Number(r.servings) || 0,
+          }))
+          .filter((r) => r.id && r.title)
+      : [];
+    const days = Array.isArray(data.days)
+      ? data.days
+          .map((d) => ({
+            date: typeof d.date === "string" ? d.date : "",
+            weekday: typeof d.weekday === "string" ? d.weekday : "",
+            kind: d.kind === "weekend" ? "weekend" : "weeknight",
+          }))
+          .filter((d) => d.date)
+      : [];
+    if (recipes.length === 0 || days.length === 0) {
+      throw new HttpsError("invalid-argument", "recipes and days are required.");
+    }
+    try {
+      return await planMealWeek({ recipes, days, apiKey: ANTHROPIC_API_KEY.value() });
+    } catch (err) {
+      throw new HttpsError("internal", `Meal planning failed: ${err.message}`);
     }
   }
 );
