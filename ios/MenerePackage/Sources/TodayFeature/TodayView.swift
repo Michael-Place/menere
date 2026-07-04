@@ -702,13 +702,15 @@ public struct TodayView: View {
                 cardHeader("Family Radar", symbol: "dot.radiowaves.left.and.right")
                 VStack(spacing: 12) {
                     ForEach(top) { item in RadarRow(store: store, item: item) }
-                    if radar.all.count > top.count {
+                    // Surface the detail (which carries the calm "Records" list) when there are more
+                    // loud items than fit, OR any demoted historical records to browse.
+                    if radar.all.count > top.count || !radar.records.isEmpty {
                         NavigationLink {
                             RadarDetailView(store: store)
                         } label: {
                             HStack(spacing: 6) {
                                 Image(systemName: "list.bullet")
-                                Text("See all (\(radar.all.count))")
+                                Text("See all (\(radar.all.count + radar.records.count))")
                                 Spacer()
                                 Image(systemName: "chevron.right").font(.footnote.weight(.semibold))
                             }
@@ -946,6 +948,14 @@ private struct RadarRow: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.pressable)
+            .contextMenu {
+                Button {
+                    store.send(.radarItemDismissed(docID: item.doc.id))
+                } label: {
+                    Label("Snooze 90 days", systemImage: "bell.slash")
+                }
+                .accessibilityIdentifier("today-radar-dismiss-\(item.doc.id)")
+            }
 
             trailingAction
         }
@@ -1001,6 +1011,37 @@ private struct RadarRow: View {
     }
 }
 
+/// A calm, muted Family Radar record row (P20-C2) — a past-dated HISTORICAL doc demoted out of the
+/// alarm. No warning triangle, no red, no action; the doc-type glyph + humanized label + a quiet
+/// "· 2023" year. Tapping still opens the linked document.
+private struct RadarRecordRow: View {
+    let store: StoreOf<TodayReducer>
+    let item: FamilyRadar.Item
+
+    var body: some View {
+        Button {
+            store.send(.radarItemTapped(docID: item.doc.id))
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: item.iconSymbol)
+                    .font(.subheadline)
+                    .foregroundStyle(Color.inkSoft)
+                    .frame(width: 22)
+                Text(item.label)
+                    .foregroundStyle(Color.inkSoft)
+                    .lineLimit(1)
+                Spacer(minLength: 8)
+                Text("· \(item.recordSubtitle)")
+                    .font(.system(.caption, design: .rounded))
+                    .foregroundStyle(Color.inkSoft)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.pressable)
+        .accessibilityIdentifier("today-radar-record-\(item.doc.id)")
+    }
+}
+
 /// The full Family Radar list (P20) — every expired + upcoming item grouped Expired / This month /
 /// Later, most-urgent first. Reached via the card's "See all" row. Reuses ``RadarRow`` so a row taps
 /// through to its document and carries the same one-tap actions.
@@ -1016,12 +1057,13 @@ private struct RadarDetailView: View {
                 group("Expired", symbol: "exclamationmark.triangle.fill", tint: .terracotta, items: radar.expired)
                 group("This month", symbol: "calendar", tint: .marigold, items: thisMonth)
                 group("Later", symbol: "clock", tint: .inkSoft, items: later)
-                if radar.isEmpty {
+                if radar.isEmpty && radar.records.isEmpty {
                     Text("Nothing needs your attention 🟢 You're all caught up.")
                         .foregroundStyle(Color.inkSoft)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.top, 40)
                 }
+                recordsDisclosure(radar.records)
             }
             .padding(.horizontal)
             .padding(.vertical, 12)
@@ -1030,6 +1072,34 @@ private struct RadarDetailView: View {
         .navigationTitle("Family Radar")
         .navigationBarTitleDisplayMode(.inline)
         .task { store.send(.radarOpened) }
+    }
+
+    /// P20-C2 — a calm, collapsed "Records" disclosure for past-dated HISTORICAL docs (a COVID card,
+    /// a vet visit). Muted, no warning triangle, no red — "Rabies card · 2023" style; taps still open
+    /// the document. Deliberately quiet so it never competes with the loud renewable alerts.
+    @ViewBuilder
+    private func recordsDisclosure(_ records: [FamilyRadar.Item]) -> some View {
+        if !records.isEmpty {
+            DisclosureGroup {
+                VStack(spacing: 12) {
+                    ForEach(records) { item in RadarRecordRow(store: store, item: item) }
+                }
+                .padding(.top, 12)
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: "tray.full").font(.subheadline).foregroundStyle(Color.inkSoft)
+                    Text("Records").familyTitle(.headline).foregroundStyle(Color.ink)
+                    Text("\(records.count)")
+                        .font(.system(.caption, design: .rounded).weight(.semibold))
+                        .foregroundStyle(Color.inkSoft)
+                }
+            }
+            .tint(Color.inkSoft)
+            .padding(16)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(RoundedRectangle(cornerRadius: 18, style: .continuous).fill(Color.familySurface))
+            .accessibilityIdentifier("today-radar-records")
+        }
     }
 
     @ViewBuilder

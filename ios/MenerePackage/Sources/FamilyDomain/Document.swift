@@ -82,6 +82,10 @@ public struct Document: Codable, Equatable, Identifiable, Sendable {
     public var extractedText: String?
     /// Storage paths of the document's pages, in page order (`page-0.jpg…` or `document.pdf`).
     public var pagePaths: [String]
+    /// P20-C2 — when set and in the future, this document is SNOOZED off the Family Radar's loud
+    /// card until this instant (family tapped "Dismiss" / "Snooze"). Decode-safe (nil = never
+    /// dismissed); the AI pipeline never writes it, so it survives re-processing.
+    public var radarDismissedUntil: Date?
     /// The uid of the member who filed it.
     public var uploadedBy: String
     public var createdAt: Date
@@ -102,6 +106,7 @@ public struct Document: Codable, Equatable, Identifiable, Sendable {
         summary: String? = nil,
         extractedText: String? = nil,
         pagePaths: [String] = [],
+        radarDismissedUntil: Date? = nil,
         uploadedBy: String,
         createdAt: Date = Date(),
         processingState: DocumentProcessingState = .pending
@@ -120,6 +125,7 @@ public struct Document: Codable, Equatable, Identifiable, Sendable {
         self.summary = summary
         self.extractedText = extractedText
         self.pagePaths = pagePaths
+        self.radarDismissedUntil = radarDismissedUntil
         self.uploadedBy = uploadedBy
         self.createdAt = createdAt
         self.processingState = processingState
@@ -160,6 +166,7 @@ public struct Document: Codable, Equatable, Identifiable, Sendable {
         summary = try c.decodeIfPresent(String.self, forKey: .summary)
         extractedText = try c.decodeIfPresent(String.self, forKey: .extractedText)
         pagePaths = try c.decodeIfPresent([String].self, forKey: .pagePaths) ?? []
+        radarDismissedUntil = try c.decodeIfPresent(Date.self, forKey: .radarDismissedUntil)
         uploadedBy = try c.decodeIfPresent(String.self, forKey: .uploadedBy) ?? ""
         createdAt = try c.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
         processingState = try c.decodeIfPresent(DocumentProcessingState.self, forKey: .processingState) ?? .pending

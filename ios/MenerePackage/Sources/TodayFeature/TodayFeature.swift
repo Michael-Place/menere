@@ -260,6 +260,8 @@ public struct TodayReducer {
         case radarRenewReminderTapped(docID: String)
         /// A radar-driven event was written — reflected locally so the row swaps to its done state.
         case radarEventAdded(FamilyEvent)
+        /// P20-C2 — snooze a radar item off the loud card (~90 days). Persists `radarDismissedUntil`.
+        case radarItemDismissed(docID: String)
         case docDetail(PresentationAction<DocumentDetailReducer.Action>)
         // P17-C1 — actionable Today.
         /// A schedule row was tapped → open that event for edit (logs `today_event_tapped`).
@@ -660,7 +662,10 @@ public struct TodayReducer {
             case let .radarItemTapped(docID):
                 guard let doc = state.documents.first(where: { $0.id == docID }) else { return .none }
                 @Dependency(\.analytics) var analytics
-                analytics.log("radar_item_tapped", ["type": doc.type.rawValue])
+                analytics.log("radar_item_tapped", [
+                    "type": doc.type.rawValue,
+                    "radar_kind": FamilyRadar.classify(doc).rawValue,
+                ])
                 state.docDetail = DocumentDetailReducer.State(doc: doc)
                 return .none
 
@@ -710,6 +715,22 @@ public struct TodayReducer {
             case let .radarEventAdded(event):
                 state.events.append(event)
                 return .none
+
+            case let .radarItemDismissed(docID):
+                // Snooze this item off the loud card for ~90 days (or until its date changes). Persisted
+                // on the doc so it survives relaunch; reversible by clearing `radarDismissedUntil`.
+                guard let hid = hid(),
+                      let i = state.documents.firstIndex(where: { $0.id == docID }) else { return .none }
+                let cal = Calendar.current
+                let until = cal.date(byAdding: .day, value: 90, to: cal.startOfDay(for: Date())) ?? Date()
+                state.documents[i].radarDismissedUntil = until
+                let doc = state.documents[i]
+                @Dependency(\.analytics) var analytics
+                analytics.log("radar_item_dismissed", ["radar_kind": FamilyRadar.classify(doc).rawValue])
+                return .run { _ in
+                    @Dependency(\.persistence) var persistence
+                    try await persistence.saveDocument(hid, doc)
+                }
 
             case let .docDetail(.presented(.delegate(.didChange(doc)))):
                 // Keep the radar fresh when the pushed detail edits a doc (rename / retype / link pet).
