@@ -31,6 +31,14 @@ public struct ChoresView: View {
         /// plant row is tapped. Carries the plant's id; the screen re-derives the live ``CareItem`` from
         /// the store so mark-done reflects immediately.
         case plantDetail(id: String)
+        /// P19-C1b — a single pet's rich DETAIL page (hero photo, vet contact, overview with the
+        /// soonest vaccine expiry, care tasks, the linked "Vet records" timeline), pushed on a pet-row
+        /// tap. Re-derives the live ``CareItem`` from the store by id.
+        case petDetail(id: String)
+        /// P19-C1b — a house-care or yard-zone DETAIL page (name/location, overview, care tasks, notes),
+        /// pushed on a house/zone row tap. Lighter than plant/pet: no photo/species/vet. Re-derives the
+        /// live ``CareItem`` by id.
+        case careDetail(id: String)
     }
 
     public var body: some View {
@@ -86,6 +94,8 @@ public struct ChoresView: View {
             case .houseCare: HouseCareDetailView(store: store)
             case .plants: PlantsDetailView(store: store)
             case let .plantDetail(id): PlantDetailView(store: store, plantID: id)
+            case let .petDetail(id): PetDetailView(store: store, petID: id)
+            case let .careDetail(id): CareItemDetailView(store: store, itemID: id)
             case .yard: YardDetailView(store: store)
             case .pets: PetsDetailView(store: store)
             case .activity: ActivityDetailView(store: store)
@@ -791,7 +801,6 @@ private struct HouseCareDetailView: View {
                         CareRow(
                             item: item,
                             members: store.members,
-                            onEdit: { store.send(.editCareItemTapped(item)) },
                             onMarkDone: { taskID in
                                 store.send(.markCareTaskDone(itemID: item.id, taskID: taskID))
                             }
@@ -1316,6 +1325,614 @@ private struct FlowChips<Chip: View>: View {
     }
 }
 
+// MARK: - Shared care-detail scaffold (P19-C1b)
+
+/// The rounded `familySurface` card that every care DETAIL screen (plant/pet/house/zone) wears — one
+/// shared look so all four kinds read as one family of screens.
+@ViewBuilder
+private func careDetailCard<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
+    VStack(alignment: .leading, spacing: 12, content: content)
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 18, style: .continuous).fill(Color.familySurface))
+}
+
+/// A labeled detail line (glyph + caption label + value) used in the Details cards.
+private func careDetailRow(_ label: String, _ value: String, symbol: String, tint: Color = .bacanGreen) -> some View {
+    HStack(alignment: .top, spacing: 12) {
+        Image(systemName: symbol).font(.subheadline).foregroundStyle(tint).frame(width: 22)
+        VStack(alignment: .leading, spacing: 2) {
+            Text(label).font(.caption).foregroundStyle(Color.inkSoft)
+            Text(value).foregroundStyle(Color.ink).fixedSize(horizontal: false, vertical: true)
+        }
+        Spacer(minLength: 0)
+    }
+}
+
+/// A compact due chip for the overview's "next up" glance (glyph + short due text, tinted by urgency).
+private func careDueChip(_ task: CareTask, glyph: String, accent: Color) -> some View {
+    let overdue = task.isOverdue()
+    let days = task.daysUntilDue()
+    let tint: Color = overdue ? .terracotta : ((days ?? 1) <= 0 ? accent : .inkSoft)
+    return Label(careDueChipText(task), systemImage: glyph)
+        .font(.caption.weight(.medium))
+        .foregroundStyle(tint)
+        .padding(.horizontal, 10).padding(.vertical, 6)
+        .background(Capsule().fill(tint.opacity(0.12)))
+}
+
+private func careDueChipText(_ task: CareTask) -> String {
+    guard let d = task.daysUntilDue() else { return "\(task.title) · anytime" }
+    if d < 0 { return "\(task.title) overdue \(-d)d" }
+    if d == 0 { return "\(task.title) today" }
+    return "\(task.title) in \(d) day\(d == 1 ? "" : "s")"
+}
+
+/// One row in a pet / house / zone DETAIL's care-task list: a kind glyph, the task title, a due line,
+/// and an inline **sticker-slap** mark-done (matching those rosters, vs the plant's LeafUnfurl). Routes
+/// through the parent's `markCareTaskDone` → ``CareCompletion``/`writeCareDone` path (server-consistent,
+/// logs activity). Seasonal (yearly) zone tasks name their due DATE rather than a bare day count.
+private struct CareDetailTaskRow: View {
+    let task: CareTask
+    let members: [HouseholdMember]
+    let glyph: String
+    let tint: Color
+    let onMarkDone: () -> Void
+
+    @State private var slapOn = false
+
+    var body: some View {
+        HStack(spacing: 12) {
+            ZStack {
+                Circle().fill(tint.opacity(0.15))
+                Image(systemName: glyph).font(.subheadline).foregroundStyle(tint)
+            }
+            .frame(width: 38, height: 38)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(task.title).foregroundStyle(Color.ink)
+                dueLine
+            }
+
+            Spacer(minLength: 4)
+
+            Button {
+                onMarkDone()
+                slapOn = true
+                Task { try? await Task.sleep(for: .milliseconds(700)); slapOn = false }
+            } label: {
+                Image(systemName: "checkmark.circle.fill")
+                    .font(.title3)
+                    .foregroundStyle(tint)
+                    .stickerSlap(isOn: slapOn, color: tint)
+            }
+            .buttonStyle(.pressable)
+            .accessibilityLabel("Mark \(task.title) done")
+            .accessibilityIdentifier("care-detail-task-done-\(task.id)")
+        }
+    }
+
+    @ViewBuilder
+    private var dueLine: some View {
+        let days = task.daysUntilDue()
+        if days == nil {
+            // Seasonal / manual (no cadence).
+            if task.lastDoneAt != nil {
+                Text(doneText).font(.caption).foregroundStyle(Color.inkSoft)
+            } else {
+                Text("Mark it when you do it").font(.caption).foregroundStyle(Color.inkSoft)
+            }
+        } else if let d = days, d < 0 {
+            Text("Overdue by \(-d) day\(-d == 1 ? "" : "s")")
+                .font(.caption).fontWeight(.semibold).foregroundStyle(Color.terracotta)
+        } else if days == 0 {
+            Text("Due today").font(.caption).fontWeight(.semibold).foregroundStyle(tint)
+        } else if let d = days, d <= 14 {
+            Text("Due in \(d) day\(d == 1 ? "" : "s")").font(.caption).foregroundStyle(Color.inkSoft)
+        } else if let d = days {
+            // Far out — a seasonal yard window reads clearer as a date; a done task reassures with who.
+            if task.lastDoneAt != nil {
+                Text(doneText).font(.caption).foregroundStyle(Color.inkSoft)
+            } else if let due = task.dueAt {
+                Text("Due \(due.formatted(.dateTime.month(.abbreviated).day()))")
+                    .font(.caption).foregroundStyle(Color.inkSoft)
+            } else {
+                Text("Due in \(d) days").font(.caption).foregroundStyle(Color.inkSoft)
+            }
+        }
+    }
+
+    /// "Done Jul 2 by Migueluh" — neutral, matching the pet/house roster convention.
+    private var doneText: String {
+        guard let last = task.lastDoneAt else { return "" }
+        let date = last.formatted(.dateTime.month(.abbreviated).day())
+        if let by = task.lastDoneBy, let name = members.first(where: { $0.id == by })?.name {
+            return "Done \(date) by \(name)"
+        }
+        return "Done \(date)"
+    }
+}
+
+// MARK: - Pet detail (P19-C1b)
+
+/// A single pet's own page: a hero photo (or sky-tinted pawprint/`cat.fill` fallback) with a
+/// **breed · age** line and a tap-to-call vet chip, a TOP OVERVIEW (soonest care task + the soonest
+/// vaccine/record expiry from linked docs), the FULL care-task list with inline sticker-slap mark-done,
+/// the **Vet records** timeline (linked Family-Brain documents → real ``DocumentDetailView``), and the
+/// details. Bound to the SAME ``ChoresReducer`` store and re-derives the live ``CareItem`` by id. The
+/// Edit button opens the existing ``CareItemFormView`` (edit path unchanged).
+private struct PetDetailView: View {
+    @Bindable var store: StoreOf<ChoresReducer>
+    let petID: String
+    @Environment(\.openURL) private var openURL
+
+    private var pet: CareItem? { store.careItems.first { $0.id == petID } }
+
+    /// Linked Family-Brain documents for this pet, soonest-expiry (then due) first — undated last.
+    private var linkedDocs: [FamilyDomain.Document] {
+        store.documents
+            .filter { $0.linkedPetIds.contains(petID) }
+            .sorted { ($0.expiryDate ?? $0.dueDate ?? .distantFuture) < ($1.expiryDate ?? $1.dueDate ?? .distantFuture) }
+    }
+
+    /// The linked doc with the soonest expiry — drives the overview's vaccine-expiry line.
+    private var soonestExpiringDoc: FamilyDomain.Document? {
+        store.documents
+            .filter { $0.linkedPetIds.contains(petID) && $0.expiryDate != nil }
+            .min { ($0.expiryDate ?? .distantFuture) < ($1.expiryDate ?? .distantFuture) }
+    }
+
+    var body: some View {
+        ScrollView {
+            if let pet {
+                VStack(spacing: 16) {
+                    hero(pet)
+                    overviewCard(pet)
+                    careTasksCard(pet)
+                    vetRecordsCard
+                    detailsCard(pet)
+                }
+                .padding(.horizontal)
+                .padding(.vertical, 12)
+            } else {
+                ContentUnavailableView("Pet not found", systemImage: "pawprint")
+                    .padding(.top, 60)
+            }
+        }
+        .scrollContentBackground(.hidden)
+        .background(Color.familyCanvas)
+        .navigationTitle(pet?.name ?? "Pet")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            if let pet {
+                ToolbarItem(placement: .primaryAction) {
+                    Button("Edit") { store.send(.editCareItemTapped(pet)) }
+                        .accessibilityIdentifier("pet-detail-edit")
+                }
+            }
+        }
+    }
+
+    // MARK: Hero
+
+    @ViewBuilder
+    private func hero(_ pet: CareItem) -> some View {
+        VStack(spacing: 12) {
+            heroPhoto(pet)
+                .frame(height: 200)
+                .frame(maxWidth: .infinity)
+                .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+            VStack(spacing: 6) {
+                Text(pet.name).familyTitle(.title2)
+                if let sub = breedAgeLine(pet) {
+                    Text(sub)
+                        .font(.system(.subheadline, design: .rounded))
+                        .foregroundStyle(Color.inkSoft)
+                }
+                if let vetName = pet.vetName, !vetName.isEmpty {
+                    vetContactChip(name: vetName, phone: pet.vetPhone)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func heroPhoto(_ pet: CareItem) -> some View {
+        if let path = pet.photoPath, let data = store.carePhotos[path], let img = UIImage(data: data) {
+            Image(uiImage: img).resizable().scaledToFill()
+        } else {
+            LinearGradient(
+                colors: [Color.sky.opacity(0.35), Color.sky.opacity(0.12)],
+                startPoint: .topLeading, endPoint: .bottomTrailing
+            )
+            .overlay {
+                Image(systemName: pet.iconSymbol.isEmpty ? "pawprint.fill" : pet.iconSymbol)
+                    .font(.system(size: 60))
+                    .foregroundStyle(Color.sky.opacity(0.6))
+            }
+        }
+    }
+
+    /// "Dalmatian · 6 years" — breed and age, whichever are set (age computed from `birthday`).
+    private func breedAgeLine(_ pet: CareItem) -> String? {
+        var parts: [String] = []
+        if let breed = pet.breed, !breed.isEmpty { parts.append(breed) }
+        if let age = ageString(pet.birthday) { parts.append(age) }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    }
+
+    private func ageString(_ birthday: Date?) -> String? {
+        guard let birthday else { return nil }
+        let comps = Calendar.current.dateComponents([.year, .month], from: birthday, to: Date())
+        if let y = comps.year, y >= 1 { return "\(y) year\(y == 1 ? "" : "s")" }
+        let m = max(comps.month ?? 0, 0)
+        return "\(m) month\(m == 1 ? "" : "s")"
+    }
+
+    /// The vet chip — tapping calls `vetPhone` (a real `tel:` action). Disabled (still shows the name)
+    /// when there's no number to dial.
+    @ViewBuilder
+    private func vetContactChip(name: String, phone: String?) -> some View {
+        let digits = phone?.filter { $0.isNumber || $0 == "+" } ?? ""
+        let callable = !digits.isEmpty
+        Button {
+            if callable, let url = URL(string: "tel:\(digits)") { openURL(url) }
+        } label: {
+            Label(name, systemImage: callable ? "phone.fill" : "cross.case.fill")
+                .font(.caption.weight(.medium))
+                .foregroundStyle(Color.sky)
+                .padding(.horizontal, 10).padding(.vertical, 5)
+                .background(Capsule().fill(Color.sky.opacity(0.18)))
+        }
+        .buttonStyle(.plain)
+        .disabled(!callable)
+        .accessibilityIdentifier("pet-vet-contact")
+    }
+
+    // MARK: Overview
+
+    @ViewBuilder
+    private func overviewCard(_ pet: CareItem) -> some View {
+        let status = overviewStatus(pet)
+        let upcoming = tasksSoonestFirst(pet).prefix(2)
+        careDetailCard {
+            HStack(spacing: 12) {
+                ZStack {
+                    Circle().fill(status.tint.opacity(0.15))
+                    Image(systemName: status.symbol).font(.title3).foregroundStyle(status.tint)
+                }
+                .frame(width: 44, height: 44)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(status.headline).familyTitle(.headline)
+                    Text(status.subhead)
+                        .font(.system(.subheadline, design: .rounded))
+                        .foregroundStyle(Color.inkSoft)
+                }
+                Spacer(minLength: 4)
+            }
+            if !upcoming.isEmpty {
+                HStack(spacing: 8) {
+                    ForEach(Array(upcoming)) { task in
+                        careDueChip(task, glyph: petTaskGlyph(task.title), accent: .sky)
+                    }
+                    Spacer(minLength: 0)
+                }
+            }
+            if let doc = soonestExpiringDoc, let expiry = doc.expiryDate {
+                Divider()
+                HStack(spacing: 10) {
+                    Image(systemName: "syringe.fill")
+                        .font(.subheadline).foregroundStyle(Color.sky).frame(width: 22)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(doc.title).font(.caption).foregroundStyle(Color.inkSoft)
+                        DocumentDateChip(date: expiry, kind: .expiry)
+                    }
+                    Spacer(minLength: 0)
+                }
+            }
+        }
+    }
+
+    private func overviewStatus(_ pet: CareItem) -> (headline: String, subhead: String, symbol: String, tint: Color) {
+        let overdue = pet.tasks.filter { $0.isOverdue() }
+            .sorted { ($0.daysUntilDue() ?? 0) < ($1.daysUntilDue() ?? 0) }
+        if let worst = overdue.first, let d = worst.daysUntilDue() {
+            let n = -d
+            return ("\(worst.title) overdue", "By \(n) day\(n == 1 ? "" : "s") — take care of it.",
+                    "exclamationmark.circle.fill", .terracotta)
+        }
+        let dueToday = pet.tasks.filter { ($0.daysUntilDue() ?? 1) == 0 }
+        if let today = dueToday.first {
+            let extra = dueToday.count - 1
+            let sub = extra > 0 ? "And \(extra) more due today." : "Mark it when it's handled."
+            return ("\(today.title) due today", sub, "pawprint.fill", .sky)
+        }
+        if let next = tasksSoonestFirst(pet).first, let d = next.daysUntilDue() {
+            return ("All caught up", "Next up: \(next.title.lowercased()) in \(d) day\(d == 1 ? "" : "s").",
+                    "checkmark.seal.fill", .bacanGreen)
+        }
+        return ("All caught up", "This one's easy right now.", "checkmark.seal.fill", .bacanGreen)
+    }
+
+    private func tasksSoonestFirst(_ item: CareItem) -> [CareTask] {
+        item.tasks
+            .filter { $0.intervalDays != nil }
+            .sorted { ($0.daysUntilDue() ?? Int.max) < ($1.daysUntilDue() ?? Int.max) }
+    }
+
+    // MARK: Care tasks
+
+    @ViewBuilder
+    private func careTasksCard(_ pet: CareItem) -> some View {
+        careDetailCard {
+            Text("Care tasks").familyTitle(.headline)
+            if pet.tasks.isEmpty {
+                Text("No care tasks yet — tap Edit to add heartworm, grooming and more.")
+                    .font(.caption).foregroundStyle(Color.inkSoft)
+            } else {
+                VStack(spacing: 14) {
+                    ForEach(pet.tasks) { task in
+                        CareDetailTaskRow(
+                            task: task,
+                            members: store.members,
+                            glyph: petTaskGlyph(task.title),
+                            tint: .sky,
+                            onMarkDone: {
+                                store.send(.markCareTaskDone(itemID: pet.id, taskID: task.id))
+                            }
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    // MARK: Vet records (linked Family-Brain documents)
+
+    @ViewBuilder
+    private var vetRecordsCard: some View {
+        careDetailCard {
+            Text("Vet records").familyTitle(.headline)
+            if linkedDocs.isEmpty {
+                Text("No records yet — scan the vet paperwork and it'll file itself here.")
+                    .font(.caption).foregroundStyle(Color.inkSoft)
+                    .accessibilityIdentifier("pet-detail-vet-records-empty")
+            } else {
+                VStack(spacing: 12) {
+                    ForEach(linkedDocs) { doc in
+                        NavigationLink {
+                            DocumentDetailView(
+                                store: Store(initialState: DocumentDetailReducer.State(doc: doc)) {
+                                    DocumentDetailReducer()
+                                }
+                            )
+                        } label: {
+                            vetRecordRow(doc)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityIdentifier("pet-detail-vet-record-\(doc.id)")
+                    }
+                }
+            }
+        }
+    }
+
+    private func vetRecordRow(_ doc: FamilyDomain.Document) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: doc.type.symbolName)
+                .font(.subheadline).foregroundStyle(Color.sky).frame(width: 24)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(doc.title).foregroundStyle(Color.ink)
+                if let expiry = doc.expiryDate {
+                    DocumentDateChip(date: expiry, kind: .expiry)
+                } else if let due = doc.dueDate {
+                    DocumentDateChip(date: due, kind: .due)
+                }
+            }
+            Spacer(minLength: 0)
+            Image(systemName: "chevron.right").font(.caption).foregroundStyle(Color.inkSoft)
+        }
+    }
+
+    // MARK: Details
+
+    @ViewBuilder
+    private func detailsCard(_ pet: CareItem) -> some View {
+        let hasAny = (pet.vetName?.isEmpty == false) || (pet.vetPhone?.isEmpty == false)
+            || (pet.birthday != nil) || (pet.careNotes?.isEmpty == false)
+        careDetailCard {
+            Text("Details").familyTitle(.headline)
+            if !hasAny {
+                Text("No details yet — add a vet, birthday and notes from Edit.")
+                    .font(.caption).foregroundStyle(Color.inkSoft)
+            } else {
+                if let vet = pet.vetName, !vet.isEmpty {
+                    careDetailRow("Vet", vet, symbol: "cross.case.fill", tint: .sky)
+                }
+                if let phone = pet.vetPhone, !phone.isEmpty {
+                    careDetailRow("Vet phone", phone, symbol: "phone.fill", tint: .sky)
+                }
+                if let bday = pet.birthday {
+                    careDetailRow("Birthday", bday.formatted(.dateTime.month(.abbreviated).day().year()),
+                                  symbol: "gift.fill", tint: .sky)
+                }
+                if let notes = pet.careNotes, !notes.isEmpty {
+                    careDetailRow("Notes", notes, symbol: "note.text", tint: .sky)
+                }
+            }
+        }
+    }
+}
+
+/// The kind glyph for a pet care task, derived from its title (heartworm → pills, flea/tick → ant,
+/// grooming → comb, nails → scissors, litter → trash, vet → cross.case). Falls back to a paw.
+private func petTaskGlyph(_ title: String) -> String {
+    let t = title.lowercased()
+    if t.contains("heartworm") || t.contains("pill") || t.contains("med") { return "pills.fill" }
+    if t.contains("flea") || t.contains("tick") { return "ant.fill" }
+    if t.contains("groom") || t.contains("bath") { return "comb.fill" }
+    if t.contains("nail") { return "scissors" }
+    if t.contains("litter") { return "trash.fill" }
+    if t.contains("vet") || t.contains("checkup") || t.contains("check-up") { return "cross.case.fill" }
+    if t.contains("walk") { return "figure.walk" }
+    if t.contains("feed") { return "fork.knife" }
+    return "pawprint.fill"
+}
+
+// MARK: - House / Zone care detail (P19-C1b)
+
+/// A house-care or yard-zone item's page — lighter than plant/pet (no photo/species/vet): a header
+/// (icon + name + location), a TOP OVERVIEW (soonest task status + due chips), the FULL care-task list
+/// with inline sticker-slap mark-done, and notes. Yard-zone seasonal tasks name their due DATE. Bound
+/// to the SAME ``ChoresReducer`` store, re-derives the live ``CareItem`` by id; Edit opens the form.
+private struct CareItemDetailView: View {
+    @Bindable var store: StoreOf<ChoresReducer>
+    let itemID: String
+
+    private var item: CareItem? { store.careItems.first { $0.id == itemID } }
+
+    var body: some View {
+        ScrollView {
+            if let item {
+                VStack(spacing: 16) {
+                    header(item)
+                    overviewCard(item)
+                    careTasksCard(item)
+                    if let notes = item.careNotes, !notes.isEmpty {
+                        careDetailCard {
+                            Text("Notes").familyTitle(.headline)
+                            careDetailRow("Notes", notes, symbol: "note.text")
+                        }
+                    }
+                }
+                .padding(.horizontal)
+                .padding(.vertical, 12)
+            } else {
+                ContentUnavailableView("Not found", systemImage: "checkmark.seal")
+                    .padding(.top, 60)
+            }
+        }
+        .scrollContentBackground(.hidden)
+        .background(Color.familyCanvas)
+        .navigationTitle(item?.name ?? "Care")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            if let item {
+                ToolbarItem(placement: .primaryAction) {
+                    Button("Edit") { store.send(.editCareItemTapped(item)) }
+                        .accessibilityIdentifier("care-detail-edit")
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func header(_ item: CareItem) -> some View {
+        careDetailCard {
+            HStack(spacing: 14) {
+                ZStack {
+                    Circle().fill(Color.bacanGreen.opacity(0.15))
+                    Image(systemName: item.iconSymbol).font(.title3).foregroundStyle(Color.bacanGreen)
+                }
+                .frame(width: 52, height: 52)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(item.name).familyTitle(.title3)
+                    if let location = item.location, !location.isEmpty {
+                        Label(location, systemImage: "mappin.and.ellipse")
+                            .font(.caption).foregroundStyle(Color.inkSoft)
+                    } else {
+                        Text(item.kind == .zone ? "Yard & garden" : "House care")
+                            .font(.caption).foregroundStyle(Color.inkSoft)
+                    }
+                }
+                Spacer(minLength: 0)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func overviewCard(_ item: CareItem) -> some View {
+        let status = overviewStatus(item)
+        let upcoming = tasksSoonestFirst(item).prefix(2)
+        careDetailCard {
+            HStack(spacing: 12) {
+                ZStack {
+                    Circle().fill(status.tint.opacity(0.15))
+                    Image(systemName: status.symbol).font(.title3).foregroundStyle(status.tint)
+                }
+                .frame(width: 44, height: 44)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(status.headline).familyTitle(.headline)
+                    Text(status.subhead)
+                        .font(.system(.subheadline, design: .rounded))
+                        .foregroundStyle(Color.inkSoft)
+                }
+                Spacer(minLength: 4)
+            }
+            if !upcoming.isEmpty {
+                HStack(spacing: 8) {
+                    ForEach(Array(upcoming)) { task in
+                        careDueChip(task, glyph: item.iconSymbol, accent: .bacanGreen)
+                    }
+                    Spacer(minLength: 0)
+                }
+            }
+        }
+    }
+
+    private func overviewStatus(_ item: CareItem) -> (headline: String, subhead: String, symbol: String, tint: Color) {
+        let overdue = item.tasks.filter { $0.isOverdue() }
+            .sorted { ($0.daysUntilDue() ?? 0) < ($1.daysUntilDue() ?? 0) }
+        if let worst = overdue.first, let d = worst.daysUntilDue() {
+            let n = -d
+            return ("\(worst.title) overdue", "By \(n) day\(n == 1 ? "" : "s") — give it some attention.",
+                    "exclamationmark.triangle.fill", .terracotta)
+        }
+        let dueToday = item.tasks.filter { ($0.daysUntilDue() ?? 1) == 0 }
+        if let today = dueToday.first {
+            let extra = dueToday.count - 1
+            let sub = extra > 0 ? "And \(extra) more due today." : "Mark it when it's done."
+            return ("\(today.title) due today", sub, "clock.fill", .marigold)
+        }
+        if let next = tasksSoonestFirst(item).first, let d = next.daysUntilDue() {
+            return ("All caught up", "Next up: \(next.title.lowercased()) in \(d) day\(d == 1 ? "" : "s").",
+                    "checkmark.seal.fill", .bacanGreen)
+        }
+        return ("All caught up", "Nothing needs doing right now.", "checkmark.seal.fill", .bacanGreen)
+    }
+
+    private func tasksSoonestFirst(_ item: CareItem) -> [CareTask] {
+        item.tasks
+            .filter { $0.intervalDays != nil }
+            .sorted { ($0.daysUntilDue() ?? Int.max) < ($1.daysUntilDue() ?? Int.max) }
+    }
+
+    @ViewBuilder
+    private func careTasksCard(_ item: CareItem) -> some View {
+        careDetailCard {
+            Text("Care tasks").familyTitle(.headline)
+            if item.tasks.isEmpty {
+                Text("No care tasks yet — tap Edit to add one.")
+                    .font(.caption).foregroundStyle(Color.inkSoft)
+            } else {
+                VStack(spacing: 14) {
+                    ForEach(item.tasks) { task in
+                        CareDetailTaskRow(
+                            task: task,
+                            members: store.members,
+                            glyph: item.iconSymbol,
+                            tint: .bacanGreen,
+                            onMarkDone: {
+                                store.send(.markCareTaskDone(itemID: item.id, taskID: task.id))
+                            }
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
 // MARK: - Yard & garden detail
 
 /// Seasonal landscaping zones, moved behind the "Yard & garden" hub card. Seasonal starters (persisting
@@ -1338,7 +1955,6 @@ private struct YardDetailView: View {
                     CareRow(
                         item: item,
                         members: store.members,
-                        onEdit: { store.send(.editCareItemTapped(item)) },
                         onMarkDone: { taskID in
                             store.send(.markCareTaskDone(itemID: item.id, taskID: taskID))
                         }
@@ -1454,7 +2070,6 @@ private struct PetsDetailView: View {
                         members: store.members,
                         photo: item.photoPath.flatMap { store.carePhotos[$0] },
                         expiringDoc: expiringDoc(for: item),
-                        onEdit: { store.send(.editCareItemTapped(item)) },
                         onMarkDone: { taskID in
                             store.send(.markCareTaskDone(itemID: item.id, taskID: taskID))
                         }
@@ -1725,7 +2340,6 @@ private struct PetRow: View {
     let photo: Data?
     /// The soonest linked Family-Brain doc expiring within 30 days (P10) — shows a terracotta chip.
     let expiringDoc: FamilyDomain.Document?
-    let onEdit: () -> Void
     let onMarkDone: (_ taskID: String) -> Void
 
     @State private var slapOn = false
@@ -1734,24 +2348,27 @@ private struct PetRow: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            thumbnail
-                .frame(width: 44, height: 44)
-                .clipShape(Circle())
-
-            Button(action: onEdit) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(item.name).foregroundStyle(Color.ink)
-                    if let breed = item.breed, !breed.isEmpty {
-                        Text(breed).font(.caption2).foregroundStyle(Color.inkSoft)
-                    }
-                    dueLine
-                    if let expiry = expiringDoc?.expiryDate {
-                        DocumentDateChip(date: expiry, kind: .expiry)
-                            .padding(.top, 2)
+            NavigationLink(value: ChoresView.Destination.petDetail(id: item.id)) {
+                HStack(spacing: 12) {
+                    thumbnail
+                        .frame(width: 44, height: 44)
+                        .clipShape(Circle())
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(item.name).foregroundStyle(Color.ink)
+                        if let breed = item.breed, !breed.isEmpty {
+                            Text(breed).font(.caption2).foregroundStyle(Color.inkSoft)
+                        }
+                        dueLine
+                        if let expiry = expiringDoc?.expiryDate {
+                            DocumentDateChip(date: expiry, kind: .expiry)
+                                .padding(.top, 2)
+                        }
                     }
                 }
+                .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .accessibilityIdentifier("pet-row-\(item.id)")
 
             Spacer()
 
@@ -1835,7 +2452,6 @@ private struct PetRow: View {
 private struct CareRow: View {
     let item: CareItem
     let members: [HouseholdMember]
-    let onEdit: () -> Void
     let onMarkDone: (_ taskID: String) -> Void
 
     @State private var slapOn = false
@@ -1844,22 +2460,26 @@ private struct CareRow: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            ZStack {
-                Circle().fill(Color.bacanGreen.opacity(0.15))
-                Image(systemName: item.iconSymbol).foregroundStyle(Color.bacanGreen)
-            }
-            .frame(width: 40, height: 40)
-
-            Button(action: onEdit) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(item.name).foregroundStyle(Color.ink)
-                    if let location = item.location, !location.isEmpty {
-                        Text(location).font(.caption2).foregroundStyle(Color.inkSoft)
+            NavigationLink(value: ChoresView.Destination.careDetail(id: item.id)) {
+                HStack(spacing: 12) {
+                    ZStack {
+                        Circle().fill(Color.bacanGreen.opacity(0.15))
+                        Image(systemName: item.iconSymbol).foregroundStyle(Color.bacanGreen)
                     }
-                    dueLine
+                    .frame(width: 40, height: 40)
+
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(item.name).foregroundStyle(Color.ink)
+                        if let location = item.location, !location.isEmpty {
+                            Text(location).font(.caption2).foregroundStyle(Color.inkSoft)
+                        }
+                        dueLine
+                    }
                 }
+                .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .accessibilityIdentifier("care-row-\(item.id)")
 
             Spacer()
 
