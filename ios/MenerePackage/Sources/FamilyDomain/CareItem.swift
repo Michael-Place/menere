@@ -147,6 +147,11 @@ public struct CareItem: Codable, Equatable, Identifiable, Sendable {
     public var speciesLatin: String?
     /// Free-text care notes ("bright indirect light, let the top inch dry out").
     public var careNotes: String?
+    /// Plant-only (P19-C3): free text about the plant's SITUATION — pot type, soil, indoor/outdoor,
+    /// light/drafts ("Outside on the balcony in a terracotta pot, dries out fast"). Distinct from
+    /// `careNotes` (generic care advice): this is the context the AI troubleshooter uses to adapt its
+    /// diagnosis + watering cadence. Decode-safe additive field (older plants nil).
+    public var careContext: String?
     /// Plant-only (P9.1): the light level the plant lives in — one of the capture wizard's choices
     /// ("Low" / "Medium" / "Bright indirect" / "Direct sun"). Free-form `String?` so future choices
     /// stay additive. Decode-safe additive field; rendered ink-soft on the plant row/detail.
@@ -172,6 +177,7 @@ public struct CareItem: Codable, Equatable, Identifiable, Sendable {
         species: String? = nil,
         speciesLatin: String? = nil,
         careNotes: String? = nil,
+        careContext: String? = nil,
         lightLevel: String? = nil,
         breed: String? = nil,
         birthday: Date? = nil,
@@ -189,6 +195,7 @@ public struct CareItem: Codable, Equatable, Identifiable, Sendable {
         self.species = species
         self.speciesLatin = speciesLatin
         self.careNotes = careNotes
+        self.careContext = careContext
         self.lightLevel = lightLevel
         self.breed = breed
         self.birthday = birthday
@@ -209,6 +216,7 @@ public struct CareItem: Codable, Equatable, Identifiable, Sendable {
         species = try c.decodeIfPresent(String.self, forKey: .species)
         speciesLatin = try c.decodeIfPresent(String.self, forKey: .speciesLatin)
         careNotes = try c.decodeIfPresent(String.self, forKey: .careNotes)
+        careContext = try c.decodeIfPresent(String.self, forKey: .careContext)
         lightLevel = try c.decodeIfPresent(String.self, forKey: .lightLevel)
         breed = try c.decodeIfPresent(String.self, forKey: .breed)
         birthday = try c.decodeIfPresent(Date.self, forKey: .birthday)

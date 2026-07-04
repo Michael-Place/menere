@@ -20,6 +20,7 @@ const { extractEventsFromText } = require("./eventExtract");
 const { generateDailyBriefing } = require("./briefingGenerate");
 const { processDocument } = require("./docProcess");
 const { identifyPlant } = require("./plantIdentify");
+const { troubleshootPlant } = require("./plantTroubleshoot");
 const { runAgentTurn } = require("./agentTurn");
 const { notifyHousehold, memberName } = require("./notifications");
 const { awardChoreXP, reverseChoreXP } = require("./choreXP");
@@ -244,6 +245,48 @@ exports.identifyPlant = onCall(
       return await identifyPlant({ imageBase64, mediaType, apiKey: ANTHROPIC_API_KEY.value() });
     } catch (err) {
       throw new HttpsError("internal", `Plant identification failed: ${err.message}`);
+    }
+  }
+);
+
+/**
+ * `troubleshootPlant` is a v2 HTTPS callable (us-central1) for the P19-C3 "plant whisperer". Input
+ * `{ species?, commonName?, careContext?, waterIntervalDays?, problem, imageBase64?, mediaType? }`.
+ * It runs Claude vision (Sonnet 5, image optional) with a forced tool-use schema over the plant's
+ * identity + CONTEXT + the described problem and returns `{ diagnosis, fixes[], suggestedWaterInterval
+ * Days|null, careTip|null }`. The context (pot/soil/indoor-outdoor/light) drives the answer, and a
+ * cadence change is proposed ONLY when the problem/context implies it (rot → longer, fast-dry pot →
+ * shorter). Reuses the existing `ANTHROPIC_API_KEY` secret. No rate limiting (private app).
+ */
+exports.troubleshootPlant = onCall(
+  { timeoutSeconds: 60, memory: "512MiB", secrets: [ANTHROPIC_API_KEY] },
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError("unauthenticated", "You must be signed in.");
+    }
+    const data = request.data || {};
+    const problem = typeof data.problem === "string" ? data.problem.trim() : "";
+    if (!problem) {
+      throw new HttpsError("invalid-argument", "problem is required.");
+    }
+    const imageBase64 = typeof data.imageBase64 === "string" ? data.imageBase64 : undefined;
+    const mediaType = typeof data.mediaType === "string" ? data.mediaType : "image/jpeg";
+    const waterIntervalDays = Number.isFinite(data.waterIntervalDays)
+      ? data.waterIntervalDays
+      : undefined;
+    try {
+      return await troubleshootPlant({
+        species: typeof data.species === "string" ? data.species : undefined,
+        commonName: typeof data.commonName === "string" ? data.commonName : undefined,
+        careContext: typeof data.careContext === "string" ? data.careContext : undefined,
+        waterIntervalDays,
+        problem,
+        imageBase64,
+        mediaType,
+        apiKey: ANTHROPIC_API_KEY.value(),
+      });
+    } catch (err) {
+      throw new HttpsError("internal", `Plant troubleshooting failed: ${err.message}`);
     }
   }
 );

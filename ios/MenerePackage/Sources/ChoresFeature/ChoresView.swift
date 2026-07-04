@@ -131,6 +131,9 @@ public struct ChoresView: View {
         .sheet(item: $store.scope(state: \.plantCapture, action: \.plantCapture)) { captureStore in
             PlantCaptureView(store: captureStore)
         }
+        .sheet(item: $store.scope(state: \.troubleshoot, action: \.troubleshoot)) { tsStore in
+            PlantTroubleshootView(store: tsStore)
+        }
         .alert("New reward", isPresented: $store.showAddReward) {
             TextField("What's the prize?", text: $store.newRewardTitle)
             TextField("XP cost", value: $store.newRewardCost, format: .number)
@@ -1404,6 +1407,7 @@ private struct PlantDetailView: View {
     private func detailsCard(_ plant: CareItem) -> some View {
         let waterTask = plant.tasks.first { PlantCarePreset.matching($0.title) == .water }
         let hasAny = (plant.location?.isEmpty == false)
+            || (plant.careContext?.isEmpty == false)
             || (plant.careNotes?.isEmpty == false)
             || (waterTask?.lastDoneAt != nil)
         card {
@@ -1414,6 +1418,9 @@ private struct PlantDetailView: View {
             } else {
                 if let location = plant.location, !location.isEmpty {
                     detailRow("Location", location, symbol: "mappin.and.ellipse")
+                }
+                if let context = plant.careContext, !context.isEmpty {
+                    detailRow("Its situation", context, symbol: "sparkles")
                 }
                 if let notes = plant.careNotes, !notes.isEmpty {
                     detailRow("Care notes", notes, symbol: "note.text")
@@ -1448,16 +1455,17 @@ private struct PlantDetailView: View {
         return date
     }
 
-    // MARK: SEAM (P19-C3) — context-aware AI troubleshooting
+    // MARK: Troubleshoot (P19-C3) — context-aware AI "plant whisperer"
 
-    /// SEAM (P19-C3): context-aware adaptive care + AI troubleshooting lands here — a per-plant CONTEXT
-    /// field (pot type / soil / indoor-outdoor / light exposure) that FEEDS care-interval adjustment,
-    /// plus a "Troubleshoot / Ask about this plant" flow (Claude + optional problem photo + species +
-    /// context → diagnosis / fix / optional interval change). Shipped now as a **disabled placeholder**
-    /// so the entry point + layout are settled; C3 fills the action and the context editor.
+    /// P19-C3: the real "Troubleshoot this plant" entry point — opens the AI ``PlantTroubleshootView``
+    /// sheet (Claude + optional problem photo + species + this plant's CONTEXT → diagnosis / fixes /
+    /// optional one-tap watering-cadence change). The plant's `careContext` (edited in the form, shown in
+    /// the Details card above) is passed straight through so the diagnosis reflects its situation.
     @ViewBuilder
     private func troubleshootSeam(_ plant: CareItem) -> some View {
-        Button {} label: {
+        Button {
+            store.send(.openTroubleshoot(plantID: plant.id))
+        } label: {
             HStack(spacing: 12) {
                 ZStack {
                     Circle().fill(Color.sky.opacity(0.15))
@@ -1466,19 +1474,18 @@ private struct PlantDetailView: View {
                 .frame(width: 44, height: 44)
                 VStack(alignment: .leading, spacing: 3) {
                     Text("Troubleshoot this plant").familyTitle(.headline)
-                    Text("Drooping? Spots? Pests? Ask — coming soon.")
+                    Text("Drooping? Spots? Brown tips? Ask Bacán.")
                         .font(.caption).foregroundStyle(Color.inkSoft)
                 }
                 Spacer(minLength: 4)
+                Image(systemName: "chevron.right").font(.footnote).foregroundStyle(Color.inkSoft)
             }
             .padding(16)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(RoundedRectangle(cornerRadius: 18, style: .continuous).fill(Color.familySurface))
         }
         .buttonStyle(.plain)
-        .disabled(true)
-        .opacity(0.7)
-        .accessibilityIdentifier("plant-troubleshoot-seam")
+        .accessibilityIdentifier("plant-troubleshoot-button")
     }
 
     // MARK: Card scaffold

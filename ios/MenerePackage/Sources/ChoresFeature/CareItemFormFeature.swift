@@ -387,6 +387,7 @@ public struct CareItemFormReducer {
                 item.location = item.location?.blankToNil
                 item.species = item.species?.blankToNil
                 item.careNotes = item.careNotes?.blankToNil
+                item.careContext = item.careContext?.blankToNil
                 item.breed = item.breed?.blankToNil
                 item.vetName = item.vetName?.blankToNil
                 item.vetPhone = item.vetPhone?.blankToNil
@@ -753,6 +754,20 @@ public struct CareItemFormView: View {
                     .foregroundStyle(Color.inkSoft)
                     .accessibilityIdentifier("plant-ai-suggestion-caption")
             }
+        }
+        // P19-C3 — the plant's SITUATION: context the AI troubleshooter uses to adapt its diagnosis
+        // and watering cadence. Distinct from care notes (generic advice).
+        Section {
+            TextField("Pot type, indoor/outdoor, light, drafts…", text: Binding(
+                get: { store.item.careContext ?? "" },
+                set: { store.item.careContext = $0 }
+            ), axis: .vertical)
+            .lineLimit(1...4)
+            .accessibilityIdentifier("plant-context-field")
+        } header: {
+            Text("Its situation")
+        } footer: {
+            Text("Pot & soil, indoor/outdoor, light — helps Bacán tune its care")
         }
     }
 

@@ -40,6 +40,8 @@ public struct ChoresReducer {
         /// P9.1 — the Planta-inspired add-a-plant capture wizard. ADD routes here; EDIT stays on
         /// ``careForm``.
         @Presents var plantCapture: PlantCaptureReducer.State?
+        /// P19-C3 — the per-plant AI "troubleshoot" sheet, presented from a plant's DETAIL screen.
+        @Presents var troubleshoot: PlantTroubleshootReducer.State?
         // Simple add-reward entry
         var showAddReward = false
         var newRewardTitle = ""
@@ -95,12 +97,15 @@ public struct ChoresReducer {
         case petSuggestionTapped(PetSuggestion)
         case dismissPetSuggestions
         case carePhotosLoaded([String: Data])
+        // P19-C3 — open the AI troubleshoot sheet for a plant (from its DETAIL screen).
+        case openTroubleshoot(plantID: String)
         // P16-C2 — fire a Hue ritual (Bedtime / Dinner's ready) inline from the Smart-home preview.
         case recallRitual(HueRitual)
         case ritualRecallFinished(key: String)
         case form(PresentationAction<ChoreFormReducer.Action>)
         case careForm(PresentationAction<CareItemFormReducer.Action>)
         case plantCapture(PresentationAction<PlantCaptureReducer.Action>)
+        case troubleshoot(PresentationAction<PlantTroubleshootReducer.Action>)
         case houseCard(HouseCardReducer.Action)
         case binding(BindingAction<State>)
     }
@@ -182,6 +187,40 @@ public struct ChoresReducer {
             case let .carePhotosLoaded(map):
                 state.carePhotos.merge(map) { _, new in new }
                 return .none
+
+            case let .openTroubleshoot(plantID):
+                guard let plant = state.careItems.first(where: { $0.id == plantID }) else { return .none }
+                // Snapshot the plant's identity + situation + current watering cadence for the model.
+                let waterInterval = plant.tasks
+                    .first { PlantCarePreset.matching($0.title) == .water }?.intervalDays
+                state.troubleshoot = PlantTroubleshootReducer.State(
+                    plantID: plant.id,
+                    plantName: plant.name,
+                    species: plant.species,
+                    commonName: plant.speciesLatin,
+                    careContext: plant.careContext,
+                    currentWaterIntervalDays: waterInterval
+                )
+                return .none
+
+            case let .troubleshoot(.presented(.delegate(.updateWaterInterval(itemID, days)))):
+                // The context-adaptive payoff: apply the AI's suggested watering cadence to the plant's
+                // Water task and persist (server-consistent via saveCareItem). Best-effort — the sheet
+                // already showed the "updated" confirmation optimistically.
+                guard let (hid, _) = ctx(),
+                      let i = state.careItems.firstIndex(where: { $0.id == itemID }),
+                      let taskIdx = state.careItems[i].tasks.firstIndex(where: {
+                          PlantCarePreset.matching($0.title) == .water
+                      })
+                else { return .none }
+                state.careItems[i].tasks[taskIdx].intervalDays = days
+                state.careItems = Self.sortedCare(state.careItems)
+                let toSave = state.careItems.first { $0.id == itemID }
+                return .run { _ in
+                    guard let toSave else { return }
+                    @Dependency(\.persistence) var persistence
+                    try await persistence.saveCareItem(hid, toSave)
+                }
 
             case let .statsUpdated(stats):
                 // Level-up celebration: fire only when a member we already had stats for rises a
@@ -416,7 +455,7 @@ public struct ChoresReducer {
             case .plantCapture(.presented(.delegate(.didFinish))):
                 return .send(.task)
 
-            case .form, .careForm, .plantCapture, .houseCard, .binding:
+            case .form, .careForm, .plantCapture, .troubleshoot, .houseCard, .binding:
                 return .none
             }
         }
@@ -428,6 +467,9 @@ public struct ChoresReducer {
         }
         .ifLet(\.$plantCapture, action: \.plantCapture) {
             PlantCaptureReducer()
+        }
+        .ifLet(\.$troubleshoot, action: \.troubleshoot) {
+            PlantTroubleshootReducer()
         }
     }
 
