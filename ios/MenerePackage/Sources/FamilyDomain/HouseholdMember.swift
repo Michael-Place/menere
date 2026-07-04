@@ -9,8 +9,16 @@ import Foundation
 ///
 /// Persisted at `households/{hid}/members/{uid}`.
 public struct HouseholdMember: Codable, Equatable, Identifiable, Sendable {
-    /// The member's Firebase Auth uid (also the Firestore document id).
+    /// The member's stable Firestore **document id**. For the household owner this *is* their
+    /// Firebase Auth uid; for a **managed persona** (Vale/Famfis/Oliver — a profile with data but
+    /// no login yet) it's a synthetic UUID. Every reference to a member (chore assignee, event
+    /// assignee, `Document.linkedMemberIds`, `memberStats/{id}`) uses THIS id — so when a persona is
+    /// claimed we attach the joiner's uid below while **preserving this id**, keeping all links valid.
     public let id: String
+    /// The Firebase Auth uid of the account that **claimed** this member, once someone joins and picks
+    /// this persona (P18). `nil` for the owner (whose doc id already *is* their uid) and for managed,
+    /// still-unclaimed personas. Decode-safe: existing docs lack this field.
+    public var uid: String?
     /// The everyday **display** name shown throughout the app (greetings, leaderboard, roster).
     /// A nickname is perfectly fine here — e.g. "Migueluh". This is the name users see.
     public var name: String
@@ -30,7 +38,8 @@ public struct HouseholdMember: Codable, Equatable, Identifiable, Sendable {
         color: MemberColor = .ocean,
         avatarSystemName: String = "person.circle.fill",
         role: Role = .admin,
-        joinedAt: Date = Date()
+        joinedAt: Date = Date(),
+        uid: String? = nil
     ) {
         self.id = id
         self.name = name
@@ -39,11 +48,13 @@ public struct HouseholdMember: Codable, Equatable, Identifiable, Sendable {
         self.avatarSystemName = avatarSystemName
         self.role = role
         self.joinedAt = joinedAt
+        self.uid = uid
     }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = try c.decode(String.self, forKey: .id)
+        uid = try c.decodeIfPresent(String.self, forKey: .uid)
         name = try c.decode(String.self, forKey: .name)
         fullName = try c.decodeIfPresent(String.self, forKey: .fullName)
         color = try c.decodeIfPresent(MemberColor.self, forKey: .color) ?? .ocean
@@ -58,6 +69,17 @@ public struct HouseholdMember: Codable, Equatable, Identifiable, Sendable {
         case child
     }
 
+    /// True once a real account has claimed this profile (owner or a joiner who picked this persona).
+    public var isClaimed: Bool { uid != nil }
+
+    /// A **managed persona** — a profile with data (chores, docs, color) but no login yet
+    /// (Vale/Famfis/Oliver). Such a member has no linked `uid` and is *not* the owner-keyed doc.
+    /// The owner's doc carries `role == .admin` (its id already is the uid); managed personas were
+    /// seeded as `role == .member`. Callers that also have the household in hand should prefer the
+    /// authoritative check (`uid == nil && !household.members.contains(id)`); this convenience is for
+    /// contexts without that array.
+    public var isManaged: Bool { uid == nil && role == .member }
+
     /// Curated SF Symbol options for the profile avatar picker.
     public static let avatarOptions: [String] = [
         "person.circle.fill", "figure.wave", "star.circle.fill", "heart.circle.fill",
@@ -65,6 +87,21 @@ public struct HouseholdMember: Codable, Equatable, Identifiable, Sendable {
         "sun.max.circle.fill", "pawprint.circle.fill", "gamecontroller.fill", "book.circle.fill",
         "music.note", "camera.circle.fill", "bicycle.circle.fill", "airplane.circle.fill",
     ]
+}
+
+public extension Sequence where Element == HouseholdMember {
+    /// Resolves the **signed-in user's own** member profile from the roster (P18).
+    ///
+    /// The household **owner** matches by document id (their doc id *is* their uid, and the doc has no
+    /// `uid` field). A member who **claimed** a managed persona matches by its linked `uid` (its doc id
+    /// stays the original synthetic id, so every id-keyed reference — chores, docs, stats — remains
+    /// valid). Managed, still-unclaimed personas never match (no `uid`, synthetic id).
+    ///
+    /// Use this anywhere the app needs "which member is me?" — never a bare `id == uid`, which would
+    /// fail to find a claimed persona.
+    func member(forUID uid: String) -> HouseholdMember? {
+        first { $0.id == uid || $0.uid == uid }
+    }
 }
 
 /// The fixed per-member color palette. Each member picks a distinct color for at-a-glance

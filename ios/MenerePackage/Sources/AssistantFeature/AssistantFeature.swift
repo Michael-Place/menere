@@ -101,7 +101,7 @@ public struct AssistantReducer {
                     @Dependency(\.persistence) var persistence
                     let members = (try? await persistence.members(hid)) ?? []
                     @Shared(.user) var user
-                    let full = members.first { $0.id == user?.id }?.name ?? user?.displayName
+                    let full = (user?.id).flatMap { members.member(forUID: $0) }?.name ?? user?.displayName
                     let first = full?.split(whereSeparator: { $0.isWhitespace }).first.map(String.init)
                     await send(.rosterLoaded(
                         firstName: (first?.isEmpty == false) ? first : nil,

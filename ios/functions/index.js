@@ -49,9 +49,20 @@ exports.ttbColaLookup = onCall(
 
 /**
  * `joinHousehold` is a v2 HTTPS callable (us-central1) that lets a signed-in user join an
- * existing household by its invite code. It looks up the household by `inviteCode`, adds the
- * caller's uid to `members` (idempotent via arrayUnion), and points the user doc's
- * `householdId` at it. Returns `{ hid, name, memberCount }`.
+ * existing household by its invite code, and (P18) **claim an existing managed persona** so the
+ * family's profile-only members (Vale/Famfis/Oliver — member docs with data but no login) can be
+ * picked up without creating a duplicate.
+ *
+ * It looks up the household by `inviteCode`, adds the caller's uid to `members` (idempotent via
+ * arrayUnion), and points the user doc's `householdId` at it.
+ *
+ * - **No `claimMemberId`:** joins and returns `{ hid, name, memberCount, unclaimedMembers }` — the
+ *   managed personas still available to claim (member docs with no `uid` whose doc id isn't in
+ *   `members[]`). The client either offers the "Which family member are you?" picker (then calls
+ *   back with a `claimMemberId`) or seeds a fresh member ("I'm new here").
+ * - **With `claimMemberId`:** attaches the caller's uid to that member doc **preserving its doc id**
+ *   (so every id-keyed reference — chores, `linkedMemberIds`, `memberStats/{id}` — stays valid).
+ *   Rejects if the persona is already claimed by someone else or doesn't exist in the household.
  */
 exports.joinHousehold = onCall(
   { timeoutSeconds: 30, memory: "256MiB" },
@@ -64,6 +75,7 @@ exports.joinHousehold = onCall(
     if (!code) {
       throw new HttpsError("invalid-argument", "An invite code is required.");
     }
+    const claimMemberId = String(request.data?.claimMemberId || "").trim();
 
     const db = admin.firestore();
     const snapshot = await db
@@ -77,6 +89,35 @@ exports.joinHousehold = onCall(
     }
 
     const doc = snapshot.docs[0];
+    const membersCol = doc.ref.collection("members");
+
+    // --- Claim path: attach this account to an existing managed persona (P18) ---
+    if (claimMemberId) {
+      const memberRef = membersCol.doc(claimMemberId);
+      const memberSnap = await memberRef.get();
+      if (!memberSnap.exists) {
+        throw new HttpsError("not-found", "That profile is no longer available.");
+      }
+      const member = memberSnap.data() || {};
+      if (member.uid && member.uid !== uid) {
+        throw new HttpsError(
+          "failed-precondition",
+          "Someone already claimed that profile."
+        );
+      }
+      // Preserve the doc id; only attach the linked account. Every id-keyed reference stays valid.
+      await memberRef.set({ uid }, { merge: true });
+      await doc.ref.update({ members: admin.firestore.FieldValue.arrayUnion(uid) });
+      await db.collection("users").doc(uid).set({ householdId: doc.id }, { merge: true });
+      return {
+        hid: doc.id,
+        name: doc.data().name || null,
+        claimedMemberId: claimMemberId,
+        unclaimedMembers: [],
+      };
+    }
+
+    // --- Join path: add to members[], then surface the claimable managed personas ---
     await doc.ref.update({
       members: admin.firestore.FieldValue.arrayUnion(uid),
     });
@@ -88,10 +129,30 @@ exports.joinHousehold = onCall(
       ? existingMembers.length
       : existingMembers.length + 1;
 
+    // Managed persona = a member doc with no linked `uid` whose doc id is NOT an account in
+    // `members[]` (that gate excludes the owner, whose doc id IS their uid) and isn't the caller.
+    const memberDocs = await membersCol.get();
+    const unclaimedMembers = memberDocs.docs
+      .filter((m) => {
+        const data = m.data() || {};
+        return !data.uid && !existingMembers.includes(m.id) && m.id !== uid;
+      })
+      .map((m) => {
+        const data = m.data() || {};
+        return {
+          id: m.id,
+          name: data.name || "Member",
+          fullName: data.fullName || null,
+          color: data.color || "ocean",
+          avatarSystemName: data.avatarSystemName || "person.circle.fill",
+        };
+      });
+
     return {
       hid: doc.id,
       name: doc.data().name || null,
       memberCount,
+      unclaimedMembers,
     };
   }
 );

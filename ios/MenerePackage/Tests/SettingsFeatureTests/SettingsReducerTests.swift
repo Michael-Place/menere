@@ -1,3 +1,4 @@
+import AnalyticsClient
 import ComposableArchitecture
 import FamilyDomain
 import HouseholdClient
@@ -47,7 +48,7 @@ final class SettingsReducerTests: XCTestCase {
         let fixedDate = self.fixedDate
         await withDependencies {
             $0.defaultFileStorage = .inMemory
-            $0.household.join = { _ in "hid-2" }
+            $0.household.join = { _, _ in JoinOutcome(hid: "hid-2", unclaimed: []) }
             $0.persistence.household = { hid in
                 Household(id: hid, ownerUid: "owner", members: ["owner", "u"], inviteCode: "ZZTOP9", createdAt: fixedDate)
             }
@@ -71,7 +72,7 @@ final class SettingsReducerTests: XCTestCase {
                 $0.isJoining = true
                 $0.joinError = nil
             }
-            await store.receive(.joinResponse(.success("hid-2"))) {
+            await store.receive(.joinResponse(.success(JoinOutcome(hid: "hid-2", unclaimed: [])))) {
                 $0.isJoining = false
                 $0.showJoinSheet = false
             }
@@ -89,13 +90,65 @@ final class SettingsReducerTests: XCTestCase {
         }
     }
 
+    /// P18 — a code that resolves to a household with managed personas presents the "Which family
+    /// member are you?" picker (rather than finalizing), and tapping a persona claims it.
+    func testJoinPresentsClaimPickerThenClaims() async {
+        let fixedDate = self.fixedDate
+        let vale = ClaimablePersona(
+            id: "vale-uuid", name: "Vale", fullName: "Valentina",
+            color: .terracotta, avatarSystemName: "person.circle.fill"
+        )
+        let claimedId = LockIsolated<String?>(nil)
+        await withDependencies {
+            $0.defaultFileStorage = .inMemory
+            $0.analytics.record = { _, _ in }
+            $0.household.join = { _, claimMemberId in
+                if let claimMemberId {
+                    claimedId.setValue(claimMemberId)
+                    return JoinOutcome(hid: "hid-2", unclaimed: [])
+                }
+                return JoinOutcome(hid: "hid-2", unclaimed: [vale])
+            }
+            $0.persistence.household = { hid in
+                Household(id: hid, ownerUid: "owner", members: ["owner", "u"], inviteCode: "ZZTOP9", createdAt: fixedDate)
+            }
+        } operation: {
+            @Shared(.user) var user
+            $user.withLock { $0 = User(id: "u", displayName: "Tester", householdId: nil) }
+
+            let store = TestStore(initialState: SettingsReducer.State()) { SettingsReducer() }
+            store.exhaustivity = .off(showSkippedAssertions: false)
+
+            await store.send(.joinHouseholdTapped)
+            await store.send(.binding(.set(\.joinCode, "ZZTOP9")))
+            await store.send(.submitJoinTapped)
+            await store.receive(.joinResponse(.success(JoinOutcome(hid: "hid-2", unclaimed: [vale])))) {
+                $0.isJoining = false
+                $0.joinedHid = "hid-2"
+                $0.claimCandidates = [vale]
+            }
+            // Still in the sheet on the picker step — not finalized.
+            XCTAssertTrue(store.state.showJoinSheet)
+
+            await store.send(.claimPersonaTapped(vale)) { $0.isJoining = true }
+            await store.receive(.claimResponse(.success("hid-2"))) {
+                $0.isJoining = false
+                $0.showJoinSheet = false
+                $0.claimCandidates = []
+                $0.joinedHid = nil
+            }
+            XCTAssertEqual(claimedId.value, "vale-uuid")
+            XCTAssertEqual(user?.householdId, "hid-2")
+        }
+    }
+
     func testJoinFailure() async {
         struct JoinError: Error, LocalizedError {
             var errorDescription: String? { "No household found for that code" }
         }
         await withDependencies {
             $0.defaultFileStorage = .inMemory
-            $0.household.join = { _ in throw JoinError() }
+            $0.household.join = { _, _ in throw JoinError() }
         } operation: {
             @Shared(.user) var user
             $user.withLock { $0 = User(id: "u", displayName: "Tester", householdId: nil) }

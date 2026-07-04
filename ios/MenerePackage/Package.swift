@@ -262,6 +262,7 @@ let package = Package(
         .target(
             name: "HouseholdClient",
             dependencies: [
+                "FamilyDomain",
                 .product(name: "Dependencies", package: "swift-dependencies"),
                 .product(name: "DependenciesMacros", package: "swift-dependencies"),
                 .product(name: "FirebaseFunctions", package: "firebase-ios-sdk"),
@@ -575,6 +576,7 @@ let package = Package(
                 "SettingsFeature",
                 "WineDomain",
                 "PersistenceClient",
+                "AnalyticsClient",
                 "HouseholdClient",
                 "UserDomain",
                 "HueClient",

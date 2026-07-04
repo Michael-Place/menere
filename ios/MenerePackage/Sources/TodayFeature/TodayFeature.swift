@@ -307,7 +307,7 @@ public struct TodayReducer {
     /// user's display name), or nil when there's nothing usable.
     private func firstName(from members: [HouseholdMember]) -> String? {
         @Shared(.user) var user
-        let full = members.first { $0.id == user?.id }?.name ?? user?.displayName
+        let full = (user?.id).flatMap { members.member(forUID: $0) }?.name ?? user?.displayName
         guard let token = full?.split(whereSeparator: { $0.isWhitespace }).first, !token.isEmpty else {
             return nil
         }

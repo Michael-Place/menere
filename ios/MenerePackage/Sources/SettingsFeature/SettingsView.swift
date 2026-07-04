@@ -1,3 +1,4 @@
+import AnalyticsClient
 import AuthenticationDomain
 import ComposableArchitecture
 import FamilyDomain
@@ -26,6 +27,11 @@ public struct SettingsReducer {
         var joinCode = ""
         var isJoining = false
         var joinError: String?
+        /// P18 — after a valid code joins the household, the managed personas the joiner can claim
+        /// on the "Which family member are you?" step. Non-empty ⇒ the join sheet shows the picker.
+        var claimCandidates: [ClaimablePersona] = []
+        /// The household id we just joined, held while the joiner decides which persona is them.
+        var joinedHid: String?
         @Presents var profileEdit: ProfileEditReducer.State?
         /// P25 — "Ideas for Bacán" wishlist capture sheet.
         @Presents var wishlist: WishlistReducer.State?
@@ -102,12 +108,18 @@ public struct SettingsReducer {
         var myMember: HouseholdMember? {
             @Shared(.user) var user
             guard let uid = user?.id else { return nil }
-            return members.first { $0.id == uid }
+            return members.member(forUID: uid)
         }
     }
 
     public enum JoinResult: Equatable {
-        case success(String)
+        case success(JoinOutcome)
+        case failure(String)
+    }
+
+    /// P18 — the result of the second (claim) `joinHousehold` call, or the "I'm new here" finalize.
+    public enum ClaimResult: Equatable {
+        case success(String)   // the joined hid
         case failure(String)
     }
 
@@ -121,6 +133,11 @@ public struct SettingsReducer {
         case joinHouseholdTapped
         case submitJoinTapped
         case joinResponse(JoinResult)
+        // P18 — "Which family member are you?" claim step.
+        case claimPersonaTapped(ClaimablePersona)
+        case imNewHereTapped
+        case claimResponse(ClaimResult)
+        case inviteShared
         case dismissJoinSheet
         case editProfileTapped
         case profileEdit(PresentationAction<ProfileEditReducer.Action>)
@@ -683,11 +700,15 @@ public struct SettingsReducer {
             case .joinHouseholdTapped:
                 state.joinCode = ""
                 state.joinError = nil
+                state.claimCandidates = []
+                state.joinedHid = nil
                 state.showJoinSheet = true
                 return .none
 
             case .dismissJoinSheet:
                 state.showJoinSheet = false
+                state.claimCandidates = []
+                state.joinedHid = nil
                 return .none
 
             case .submitJoinTapped:
@@ -699,21 +720,29 @@ public struct SettingsReducer {
                 return .run { [code = state.joinCode] send in
                     @Dependency(\.household) var household
                     do {
-                        let hid = try await household.join(code)
-                        await send(.joinResponse(.success(hid)))
+                        let outcome = try await household.join(code, nil)
+                        await send(.joinResponse(.success(outcome)))
                     } catch {
                         await send(.joinResponse(.failure(error.localizedDescription)))
                     }
                 }
 
-            case let .joinResponse(.success(hid)):
-                state.isJoining = false
+            case let .joinResponse(.success(outcome)):
                 @Shared(.user) var user
-                $user.withLock { $0?.householdId = hid }
+                $user.withLock { $0?.householdId = outcome.hid }
+                // Managed personas to claim → present the "Which family member are you?" step and wait.
+                if !outcome.unclaimed.isEmpty {
+                    state.isJoining = false
+                    state.joinedHid = outcome.hid
+                    state.claimCandidates = outcome.unclaimed
+                    return .none
+                }
+                // Nothing to claim → this joiner is new; seed a fresh member (the pre-P18 behavior).
                 state.showJoinSheet = false
+                state.isJoining = false
                 let uid = user?.id
                 let name = user?.displayName ?? ""
-                return .run { send in
+                return .run { [hid = outcome.hid] send in
                     if let uid {
                         @Dependency(\.persistence) var persistence
                         _ = try? await persistence.ensureMember(hid, uid, name)
@@ -724,6 +753,58 @@ public struct SettingsReducer {
             case let .joinResponse(.failure(message)):
                 state.isJoining = false
                 state.joinError = message
+                return .none
+
+            case let .claimPersonaTapped(persona):
+                guard !state.isJoining else { return .none }
+                state.isJoining = true
+                state.joinError = nil
+                return .run { [code = state.joinCode, id = persona.id] send in
+                    @Dependency(\.household) var household
+                    @Dependency(\.analytics) var analytics
+                    do {
+                        let outcome = try await household.join(code, id)
+                        analytics.log("member_claimed")
+                        await send(.claimResponse(.success(outcome.hid)))
+                    } catch {
+                        await send(.claimResponse(.failure(error.localizedDescription)))
+                    }
+                }
+
+            case .imNewHereTapped:
+                guard let hid = state.joinedHid else { return .none }
+                state.isJoining = false
+                state.showJoinSheet = false
+                state.claimCandidates = []
+                state.joinedHid = nil
+                @Shared(.user) var user
+                let uid = user?.id
+                let name = user?.displayName ?? ""
+                return .run { send in
+                    if let uid {
+                        @Dependency(\.persistence) var persistence
+                        _ = try? await persistence.ensureMember(hid, uid, name)
+                    }
+                    await send(.task)
+                }
+
+            case .claimResponse(.success):
+                state.isJoining = false
+                state.showJoinSheet = false
+                state.claimCandidates = []
+                state.joinedHid = nil
+                // Reload the roster — the claimed persona now carries our uid, so `myMember`
+                // resolves to it (id-keyed chores/docs/stats stay attached).
+                return .send(.task)
+
+            case let .claimResponse(.failure(message)):
+                state.isJoining = false
+                state.joinError = message
+                return .none
+
+            case .inviteShared:
+                @Dependency(\.analytics) var analytics
+                analytics.log("invite_shared")
                 return .none
 
             case .binding:
@@ -804,7 +885,7 @@ public struct SettingsView: View {
                     ProgressView()
                 } else {
                     ForEach(store.members) { member in
-                        memberRow(member)
+                        memberRow(member, isManaged: isManagedPersona(member))
                     }
                 }
             }
@@ -844,6 +925,16 @@ public struct SettingsView: View {
                             .contentTransition(.numericText())
                     }
                     .padding(.vertical, 4)
+
+                    ShareLink(item: inviteMessage(code: household.inviteCode)) {
+                        HStack {
+                            Image(systemName: "square.and.arrow.up")
+                            Text("Text invite")
+                        }
+                        .foregroundStyle(Color.bacanGreen)
+                    }
+                    .simultaneousGesture(TapGesture().onEnded { store.send(.inviteShared) })
+                    .accessibilityIdentifier("share-invite-button")
                 } else if store.isLoadingHousehold {
                     ProgressView()
                 }
@@ -860,7 +951,7 @@ public struct SettingsView: View {
             } header: {
                 Text("Invite")
             } footer: {
-                Text("Share this code and someone can join the family from their own phone.")
+                Text(inviteFooter)
             }
 
             smartHomeSection
@@ -1547,36 +1638,16 @@ public struct SettingsView: View {
 
     private var joinSheet: some View {
         NavigationStack {
-            Form {
-                Section {
-                    TextField("Invite code", text: $store.joinCode)
-                        .textInputAutocapitalization(.characters)
-                        .autocorrectionDisabled()
-                        .accessibilityIdentifier("join-code-field")
-                } footer: {
-                    if let error = store.joinError {
-                        Text(error)
-                            .foregroundStyle(.red)
-                    }
-                }
-
-                Section {
-                    Button {
-                        store.send(.submitJoinTapped)
-                    } label: {
-                        if store.isJoining {
-                            ProgressView()
-                        } else {
-                            Text("Join")
-                        }
-                    }
-                    .disabled(store.isJoining || store.joinCode.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                    .accessibilityIdentifier("submit-join-button")
+            Group {
+                if store.claimCandidates.isEmpty {
+                    joinCodeStep
+                } else {
+                    claimPersonaStep
                 }
             }
             .scrollContentBackground(.hidden)
             .background(Color.familyCanvas)
-            .navigationTitle("Join a family")
+            .navigationTitle(store.claimCandidates.isEmpty ? "Join a family" : "Welcome!")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -1586,17 +1657,124 @@ public struct SettingsView: View {
         }
     }
 
+    private var joinCodeStep: some View {
+        Form {
+            Section {
+                TextField("Invite code", text: $store.joinCode)
+                    .textInputAutocapitalization(.characters)
+                    .autocorrectionDisabled()
+                    .accessibilityIdentifier("join-code-field")
+            } footer: {
+                if let error = store.joinError {
+                    Text(error)
+                        .foregroundStyle(.red)
+                }
+            }
+
+            Section {
+                Button {
+                    store.send(.submitJoinTapped)
+                } label: {
+                    if store.isJoining {
+                        ProgressView()
+                    } else {
+                        Text("Join")
+                    }
+                }
+                .disabled(store.isJoining || store.joinCode.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .accessibilityIdentifier("submit-join-button")
+            }
+        }
+    }
+
+    /// P18 — "Which family member are you?": the joiner claims their existing managed persona
+    /// (keeping every chore/doc/stat linked to it) or declares themselves new.
+    private var claimPersonaStep: some View {
+        Form {
+            Section {
+                ForEach(store.claimCandidates) { persona in
+                    Button {
+                        store.send(.claimPersonaTapped(persona))
+                    } label: {
+                        HStack(spacing: 12) {
+                            let rgb = persona.color.rgb
+                            Image(systemName: persona.avatarSystemName)
+                                .font(.title2)
+                                .foregroundStyle(Color(red: rgb.red, green: rgb.green, blue: rgb.blue))
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(persona.name).font(.headline).foregroundStyle(Color.ink)
+                                if let full = persona.fullName, full != persona.name {
+                                    Text(full).font(.caption).foregroundStyle(.secondary)
+                                }
+                            }
+                            Spacer()
+                            if store.isJoining {
+                                ProgressView()
+                            } else {
+                                Image(systemName: "chevron.right").font(.caption).foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                    .disabled(store.isJoining)
+                    .accessibilityIdentifier("claim-persona-\(persona.id)")
+                }
+            } header: {
+                Text("Which one is you?")
+            } footer: {
+                if let error = store.joinError {
+                    Text(error).foregroundStyle(.red)
+                } else {
+                    Text("Tap your name to pick up right where your profile left off — your chores, lists, and everything linked to you come along.")
+                }
+            }
+
+            Section {
+                Button {
+                    store.send(.imNewHereTapped)
+                } label: {
+                    HStack {
+                        Image(systemName: "sparkles")
+                        Text("I'm new here")
+                    }
+                }
+                .disabled(store.isJoining)
+                .accessibilityIdentifier("im-new-here-button")
+            }
+        }
+    }
+
+    /// A member with a profile + data but no login yet (Vale/Famfis/Oliver). Authoritative check:
+    /// no linked `uid` AND the doc id isn't an account in `members[]` (which excludes the owner,
+    /// whose doc id *is* their uid). Falls back to the model's role-based guess before the household
+    /// loads.
+    private func isManagedPersona(_ member: HouseholdMember) -> Bool {
+        guard member.uid == nil else { return false }
+        guard let household = store.household else { return member.isManaged }
+        return !household.members.contains(member.id) && member.id != household.ownerUid
+    }
+
     @ViewBuilder
-    private func memberRow(_ member: HouseholdMember) -> some View {
+    private func memberRow(_ member: HouseholdMember, isManaged: Bool) -> some View {
         HStack(spacing: 12) {
             let rgb = member.color.rgb
             Image(systemName: member.avatarSystemName)
                 .font(.title2)
                 .foregroundStyle(Color(red: rgb.red, green: rgb.green, blue: rgb.blue))
+                .opacity(isManaged ? 0.55 : 1)
                 .accessibilityHidden(true)
             Text(member.name)
+                .foregroundStyle(isManaged ? Color.secondary : Color.ink)
             Spacer()
-            if member.role != .member {
+            if isManaged {
+                Text("Not joined yet")
+                    .font(.caption2)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(Color.terracotta)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 2)
+                    .background(Capsule().fill(Color.terracotta.opacity(0.14)))
+                    .accessibilityLabel("\(member.name), not joined yet")
+            } else if member.role != .member {
                 Text(member.role.rawValue.capitalized)
                     .font(.caption2)
                     .fontWeight(.semibold)
@@ -1607,6 +1785,26 @@ public struct SettingsView: View {
             }
         }
         .accessibilityElement(children: .combine)
+    }
+
+    /// The managed personas still waiting to be claimed — used to personalize the invite copy.
+    private var unclaimedPersonas: [HouseholdMember] {
+        store.members.filter { isManagedPersona($0) }
+    }
+
+    /// The warm invite text a joiner receives — explains they'll claim their existing profile.
+    private func inviteMessage(code: String) -> String {
+        if let name = unclaimedPersonas.first?.name {
+            return "Join us on Bacán! Your code is \(code) — when you join, pick \"\(name)\" and you'll pick up right where your profile left off."
+        }
+        return "Join our family on Bacán! Use invite code \(code) to join from your own phone."
+    }
+
+    private var inviteFooter: String {
+        if let name = unclaimedPersonas.first?.name {
+            return "Send \(name) the code above — when they join they'll pick their name and pick up right where their profile left off."
+        }
+        return "Share this code and someone can join the family from their own phone."
     }
 
     private var appVersion: String {

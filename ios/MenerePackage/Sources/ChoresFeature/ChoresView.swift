@@ -584,7 +584,7 @@ public struct ChoresView: View {
         let open = store.chores.filter { !$0.isCompleted }.count
         guard open > 0 else { return "All clear" }
         let base = "\(open) to do"
-        guard let uid = user?.id, let me = store.members.first(where: { $0.id == uid }) else { return base }
+        guard let uid = user?.id, let me = store.members.member(forUID: uid) else { return base }
         return "\(base) · \(firstName(me.name)) Lv \(memberStats(for: uid).level)"
     }
 
