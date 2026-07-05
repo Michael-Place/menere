@@ -1201,6 +1201,7 @@ private struct PlantsDetailView: View {
         .background(Color.familyCanvas)
         .navigationTitle("Plants")
         .navigationBarTitleDisplayMode(.inline)
+        .careUndoBanner(store)
     }
 
     // MARK: Triage header
@@ -2771,6 +2772,7 @@ private struct PetsDetailView: View {
         .background(Color.familyCanvas)
         .navigationTitle("Pets")
         .navigationBarTitleDisplayMode(.inline)
+        .careUndoBanner(store)
         .task { analytics.log("pets_overview_opened") }
     }
 
@@ -2995,20 +2997,117 @@ private struct ActivityDetailView: View {
     }
 }
 
+/// The Home roster's one-tap "mark this task done" affordance (P28). A **labeled** capsule — not a
+/// bare check/drop — so it's obvious what the tap does and which task it completes: the row's due-line
+/// names the task, this pill names the action. Shown by its rows only when the soonest task is
+/// actionable. Plays a leaf-unfurl (plant water) or sticker-slap (pets/other) on tap, then routes
+/// through the shared `markCareTaskDone` → ``CareCompletion``/`writeCareDone` path — which arms the
+/// ``CareUndoBanner`` so the tap is reversible.
+private struct CareMarkDonePill: View {
+    enum Motion { case leaf, slap }
+    let title: String
+    let icon: String
+    let tint: Color
+    let motion: Motion
+    let accessibilityText: String
+    let identifier: String
+    let onTap: () -> Void
+
+    @State private var animate = false
+
+    var body: some View {
+        Button {
+            onTap()
+            animate = true
+            Task { try? await Task.sleep(for: .milliseconds(motion == .leaf ? 800 : 700)); animate = false }
+        } label: {
+            HStack(spacing: 5) {
+                // `motion` is constant per instance, so this branch never thrashes view identity.
+                if motion == .leaf {
+                    Image(systemName: icon).leafUnfurl(isOn: animate, color: tint)
+                } else {
+                    Image(systemName: icon).stickerSlap(isOn: animate, color: tint)
+                }
+                Text(title)
+            }
+            .font(.system(.footnote, design: .rounded).weight(.semibold))
+            .foregroundStyle(tint)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 7)
+            .background(Capsule(style: .continuous).fill(tint.opacity(0.14)))
+        }
+        .buttonStyle(.pressable)
+        .accessibilityLabel(accessibilityText)
+        .accessibilityIdentifier(identifier)
+    }
+}
+
+/// The reversible "Marked {task} done · Undo" banner (P28) shown over the Home pets/plants rosters
+/// after a one-tap completion. Reads ``ChoresReducer/State/careUndo`` (armed by `markCareTaskDone`);
+/// Undo sends `undoCareTaskDone`, which restores the task's captured PRIOR done-stamp. Auto-dismisses
+/// on its own timer (see the reducer); tapping the pill body dismisses without reversing.
+private struct CareUndoBanner: ViewModifier {
+    @Bindable var store: StoreOf<ChoresReducer>
+
+    // A snackbar reads as an appearance-independent overlay (like system toasts), so it uses FIXED
+    // dark chrome + bright accents rather than adaptive tokens — guaranteeing contrast in BOTH light
+    // and dark. (An adaptive `.ink` fill flips to cream in dark and would wash out white text.)
+    private let toastFill = Color(red: 0.165, green: 0.141, blue: 0.133)   // warm charcoal
+    private let toastCheck = Color(red: 0.44, green: 0.78, blue: 0.60)     // bright mint
+    private let toastUndo = Color(red: 0.93, green: 0.71, blue: 0.31)      // bright marigold
+
+    func body(content: Content) -> some View {
+        content.overlay(alignment: .bottom) {
+            if let undo = store.careUndo {
+                HStack(spacing: 12) {
+                    Image(systemName: "checkmark.circle.fill").foregroundStyle(toastCheck)
+                    Text("Marked \(undo.taskTitle) done")
+                        .font(.system(.subheadline, design: .rounded).weight(.medium))
+                        .foregroundStyle(.white)
+                        .lineLimit(1)
+                    Spacer(minLength: 8)
+                    Button("Undo") { store.send(.undoCareTaskDone, animation: .snappy) }
+                        .font(.system(.subheadline, design: .rounded).weight(.bold))
+                        .foregroundStyle(toastUndo)
+                        .accessibilityIdentifier("care-undo")
+                }
+                .padding(.horizontal, 18)
+                .padding(.vertical, 13)
+                .background(
+                    Capsule(style: .continuous).fill(toastFill)
+                        .overlay(Capsule(style: .continuous).strokeBorder(Color.white.opacity(0.08), lineWidth: 0.5))
+                )
+                .shadow(color: .black.opacity(0.28), radius: 14, y: 5)
+                .padding(.horizontal, 20)
+                .padding(.bottom, 14)
+                .id(undo.nonce)
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+                .onTapGesture { store.send(.dismissCareUndo, animation: .snappy) }
+            }
+        }
+        .animation(.snappy, value: store.careUndo)
+    }
+}
+
+private extension View {
+    /// Attach the reversible care-undo banner driven by `store.careUndo`. See ``CareUndoBanner``.
+    func careUndoBanner(_ store: StoreOf<ChoresReducer>) -> some View {
+        modifier(CareUndoBanner(store: store))
+    }
+}
+
 /// A single Plants row: circular photo thumbnail (or a leaf fallback), name, species, the soonest
 /// task's due line (task-title-driven verb wording — "Water due today" / "Watered Jul 2 by …"), and
-/// a water-drop mark-done affordance that plays the ``LeafUnfurl`` motion. Routes through the same
-/// `markCareTaskDone` → ``CareCompletion``/`writeCareDone` path as House care. Tapping the row
-/// (thumbnail/name area) now pushes the plant DETAIL page (P19-C1) — the mark-done drop still acts in
-/// place, so it sits *outside* the navigating region.
+/// a labeled mark-done pill (``CareMarkDonePill``) that plays the ``LeafUnfurl`` motion. Routes through
+/// the same `markCareTaskDone` → ``CareCompletion``/`writeCareDone` path as House care. Tapping the row
+/// (thumbnail/name area) pushes the plant DETAIL page (P19-C1) — the mark-done pill acts in place, so
+/// it sits *outside* the navigating region.
 private struct PlantRow: View {
     let item: CareItem
     let members: [HouseholdMember]
     /// Cached photo bytes for `item.photoPath`, if loaded. `nil` ⇒ leaf fallback.
     let photo: Data?
     let onMarkDone: (_ taskID: String) -> Void
-
-    @State private var unfurlOn = false
 
     private var soonest: CareTask? { item.soonestDueTask() }
 
@@ -3032,20 +3131,20 @@ private struct PlantRow: View {
 
             Spacer()
 
-            if let task = soonest {
-                Button {
-                    onMarkDone(task.id)
-                    unfurlOn = true
-                    Task { try? await Task.sleep(for: .milliseconds(800)); unfurlOn = false }
-                } label: {
-                    Image(systemName: "drop.fill")
-                        .font(.title3)
-                        .foregroundStyle(Color.bacanGreen)
-                        .leafUnfurl(isOn: unfurlOn, color: .bacanGreen)
-                }
-                .buttonStyle(.pressable)
-                .accessibilityLabel("Water")
-                .accessibilityIdentifier("plant-mark-done-\(item.id)")
+            // Legibility (P28): show a LABELED pill — not a bare drop — and only when the soonest task
+            // is actually actionable (due/overdue/manual). The label names the exact task the tap
+            // completes (matched preset verb, e.g. "Water"/"Fertilize"), so it's clear on a glance.
+            if let task = soonest, (task.daysUntilDue() ?? 0) <= 0 {
+                let preset = PlantCarePreset.matching(task.title)
+                CareMarkDonePill(
+                    title: preset?.title ?? "Mark done",
+                    icon: PlantCarePreset.symbol(forTitle: task.title),
+                    tint: .bacanGreen,
+                    motion: .leaf,
+                    accessibilityText: "\(preset?.title ?? "Mark done") \(item.name)",
+                    identifier: "plant-mark-done-\(item.id)",
+                    onTap: { onMarkDone(task.id) }
+                )
             }
         }
     }
@@ -3153,8 +3252,6 @@ private struct PetRow: View {
     let expiringDoc: FamilyDomain.Document?
     let onMarkDone: (_ taskID: String) -> Void
 
-    @State private var slapOn = false
-
     private var soonest: CareTask? { item.soonestDueTask() }
 
     var body: some View {
@@ -3183,20 +3280,19 @@ private struct PetRow: View {
 
             Spacer()
 
-            if let task = soonest {
-                Button {
-                    onMarkDone(task.id)
-                    slapOn = true
-                    Task { try? await Task.sleep(for: .milliseconds(700)); slapOn = false }
-                } label: {
-                    Image(systemName: "checkmark.circle.fill")
-                        .font(.title3)
-                        .foregroundStyle(Color.sky)
-                        .stickerSlap(isOn: slapOn, color: .sky)
-                }
-                .buttonStyle(.pressable)
-                .accessibilityLabel("Mark done")
-                .accessibilityIdentifier("pet-mark-done-\(item.id)")
+            // Legibility (P28): a LABELED "Mark done" pill instead of a bare check, shown only when the
+            // soonest task is actually actionable (due/overdue/manual). The row's due-line names the
+            // task ("Flea & tick due today"); this pill names the action, tying the two together.
+            if let task = soonest, (task.daysUntilDue() ?? 0) <= 0 {
+                CareMarkDonePill(
+                    title: "Mark done",
+                    icon: "checkmark.circle.fill",
+                    tint: .sky,
+                    motion: .slap,
+                    accessibilityText: "Mark \(task.title) done for \(item.name)",
+                    identifier: "pet-mark-done-\(item.id)",
+                    onTap: { onMarkDone(task.id) }
+                )
             }
         }
     }

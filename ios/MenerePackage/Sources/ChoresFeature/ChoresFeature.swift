@@ -34,6 +34,26 @@ public struct ChoresReducer {
         var yardSuggestionsDismissed = false
         /// Same, for the Pets "The pack" starter card (P10).
         var petSuggestionsDismissed = false
+        /// P28 — the pending "care marked done" undo for the Home pets/plants roster. Set by
+        /// ``Action/markCareTaskDone`` on a plant/pet one-tap completion; captures the task's PRIOR
+        /// done-stamp so the overview's Undo banner can name the task and truly reverse the write via
+        /// the same `saveCareItem` path. Nil = no banner showing.
+        var careUndo: CareUndo?
+
+        /// Captured context + prior done-stamp for a one-tap care completion, so the overview's Undo
+        /// banner can name the exact task and restore it (not merely re-toggle). See ``careUndo``.
+        struct CareUndo: Equatable {
+            var itemID: String
+            var taskID: String
+            var itemName: String
+            var taskTitle: String
+            var priorLastDoneAt: Date?
+            var priorLastDoneBy: String?
+            /// The optimistic activity entry inserted by the mark-done, popped back out on Undo.
+            var activityID: String?
+            /// Bumped per mark-done so the banner re-animates and restarts its auto-dismiss timer.
+            var nonce: Int
+        }
         var isLoading = false
         @Presents var form: ChoreFormReducer.State?
         @Presents var careForm: CareItemFormReducer.State?
@@ -80,6 +100,10 @@ public struct ChoresReducer {
         case addCareItemTapped
         case editCareItemTapped(CareItem)
         case markCareTaskDone(itemID: String, taskID: String)
+        /// P28 — restore the last one-tap care completion to its prior done-stamp (the overview's Undo).
+        case undoCareTaskDone
+        /// P28 — dismiss the care-undo banner without reversing (tap-away / auto-timeout).
+        case dismissCareUndo
         /// P19-C2 — batch "water this room": mark the due Water task done for every plant in `location`
         /// (nil ⇒ the "no room yet" bucket) whose water is due, each via the shared ``CareCompletion``/
         /// `writeCareDone` path (server-consistent, one activity entry per plant).
@@ -110,7 +134,7 @@ public struct ChoresReducer {
         case binding(BindingAction<State>)
     }
 
-    private enum CancelID { case observeStats }
+    private enum CancelID { case observeStats, careUndo }
 
     public init() {}
 
@@ -323,19 +347,75 @@ public struct ChoresReducer {
             case let .markCareTaskDone(itemID, taskID):
                 guard let (hid, uid) = ctx(),
                       let i = state.careItems.firstIndex(where: { $0.id == itemID }),
+                      let ti = state.careItems[i].tasks.firstIndex(where: { $0.id == taskID }),
                       let outcome = CareCompletion.markDone(
                           item: state.careItems[i], taskID: taskID, byMemberID: uid, members: state.members
                       )
                 else { return .none }
-                analytics.log("care_marked_done", ["kind": state.careItems[i].kind.rawValue])
+                let kind = state.careItems[i].kind
+                // Capture the task's PRIOR done-stamp BEFORE we overwrite it, so the roster's Undo can
+                // truly restore it (not just re-toggle to "now").
+                let priorAt = state.careItems[i].tasks[ti].lastDoneAt
+                let priorBy = state.careItems[i].tasks[ti].lastDoneBy
+                let taskTitle = state.careItems[i].tasks[ti].title
+                let itemName = state.careItems[i].name
+                analytics.log("care_marked_done", ["kind": kind.rawValue])
                 // Shared care-completion logic (see ``CareCompletion``) so Today and Home behave
                 // identically: stamp who-did-it-last + a best-effort "took care of…" activity entry.
                 state.careItems[i] = outcome.updated
                 if let activity = outcome.activity { state.activity.insert(activity, at: 0) }
-                return .run { [outcome] _ in
-                    @Dependency(\.persistence) var persistence
-                    try await persistence.writeCareDone(hid: hid, outcome)
+                var effects: [Effect<Action>] = [
+                    .run { [outcome] _ in
+                        @Dependency(\.persistence) var persistence
+                        try await persistence.writeCareDone(hid: hid, outcome)
+                    }
+                ]
+                // The Home pets/plants ROSTER offers a one-tap mark-done; back it with a labeled Undo
+                // banner (legibility + reversibility). House/zone upkeep isn't rostered that way — leave
+                // it be so its behavior is unchanged.
+                if kind == .plant || kind == .pet {
+                    state.careUndo = State.CareUndo(
+                        itemID: itemID, taskID: taskID, itemName: itemName, taskTitle: taskTitle,
+                        priorLastDoneAt: priorAt, priorLastDoneBy: priorBy,
+                        activityID: outcome.activity?.id, nonce: (state.careUndo?.nonce ?? 0) + 1
+                    )
+                    effects.append(
+                        .run { send in
+                            try await Task.sleep(for: .seconds(6))
+                            await send(.dismissCareUndo)
+                        }
+                        .cancellable(id: CancelID.careUndo, cancelInFlight: true)
+                    )
                 }
+                return .merge(effects)
+
+            case .undoCareTaskDone:
+                guard let (hid, _) = ctx(), let undo = state.careUndo,
+                      let i = state.careItems.firstIndex(where: { $0.id == undo.itemID }),
+                      let ti = state.careItems[i].tasks.firstIndex(where: { $0.id == undo.taskID })
+                else {
+                    state.careUndo = nil
+                    return .cancel(id: CancelID.careUndo)
+                }
+                analytics.log("care_marked_done_undone", ["kind": state.careItems[i].kind.rawValue])
+                // Restore the exact task's prior done-stamp, pop the optimistic activity entry, and write
+                // the restored item back through the same `saveCareItem` path the completion used.
+                state.careItems[i].tasks[ti].lastDoneAt = undo.priorLastDoneAt
+                state.careItems[i].tasks[ti].lastDoneBy = undo.priorLastDoneBy
+                if let aid = undo.activityID { state.activity.removeAll { $0.id == aid } }
+                let restored = state.careItems[i]
+                state.careUndo = nil
+                return .merge(
+                    .cancel(id: CancelID.careUndo),
+                    .run { _ in
+                        @Dependency(\.persistence) var persistence
+                        try await persistence.saveCareItem(hid, restored)
+                    }
+                )
+
+            case .dismissCareUndo:
+                state.careUndo = nil
+                return .cancel(id: CancelID.careUndo)
 
             case let .waterRoomDone(location):
                 guard let (hid, uid) = ctx() else { return .none }
