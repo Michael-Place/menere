@@ -266,6 +266,26 @@ Michael's playtest feedback, turned around same-day (commits 9ced9db…39b9571):
   SwiftPM EventKit tests; recurring-import E2E is unit-tested only.
 - Also: Hubspace mock cleared via Admin SDK (unblocked login); `idb` works again.
 
+### P26 — Best-in-class image pipeline + SCRAPBOOK look (researched 2026-07-05)
+Michael: "image capture pipeline best in class… read like a real scrapbook, not a
+wordpress page." **Aesthetic decided = "Layered collage"** (the tasteful middle): photo-
+corner holders, subtle paper-grain texture, varied sizes + gentle overlap/rotation,
+captions + dates, soft shadow; lifted-subject stickers as an ACCENT (not full polaroid).
+Applied to the emotional surfaces first (pets, plants, future kids' memory log); Brain/
+receipts stay utilitarian.
+Capture tech to adopt (iOS 26): system `PhotosPicker` first + polished camera; multi-shot,
+retake, crop-to-subject; HEIC-efficient upload + generated thumbnails; **VisionKit subject
+lifting** (`ImageAnalysisInteraction`/`VNGenerateForegroundInstanceMaskRequest`) → die-cut
+stickers (ties to existing `.stickerSlap`); **Clean Up** (Apple Intelligence) to remove
+distractions. Gate AI bits on availability; graceful fallback.
+Chunks: **IMG-C1** scrapbook DISPLAY system (reusable `ScrapbookPhoto`: photo corners +
+paper grain + seeded-stable rotation + caption/date + shadow; `ScrapbookCollage` varied/
+overlap) → adopt on pet + plant detail heroes + Home-hub strips (immediate visible win on
+existing photos). **IMG-C2** best-in-class CAPTURE component (PhotosPicker+camera, crop,
+multi-shot, thumbnails, HEIC) + subject-lift stickers + Clean Up. **IMG-C3** multi-photo
+galleries + the kids' memory-log surface (rich-text-native per the backlog below).
+Rotation must be DETERMINISTIC (seed by photo id) so it never jitters between renders.
+
 ### BACKLOG — Native rich text + Writing Tools + Genmoji (researched 2026-07-05)
 iOS 26 makes this mostly *free* by using standard controls. What's possible:
 - **Rich text in SwiftUI `TextEditor`**: bind to `AttributedString` (iOS 26+) → native
