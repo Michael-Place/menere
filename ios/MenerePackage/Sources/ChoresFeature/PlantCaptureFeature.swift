@@ -61,6 +61,9 @@ public struct PlantCaptureReducer {
         var isIdentifying: Bool = false
         /// The identify result once it lands (used only to tone the reveal caption).
         var identification: PlantIdentification?
+        /// The rich species profile (P19-C4) — light/humidity/fertilizer/temp/problems + pet-toxicity,
+        /// fetched right after a successful identify and saved onto the new plant. `nil` until it lands.
+        var speciesProfile: SpeciesProfile?
         /// `true` once identify returned nothing usable (failure / low confidence / unknown) — the
         /// reveal degrades to a warm "What do you call it?" nudge.
         var identifyFailed: Bool = false
@@ -124,7 +127,8 @@ public struct PlantCaptureReducer {
                 species: species.wizardBlankToNil,
                 speciesLatin: speciesLatin.wizardBlankToNil,
                 careNotes: careNotes.wizardBlankToNil,
-                lightLevel: lightLevel?.wizardBlankToNil
+                lightLevel: lightLevel?.wizardBlankToNil,
+                speciesProfile: speciesProfile
             )
         }
     }
@@ -134,6 +138,7 @@ public struct PlantCaptureReducer {
         case skipPhotoTapped
         case identifyStart
         case identifyResponse(PlantIdentification?)
+        case profileResponse(SpeciesProfile?)
         case notRightTapped
         case backTapped
         case nextTapped
@@ -208,6 +213,19 @@ public struct PlantCaptureReducer {
                 ) ?? ""
                 if let water = result.waterIntervalDays { state.waterIntervalDays = water }
                 if let light = result.light, let match = Self.matchLight(light) { state.lightLevel = match }
+                // P19-C4: kick off the species profile fetch (light/humidity/fertilizer/temp/problems +
+                // pet-toxicity) so the new plant is born knowing whether it's safe around the pets. Best-
+                // effort — a failure just leaves `speciesProfile` nil (no "Good to know" card).
+                let species = result.latinName
+                let commonName = result.commonName
+                return .run { send in
+                    @Dependency(\.plants) var plants
+                    let profile = try? await plants.profile(species, commonName)
+                    await send(.profileResponse(profile))
+                }
+
+            case let .profileResponse(profile):
+                state.speciesProfile = profile
                 return .none
 
             case .notRightTapped:

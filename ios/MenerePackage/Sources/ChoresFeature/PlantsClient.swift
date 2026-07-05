@@ -1,5 +1,6 @@
 import Dependencies
 import DependenciesMacros
+import FamilyDomain
 import FirebaseFunctions
 import Foundation
 
@@ -45,6 +46,9 @@ public struct PlantsClient: Sendable {
     /// Identify a plant from a compressed JPEG. Throws on network/server failure; a low-confidence
     /// result comes back as a normal `PlantIdentification` (`isLowConfidence == true`).
     public var identify: @Sendable (_ jpeg: Data) async throws -> PlantIdentification
+    /// Fetch the rich species profile (light/humidity/fertilizer/temp/problems + pet-toxicity) for a
+    /// plant by its species / common name (P19-C4). No photo — a knowledge lookup. Throws on failure.
+    public var profile: @Sendable (_ species: String?, _ commonName: String?) async throws -> SpeciesProfile
 }
 
 enum PlantsClientError: Error { case invalidResponse }
@@ -59,7 +63,56 @@ extension PlantsClient: DependencyKey {
                 throw PlantsClientError.invalidResponse
             }
             return plantIdentification(fromCallableResponse: dict)
+        },
+        profile: { species, commonName in
+            var payload: [String: Any] = [:]
+            if let s = species, !s.isEmpty { payload["species"] = s }
+            if let c = commonName, !c.isEmpty { payload["commonName"] = c }
+            let callable = Functions.functions(region: "us-central1").httpsCallable("plantSpeciesProfile")
+            let result = try await callable.call(payload)
+            guard let dict = result.data as? [String: Any] else {
+                throw PlantsClientError.invalidResponse
+            }
+            return speciesProfile(fromCallableResponse: dict)
         }
+    )
+}
+
+/// Pure mapping from the `plantSpeciesProfile` callable payload to a ``SpeciesProfile``. Tolerant of
+/// JSON nulls, missing keys, and the nested `petToxicity` map.
+func speciesProfile(fromCallableResponse dict: [String: Any]) -> SpeciesProfile {
+    func str(_ d: [String: Any], _ key: String) -> String? {
+        guard let s = d[key] as? String,
+              !s.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+        return s
+    }
+    func bool(_ d: [String: Any], _ key: String) -> Bool {
+        (d[key] as? Bool) ?? ((d[key] as? NSNumber)?.boolValue ?? false)
+    }
+    let problems = (dict["commonProblems"] as? [Any])?.compactMap { entry -> String? in
+        guard let s = entry as? String,
+              !s.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+        return s
+    } ?? []
+    var toxicity: PetToxicity?
+    if let t = dict["petToxicity"] as? [String: Any] {
+        let dogs = bool(t, "toxicToDogs")
+        let cats = bool(t, "toxicToCats")
+        toxicity = PetToxicity(
+            isToxicToPets: bool(t, "isToxicToPets") || dogs || cats,
+            toxicToDogs: dogs,
+            toxicToCats: cats,
+            severity: str(t, "severity"),
+            note: str(t, "note")
+        )
+    }
+    return SpeciesProfile(
+        lightNeed: str(dict, "lightNeed"),
+        humidity: str(dict, "humidity"),
+        fertilizer: str(dict, "fertilizer"),
+        idealTemp: str(dict, "idealTemp"),
+        commonProblems: problems,
+        petToxicity: toxicity
     )
 }
 

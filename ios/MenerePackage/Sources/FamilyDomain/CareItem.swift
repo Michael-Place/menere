@@ -125,6 +125,97 @@ public struct CareTask: Codable, Equatable, Identifiable, Sendable {
     }
 }
 
+/// Whether a plant species is toxic to the family's pets (P19-C4). The Place house has two dogs
+/// (Fajita, Sprinkle) and a cat (Fireball) roaming among 32 plants, so "is this safe if a dog chews
+/// it?" is a real question. Sourced from ASPCA-style horticultural knowledge by `plantSpeciesProfile`;
+/// when unsure the server errs toward caution. All decode-safe (older plants have no profile at all).
+public struct PetToxicity: Codable, Equatable, Sendable {
+    /// `true` when the plant is toxic to at least one common pet — drives the headline warning chip.
+    public var isToxicToPets: Bool
+    public var toxicToDogs: Bool
+    public var toxicToCats: Bool
+    /// Free-text severity ("mild" / "moderate" / "severe"), when known.
+    public var severity: String?
+    /// A short, plain-language note — "mildly toxic to dogs and cats; can cause drooling/vomiting if
+    /// chewed" — or a reassuring "pet-safe" line when it's genuinely safe.
+    public var note: String?
+
+    public init(
+        isToxicToPets: Bool,
+        toxicToDogs: Bool = false,
+        toxicToCats: Bool = false,
+        severity: String? = nil,
+        note: String? = nil
+    ) {
+        self.isToxicToPets = isToxicToPets
+        self.toxicToDogs = toxicToDogs
+        self.toxicToCats = toxicToCats
+        self.severity = severity
+        self.note = note
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        isToxicToPets = try c.decodeIfPresent(Bool.self, forKey: .isToxicToPets) ?? false
+        toxicToDogs = try c.decodeIfPresent(Bool.self, forKey: .toxicToDogs) ?? false
+        toxicToCats = try c.decodeIfPresent(Bool.self, forKey: .toxicToCats) ?? false
+        severity = try c.decodeIfPresent(String.self, forKey: .severity)
+        note = try c.decodeIfPresent(String.self, forKey: .note)
+    }
+}
+
+/// A plant's rich SPECIES PROFILE (P19-C4) — the "good to know" beyond watering: light, humidity,
+/// fertilizer cadence, ideal temp, common problems, and pet-toxicity. Filled by the
+/// `plantSpeciesProfile` Claude callable at identify time and backfilled onto the family's existing
+/// plants. Every field is decode-safe and optional — an older plant with no profile simply shows no
+/// "Good to know" card and no safety chip.
+public struct SpeciesProfile: Codable, Equatable, Sendable {
+    /// Light needs, e.g. "Bright indirect light; tolerates medium."
+    public var lightNeed: String?
+    /// Humidity preference, e.g. "Loves high humidity — mist or group it."
+    public var humidity: String?
+    /// Fertilizer cadence, e.g. "Feed monthly in spring/summer, none in winter."
+    public var fertilizer: String?
+    /// Ideal temperature range, e.g. "65–80°F; keep above 55°F."
+    public var idealTemp: String?
+    /// A few common problems to watch for ("Brown tips from dry air", "Root rot if overwatered").
+    public var commonProblems: [String]
+    /// Whether it's safe around Fajita, Sprinkle & Fireball — the headline of this whole chunk.
+    public var petToxicity: PetToxicity?
+
+    public init(
+        lightNeed: String? = nil,
+        humidity: String? = nil,
+        fertilizer: String? = nil,
+        idealTemp: String? = nil,
+        commonProblems: [String] = [],
+        petToxicity: PetToxicity? = nil
+    ) {
+        self.lightNeed = lightNeed
+        self.humidity = humidity
+        self.fertilizer = fertilizer
+        self.idealTemp = idealTemp
+        self.commonProblems = commonProblems
+        self.petToxicity = petToxicity
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        lightNeed = try c.decodeIfPresent(String.self, forKey: .lightNeed)
+        humidity = try c.decodeIfPresent(String.self, forKey: .humidity)
+        fertilizer = try c.decodeIfPresent(String.self, forKey: .fertilizer)
+        idealTemp = try c.decodeIfPresent(String.self, forKey: .idealTemp)
+        commonProblems = try c.decodeIfPresent([String].self, forKey: .commonProblems) ?? []
+        petToxicity = try c.decodeIfPresent(PetToxicity.self, forKey: .petToxicity)
+    }
+
+    /// `true` when there's at least one substantive field to show a "Good to know" card for.
+    public var hasContent: Bool {
+        lightNeed?.isEmpty == false || humidity?.isEmpty == false || fertilizer?.isEmpty == false
+            || idealTemp?.isEmpty == false || !commonProblems.isEmpty
+    }
+}
+
 /// A *thing that needs recurring care* — the house, a room/zone (and later a plant or pet). One
 /// shared primitive introduced at P8 and reused by P9/P10 (see ROADMAP "Architectural spine").
 ///
@@ -164,6 +255,10 @@ public struct CareItem: Codable, Equatable, Identifiable, Sendable {
     public var vetName: String?
     /// Pet-only (P10): vet contact phone. Decode-safe additive field.
     public var vetPhone: String?
+    /// Plant-only (P19-C4): the rich species profile — light/humidity/fertilizer/ideal temp/common
+    /// problems + **pet-toxicity**. Filled by `plantSpeciesProfile` at identify time and backfilled
+    /// onto existing plants. Decode-safe additive field (older plants nil → no "Good to know" card).
+    public var speciesProfile: SpeciesProfile?
 
     public init(
         id: String = UUID().uuidString,
@@ -182,7 +277,8 @@ public struct CareItem: Codable, Equatable, Identifiable, Sendable {
         breed: String? = nil,
         birthday: Date? = nil,
         vetName: String? = nil,
-        vetPhone: String? = nil
+        vetPhone: String? = nil,
+        speciesProfile: SpeciesProfile? = nil
     ) {
         self.id = id
         self.kind = kind
@@ -201,6 +297,7 @@ public struct CareItem: Codable, Equatable, Identifiable, Sendable {
         self.birthday = birthday
         self.vetName = vetName
         self.vetPhone = vetPhone
+        self.speciesProfile = speciesProfile
     }
 
     public init(from decoder: Decoder) throws {
@@ -222,6 +319,7 @@ public struct CareItem: Codable, Equatable, Identifiable, Sendable {
         birthday = try c.decodeIfPresent(Date.self, forKey: .birthday)
         vetName = try c.decodeIfPresent(String.self, forKey: .vetName)
         vetPhone = try c.decodeIfPresent(String.self, forKey: .vetPhone)
+        speciesProfile = try c.decodeIfPresent(SpeciesProfile.self, forKey: .speciesProfile)
     }
 
     /// The task that drives the collapsed row: the soonest-due one. Interval tasks sort by days

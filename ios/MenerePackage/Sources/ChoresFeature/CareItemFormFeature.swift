@@ -240,6 +240,7 @@ public struct CareItemFormReducer {
         case docsLoaded([FamilyDomain.Document])
         case identifyTapped
         case identifyResponse(PlantIdentification?)
+        case profileResponse(SpeciesProfile?)
         case delegate(Delegate)
         case binding(BindingAction<State>)
 
@@ -351,6 +352,17 @@ public struct CareItemFormReducer {
                     state.item.tasks[idx].intervalDays = water
                 }
                 state.showAISuggestion = true
+                // P19-C4: also fetch the rich species profile (light/humidity/fertilizer/temp/problems
+                // + pet-toxicity) and save it on the plant. Best-effort — a failure leaves it nil.
+                let species = result.latinName
+                let commonName = result.commonName
+                return .run { send in
+                    @Dependency(\.plants) var plants
+                    await send(.profileResponse(try? await plants.profile(species, commonName)))
+                }
+
+            case let .profileResponse(profile):
+                if let profile { state.item.speciesProfile = profile }
                 return .none
 
             case .addTaskTapped:

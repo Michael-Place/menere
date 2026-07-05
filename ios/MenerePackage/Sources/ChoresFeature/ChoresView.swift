@@ -1232,6 +1232,18 @@ private struct PlantsDetailView: View {
                         .foregroundStyle(Color.inkSoft)
                         .fixedSize(horizontal: false, vertical: true)
                 }
+                // P19-C4: a gentle pet-safety awareness line — the Place house has 3 pets roaming among
+                // these plants, so a quiet "N are toxic to pets" nudge earns its place here.
+                if toxicToPetsCount > 0 {
+                    Label(
+                        "\(toxicToPetsCount) toxic to pets — tap a plant to see which",
+                        systemImage: "exclamationmark.triangle.fill"
+                    )
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(Color.terracotta)
+                    .padding(.top, 2)
+                    .accessibilityIdentifier("plants-toxic-count")
+                }
             }
             Spacer(minLength: 0)
         }
@@ -1239,6 +1251,11 @@ private struct PlantsDetailView: View {
         .frame(maxWidth: .infinity)
         .background(RoundedRectangle(cornerRadius: 18, style: .continuous).fill(Color.familySurface))
         .accessibilityIdentifier("plants-triage-header")
+    }
+
+    /// How many plants carry a profile flagged toxic to pets — powers the triage awareness line.
+    private var toxicToPetsCount: Int {
+        plantItems.filter { $0.speciesProfile?.petToxicity?.isToxicToPets == true }.count
     }
 
     /// Headline + optional subhead + icon/tint for the triage card, derived from the ``PlantTriage``.
@@ -1337,6 +1354,7 @@ private struct PlantsDetailView: View {
 private struct PlantDetailView: View {
     @Bindable var store: StoreOf<ChoresReducer>
     let plantID: String
+    @Dependency(\.analytics) private var analytics
 
     /// Re-derived live from the store so mark-done reflects immediately (and the page empties
     /// gracefully if the plant is deleted from the edit form).
@@ -1347,13 +1365,22 @@ private struct PlantDetailView: View {
             if let plant {
                 VStack(spacing: 16) {
                     hero(plant)
+                    if let toxicity = plant.speciesProfile?.petToxicity {
+                        petSafetyBanner(toxicity)
+                    }
                     overviewCard(plant)
+                    if let profile = plant.speciesProfile, profile.hasContent {
+                        goodToKnowCard(profile)
+                    }
                     careTasksCard(plant)
                     detailsCard(plant)
                     troubleshootSeam(plant)
                 }
                 .padding(.horizontal)
                 .padding(.vertical, 12)
+                .task {
+                    if plant.speciesProfile != nil { analytics.log("plant_profile_viewed") }
+                }
             } else {
                 ContentUnavailableView("Plant not found", systemImage: "leaf")
                     .padding(.top, 60)
@@ -1615,6 +1642,104 @@ private struct PlantDetailView: View {
         }
         .buttonStyle(.plain)
         .accessibilityIdentifier("plant-troubleshoot-button")
+    }
+
+    // MARK: Pet safety (P19-C4) — the headline: is this plant safe around Fajita, Sprinkle & Fireball?
+
+    /// The can't-miss banner near the top of the page: terracotta ⚠️ "Toxic to dogs & cats" (with who +
+    /// the plain-language note), or bacanGreen ✓ "Pet-safe". This is the whole point of the chunk, so it
+    /// gets a full-width, high-contrast treatment rather than a quiet chip.
+    @ViewBuilder
+    private func petSafetyBanner(_ toxicity: PetToxicity) -> some View {
+        let toxic = toxicity.isToxicToPets
+        let tint: Color = toxic ? .terracotta : .bacanGreen
+        let symbol = toxic ? "exclamationmark.triangle.fill" : "checkmark.shield.fill"
+        HStack(alignment: .top, spacing: 12) {
+            ZStack {
+                Circle().fill(tint.opacity(0.18))
+                Image(systemName: symbol).font(.title3).foregroundStyle(tint)
+            }
+            .frame(width: 44, height: 44)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(petSafetyHeadline(toxicity))
+                    .familyTitle(.headline)
+                    .foregroundStyle(tint)
+                if let note = toxicity.note, !note.isEmpty {
+                    Text(note)
+                        .font(.system(.subheadline, design: .rounded))
+                        .foregroundStyle(Color.ink)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            Spacer(minLength: 4)
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 18, style: .continuous).fill(tint.opacity(0.12)))
+        .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).strokeBorder(tint.opacity(0.35), lineWidth: 1))
+        .accessibilityIdentifier("plant-pet-safety-banner")
+    }
+
+    /// "Toxic to dogs & cats" / "Toxic to dogs" / "Pet-safe" — names who's at risk, with severity when
+    /// known ("Moderately toxic to cats").
+    private func petSafetyHeadline(_ toxicity: PetToxicity) -> String {
+        guard toxicity.isToxicToPets else { return "Pet-safe" }
+        let who: String
+        switch (toxicity.toxicToDogs, toxicity.toxicToCats) {
+        case (true, true): who = "dogs & cats"
+        case (true, false): who = "dogs"
+        case (false, true): who = "cats"
+        default: who = "pets"
+        }
+        if let sev = toxicity.severity?.trimmingCharacters(in: .whitespaces), !sev.isEmpty {
+            let cap = sev.prefix(1).uppercased() + sev.dropFirst().lowercased()
+            return "\(cap) — toxic to \(who)"
+        }
+        return "Toxic to \(who)"
+    }
+
+    // MARK: Good to know (P19-C4) — the rich species profile card
+
+    /// The warm "Good to know" card: light, humidity, fertilizer, ideal temp and common problems for the
+    /// species, from the AI profile. Only shown when the plant carries a profile with content.
+    @ViewBuilder
+    private func goodToKnowCard(_ profile: SpeciesProfile) -> some View {
+        card {
+            Label("Good to know", systemImage: "sparkles")
+                .familyTitle(.headline)
+            if let light = profile.lightNeed, !light.isEmpty {
+                detailRow("Light", light, symbol: "sun.max.fill")
+            }
+            if let humidity = profile.humidity, !humidity.isEmpty {
+                detailRow("Humidity", humidity, symbol: "humidity.fill")
+            }
+            if let fertilizer = profile.fertilizer, !fertilizer.isEmpty {
+                detailRow("Fertilizer", fertilizer, symbol: "leaf.fill")
+            }
+            if let temp = profile.idealTemp, !temp.isEmpty {
+                detailRow("Ideal temp", temp, symbol: "thermometer.medium")
+            }
+            if !profile.commonProblems.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(alignment: .top, spacing: 12) {
+                        Image(systemName: "stethoscope")
+                            .font(.subheadline).foregroundStyle(Color.bacanGreen).frame(width: 22)
+                        Text("Watch for").font(.caption).foregroundStyle(Color.inkSoft)
+                        Spacer(minLength: 0)
+                    }
+                    ForEach(profile.commonProblems, id: \.self) { problem in
+                        HStack(alignment: .top, spacing: 8) {
+                            Image(systemName: "circle.fill")
+                                .font(.system(size: 5)).foregroundStyle(Color.inkSoft)
+                                .padding(.top, 6).padding(.leading, 34)
+                            Text(problem).foregroundStyle(Color.ink)
+                                .fixedSize(horizontal: false, vertical: true)
+                            Spacer(minLength: 0)
+                        }
+                    }
+                }
+            }
+        }
     }
 
     // MARK: Card scaffold

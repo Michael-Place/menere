@@ -20,6 +20,7 @@ const { extractEventsFromText } = require("./eventExtract");
 const { generateDailyBriefing } = require("./briefingGenerate");
 const { processDocument } = require("./docProcess");
 const { identifyPlant } = require("./plantIdentify");
+const { speciesProfile } = require("./plantSpeciesProfile");
 const { troubleshootPlant } = require("./plantTroubleshoot");
 const { runAgentTurn } = require("./agentTurn");
 const { planMealWeek } = require("./mealPlanWeek");
@@ -308,6 +309,34 @@ exports.identifyPlant = onCall(
       return await identifyPlant({ imageBase64, mediaType, apiKey: ANTHROPIC_API_KEY.value() });
     } catch (err) {
       throw new HttpsError("internal", `Plant identification failed: ${err.message}`);
+    }
+  }
+);
+
+/**
+ * `plantSpeciesProfile` is a v2 HTTPS callable (us-central1) for the P19-C4 species profiles. Input
+ * `{ species?, commonName? }` (no photo — a knowledge lookup). It runs Claude (Sonnet 5) with a forced
+ * tool-use schema and returns a rich houseplant care profile + **pet-toxicity**:
+ * `{ lightNeed, humidity, fertilizer, idealTemp, commonProblems:[..], petToxicity:{ isToxicToPets,
+ * toxicToDogs, toxicToCats, severity, note } }`. Toxicity is grounded in ASPCA-style knowledge and errs
+ * toward caution when unsure. Reuses the existing `ANTHROPIC_API_KEY` secret. No rate limiting.
+ */
+exports.plantSpeciesProfile = onCall(
+  { timeoutSeconds: 60, memory: "512MiB", secrets: [ANTHROPIC_API_KEY] },
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError("unauthenticated", "You must be signed in.");
+    }
+    const data = request.data || {};
+    const species = typeof data.species === "string" ? data.species : undefined;
+    const commonName = typeof data.commonName === "string" ? data.commonName : undefined;
+    if (!(species && species.trim()) && !(commonName && commonName.trim())) {
+      throw new HttpsError("invalid-argument", "species or commonName is required.");
+    }
+    try {
+      return await speciesProfile({ species, commonName, apiKey: ANTHROPIC_API_KEY.value() });
+    } catch (err) {
+      throw new HttpsError("internal", `Species profile failed: ${err.message}`);
     }
   }
 );
