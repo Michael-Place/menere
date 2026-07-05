@@ -266,6 +266,29 @@ Michael's playtest feedback, turned around same-day (commits 9ced9db…39b9571):
   SwiftPM EventKit tests; recurring-import E2E is unit-tested only.
 - Also: Hubspace mock cleared via Admin SDK (unblocked login); `idb` works again.
 
+### P27 — Big screen / Apple TV (researched 2026-07-05) — "huge family win" (Michael)
+Get family content onto the living-room TV. Tech facts: a native **tvOS** target can share
+the whole Firebase backend + `FamilyDomain` (SwiftUI+TCA+Firestore/Storage all run on tvOS;
+monorepo would add `tvos/` alongside `ios/`, share MenerePackage). **Auth wrinkle:** phone-OTP
+doesn't work on tvOS (no reCAPTCHA/push) → use **Sign in with Apple** (already "ready") OR a
+**device-pairing flow** (TV shows code → confirm in phone app → Firebase custom token via a
+Cloud Function). Device-pairing = nicer family UX (link the TV once). Apple TV screensaver
+already reads shared Photos albums (a zero-code fallback path exists).
+**Tiers (cheap→grand):**
+- **T0** app auto-curates a shared "Bacán" Photos album → Apple TV screensaver (≈no code,
+  unbranded).
+- **T1 (recommended first)** in-app **"Play on TV"** ambient slideshow of the P26 scrapbook
+  photos (auto-advancing, Ken-Burns-y) → AirPlay. Contained; rides on the scrapbook work;
+  proves the magic. Reuses `ScrapbookPhoto`/`ScrapbookCollage`.
+- **T2 (the flagship)** native **tvOS app** sharing the backend: (a) ambient family-scrapbook
+  SCREENSAVER (pets/plants/kids drifting across the TV — "The Frame" but ours), (b) living-room
+  COMMAND CENTER (daily briefing, schedule, tonight's dinner, **chores leaderboard for the
+  kids** — gamified, visible in the living room). Auth = device-pairing (TV code → phone
+  confirm → custom token). Needs tvOS focus-engine UI + big typography; reuses domain/clients.
+- **T3** polish: seasonal ambient themes, morning/evening modes, Sonos "now playing" tie-in,
+  Top Shelf dynamic content, chore-celebration moments on the big screen.
+Decision to make before T2: Sign in with Apple vs device-pairing (lean device-pairing).
+
 ### P26 — Best-in-class image pipeline + SCRAPBOOK look (researched 2026-07-05)
 Michael: "image capture pipeline best in class… read like a real scrapbook, not a
 wordpress page." **Aesthetic decided = "Layered collage"** (the tasteful middle): photo-
