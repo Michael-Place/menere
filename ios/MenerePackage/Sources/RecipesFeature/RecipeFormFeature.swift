@@ -143,8 +143,20 @@ public struct RecipeFormReducer {
 public struct RecipeFormView: View {
     @Bindable var store: StoreOf<RecipeFormReducer>
 
+    /// Non-destructive "scale to serve" target — display-only, seeded from the recipe's own
+    /// servings and reset whenever that changes. Never written back to the recipe.
+    @State private var targetServings: Int?
+    /// Drives the full-screen Cook Mode cover.
+    @State private var isCooking = false
+
     public init(store: StoreOf<RecipeFormReducer>) {
         self.store = store
+    }
+
+    /// The effective scale target (defaults to the recipe's own servings until the stepper moves).
+    private var effectiveServings: Int { targetServings ?? store.recipe.servings }
+    private var scale: Double {
+        ServingsMath.scale(target: effectiveServings, original: store.recipe.servings)
     }
 
     public var body: some View {
@@ -205,9 +217,11 @@ public struct RecipeFormView: View {
                     }
                 }
 
+                cookSection
+
                 Section("Ingredients") {
                     ForEach(store.recipe.ingredients) { ing in
-                        Text(ing.displayLine).foregroundStyle(Color.ink)
+                        Text(ServingsMath.scaledLine(ing, scale: scale)).foregroundStyle(Color.ink)
                     }
                     .onDelete { store.send(.removeIngredients($0)) }
                     HStack {
@@ -247,6 +261,62 @@ public struct RecipeFormView: View {
                         .accessibilityIdentifier("save-recipe-button")
                 }
             }
+            // Editing the recipe's own servings resets any display-only scaling.
+            .onChange(of: store.recipe.servings) { targetServings = nil }
+            .fullScreenCover(isPresented: $isCooking) {
+                CookModeView(recipe: store.recipe, initialServings: effectiveServings)
+            }
         }
+    }
+
+    // MARK: Cook + servings scaler
+
+    /// A non-destructive "scale to serve" control + "Start cooking" entry point. Shown only once a
+    /// recipe has content to cook from, so a blank new recipe stays uncluttered.
+    @ViewBuilder
+    private var cookSection: some View {
+        if !store.recipe.ingredients.isEmpty || !store.recipe.instructions.isEmpty {
+            Section("Cook") {
+                Stepper(value: scaleBinding, in: 1...48) {
+                    HStack {
+                        Label("Scale to serve", systemImage: "person.2.fill")
+                            .foregroundStyle(Color.ink)
+                        Spacer()
+                        Text("\(effectiveServings)")
+                            .font(.system(.body, design: .rounded).weight(.bold))
+                            .foregroundStyle(Color.bacanGreen)
+                    }
+                }
+                .accessibilityIdentifier("scale-servings-stepper")
+
+                if effectiveServings != store.recipe.servings {
+                    Text("Showing quantities for \(effectiveServings) — this recipe makes \(store.recipe.servings). The recipe itself is unchanged.")
+                        .font(.caption).foregroundStyle(Color.inkSoft)
+                    Button("Reset to \(store.recipe.servings)") { targetServings = nil }
+                        .font(.caption.weight(.semibold)).foregroundStyle(Color.bacanGreen)
+                }
+
+                Button {
+                    isCooking = true
+                } label: {
+                    HStack {
+                        Spacer()
+                        Label("Start cooking", systemImage: "flame.fill")
+                            .font(.system(.headline, design: .rounded).weight(.semibold))
+                        Spacer()
+                    }
+                    .padding(.vertical, 8)
+                    .foregroundStyle(.white)
+                }
+                .listRowBackground(Color.bacanGreen)
+                .disabled(store.recipe.instructions.isEmpty)
+                .accessibilityIdentifier("start-cooking-button")
+            }
+        }
+    }
+
+    /// Binding for the scaler stepper — reads the effective target, writes the display-only override.
+    private var scaleBinding: Binding<Int> {
+        Binding(get: { effectiveServings }, set: { targetServings = $0 })
     }
 }
