@@ -172,8 +172,10 @@ public struct ChoresReducer {
                 state.rewards = rewards.sorted { $0.xpCost < $1.xpCost }
                 state.activity = activity
                 state.careItems = Self.sortedCare(careItems)
-                // Fetch plant photos (kind-agnostic: any care item with a photoPath) into the cache.
-                let photoPaths = careItems.compactMap(\.photoPath).filter { !$0.isEmpty }
+                // Fetch plant photos + die-cut stickers (kind-agnostic: any care item with a
+                // photoPath / stickerPath) into the cache, keyed by Storage path.
+                let photoPaths = (careItems.compactMap(\.photoPath)
+                    + careItems.compactMap(\.stickerPath)).filter { !$0.isEmpty }
                 guard !photoPaths.isEmpty else { return .none }
                 return .run { send in
                     @Dependency(\.storage) var storage

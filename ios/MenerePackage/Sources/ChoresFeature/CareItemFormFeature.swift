@@ -202,6 +202,13 @@ public struct CareItemFormReducer {
         var pendingPhoto: Data?
         /// The existing photo bytes loaded from Storage in edit mode, for display.
         var loadedPhoto: Data?
+        /// The die-cut sticker cutout (PNG bytes) once the user taps "Make it a sticker" (P26-IMG-C2).
+        /// Uploaded alongside the photo on Save.
+        var pendingSticker: Data?
+        /// Subject-lift Vision pass in flight.
+        var isLiftingSticker: Bool = false
+        /// `true` once a lift found no clean subject — the affordance shows a warm note.
+        var stickerFailed: Bool = false
         /// AI plant-identify in flight — drives the button spinner.
         var isIdentifying: Bool = false
         /// Show the "AI suggestion — edit anything" caption under the filled fields (set after a
@@ -237,6 +244,8 @@ public struct CareItemFormReducer {
         case removeTask(id: String)
         case photoPicked(Data)
         case photoLoaded(Data?)
+        case makeStickerTapped
+        case stickerLifted(Data?)
         case docsLoaded([FamilyDomain.Document])
         case identifyTapped
         case identifyResponse(PlantIdentification?)
@@ -312,9 +321,30 @@ public struct CareItemFormReducer {
 
             case let .photoPicked(data):
                 state.pendingPhoto = data
-                // A new photo invalidates any prior AI suggestion / note.
+                // A new photo invalidates any prior AI suggestion / note / sticker.
                 state.showAISuggestion = false
                 state.identifyNote = nil
+                state.pendingSticker = nil
+                state.isLiftingSticker = false
+                state.stickerFailed = false
+                return .none
+
+            case .makeStickerTapped:
+                guard let source = state.displayPhoto, !state.isLiftingSticker else { return .none }
+                state.isLiftingSticker = true
+                state.stickerFailed = false
+                return .run { send in
+                    // On-device Vision subject lift → white die-cut matte. Any failure ⇒ nil (fall back).
+                    var sticker: Data?
+                    if let ui = UIImage(data: source), let lifted = await SubjectLifter.liftSticker(from: ui) {
+                        sticker = lifted.pngData()
+                    }
+                    await send(.stickerLifted(sticker))
+                }
+
+            case let .stickerLifted(data):
+                state.isLiftingSticker = false
+                if let data { state.pendingSticker = data } else { state.stickerFailed = true }
                 return .none
 
             case .identifyTapped:
@@ -405,6 +435,7 @@ public struct CareItemFormReducer {
                 item.vetPhone = item.vetPhone?.blankToNil
                 let base = item
                 let pending = state.pendingPhoto
+                let pendingSticker = state.pendingSticker
                 return .run { send in
                     @Dependency(\.persistence) var persistence
                     @Dependency(\.storage) var storage
@@ -417,6 +448,12 @@ public struct CareItemFormReducer {
                             toSave.photoPath = path
                         }
                     }
+                    // Upload the die-cut sticker ALONGSIDE the photo under a `{id}/sticker` sub-key —
+                    // reuses the existing care-photo upload, no new Storage surface. Best-effort.
+                    if let pendingSticker,
+                       let sp = try? await storage.uploadCarePhoto(hid, "\(toSave.id)/sticker", pendingSticker) {
+                        toSave.stickerPath = sp
+                    }
                     try await persistence.saveCareItem(hid, toSave)
                     await send(.delegate(.didChange))
                     await dismiss()
@@ -426,12 +463,14 @@ public struct CareItemFormReducer {
                 guard let hid = hid() else { return .none }
                 let id = state.item.id
                 let photoPath = state.item.photoPath
+                let stickerPath = state.item.stickerPath
                 return .run { send in
                     @Dependency(\.persistence) var persistence
                     @Dependency(\.storage) var storage
                     try await persistence.deleteCareItem(hid, id)
-                    if let photoPath, !photoPath.isEmpty {
-                        try? await storage.deletePaths([photoPath])   // best-effort photo cleanup
+                    let cleanup = [photoPath, stickerPath].compactMap { $0 }.filter { !$0.isEmpty }
+                    if !cleanup.isEmpty {
+                        try? await storage.deletePaths(cleanup)   // best-effort photo + sticker cleanup
                     }
                     await send(.delegate(.didChange))
                     await dismiss()
@@ -475,8 +514,6 @@ enum CarePhotoProcessing {
 
 public struct CareItemFormView: View {
     @Bindable var store: StoreOf<CareItemFormReducer>
-    @State private var pickerItem: PhotosPickerItem?
-    @State private var showCamera = false
     private let columns = Array(repeating: GridItem(.flexible()), count: 4)
 
     public init(store: StoreOf<CareItemFormReducer>) {
@@ -585,22 +622,6 @@ public struct CareItemFormView: View {
                 }
             }
             .task { store.send(.task) }
-            .onChange(of: pickerItem) { _, item in
-                guard let item else { return }
-                Task {
-                    if let data = try? await item.loadTransferable(type: Data.self) {
-                        store.send(.photoPicked(data))
-                    }
-                    pickerItem = nil
-                }
-            }
-            .fullScreenCover(isPresented: $showCamera) {
-                CarePhotoCamera(
-                    onCapture: { data in store.send(.photoPicked(data)); showCamera = false },
-                    onCancel: { showCamera = false }
-                )
-                .ignoresSafeArea()
-            }
         }
     }
 
@@ -658,26 +679,14 @@ public struct CareItemFormView: View {
     @ViewBuilder
     private var photoSection: some View {
         Section("Photo") {
-            HStack(spacing: 14) {
-                photoThumbnail
-                VStack(alignment: .leading, spacing: 10) {
-                    PhotosPicker(selection: $pickerItem, matching: .images) {
-                        Label("Choose photo", systemImage: "photo.on.rectangle")
-                    }
-                    .accessibilityIdentifier("plant-photo-picker")
-
-                    // The in-app camera is unreliable on the simulator (reports available, then
-                    // presents a broken picker) — same guard as the document scanner.
-                    #if !targetEnvironment(simulator)
-                    Button {
-                        showCamera = true
-                    } label: {
-                        Label("Take photo", systemImage: "camera")
-                    }
-                    .accessibilityIdentifier("plant-photo-camera")
-                    #endif
-                }
-                Spacer()
+            // P26-IMG-C2 — the reusable best-in-class capture control: system PhotosPicker + camera
+            // (hidden on the simulator) + interactive square crop + downscale/JPEG(~0.8) + thumbnail.
+            PhotoCaptureField(
+                image: store.displayPhoto.flatMap { UIImage(data: $0) },
+                fallbackSymbol: store.isPet ? "pawprint.fill" : "leaf.fill",
+                tint: store.isPet ? Color.sky : Color.bacanGreen
+            ) { processed in
+                store.send(.photoPicked(processed.jpeg))
             }
             // P9-C2 — AI plant identify: runs the `identifyPlant` Claude-vision callable on the
             // compressed photo → fills species / speciesLatin / careNotes and (don't-stomp) the Water
@@ -708,27 +717,46 @@ public struct CareItemFormView: View {
                         .accessibilityIdentifier("plant-identify-note")
                 }
             }
+            // P26-IMG-C2 — "Make it a sticker ✂️": on-device subject lift → die-cut cutout stored
+            // alongside the photo. Only when there's a photo to lift; degrades to a warm note.
+            if store.displayPhoto != nil {
+                stickerRow
+            }
         }
     }
 
+    /// The sticker affordance inside the photo section: a preview once lifted, a spinner while lifting,
+    /// or the "Make it a sticker ✂️" button (with a warm fallback note if no clean subject was found).
     @ViewBuilder
-    private var photoThumbnail: some View {
-        // Pets get a sky-tinted pawprint fallback; plants a green leaf.
-        let tint = store.isPet ? Color.sky : Color.bacanGreen
-        let fallback = store.isPet ? "pawprint.fill" : "leaf.fill"
-        Group {
-            if let data = store.displayPhoto, let image = UIImage(data: data) {
-                Image(uiImage: image).resizable().scaledToFill()
-            } else {
-                ZStack {
-                    Circle().fill(tint.opacity(0.15))
-                    Image(systemName: fallback).font(.title2).foregroundStyle(tint)
-                }
+    private var stickerRow: some View {
+        if let data = store.pendingSticker, let ui = UIImage(data: data) {
+            HStack(spacing: 12) {
+                StickerImage(image: ui)
+                    .frame(width: 60, height: 60)
+                    .accessibilityIdentifier("care-sticker-preview")
+                Text("Sticker ready — it'll join the scrapbook ✂️")
+                    .font(.caption).foregroundStyle(Color.bacanGreen)
+            }
+        } else if store.isLiftingSticker {
+            HStack(spacing: 8) {
+                ProgressView().controlSize(.small)
+                Text("Lifting the subject…").font(.subheadline).foregroundStyle(Color.inkSoft)
+            }
+        } else {
+            Button {
+                store.send(.makeStickerTapped)
+            } label: {
+                Label("Make it a sticker ✂️", systemImage: "scissors")
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.pressable)
+            .accessibilityIdentifier("care-make-sticker")
+            if store.stickerFailed {
+                Text("Couldn't lift a clean subject — the plain photo works great too.")
+                    .font(.caption).foregroundStyle(Color.inkSoft)
             }
         }
-        .frame(width: 64, height: 64)
-        .clipShape(Circle())
-        .accessibilityIdentifier("plant-photo-thumbnail")
     }
 
     @ViewBuilder

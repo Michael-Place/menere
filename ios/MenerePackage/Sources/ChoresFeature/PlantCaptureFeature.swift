@@ -57,6 +57,13 @@ public struct PlantCaptureReducer {
         var step: Step = .photo
         /// A freshly picked/captured photo (uploaded on create). `nil` ⇒ leaf glyph everywhere.
         var pendingPhoto: Data?
+        /// The die-cut sticker cutout (subject on transparent bg, white-matted; PNG bytes) once the
+        /// user taps "Make it a sticker" (P26-IMG-C2). Uploaded alongside the photo on create.
+        var pendingSticker: Data?
+        /// Subject-lift Vision pass in flight — drives the "Lifting the subject…" state.
+        var isLiftingSticker: Bool = false
+        /// `true` once a lift returned no clean subject — the affordance degrades to a warm note.
+        var stickerFailed: Bool = false
         /// AI identify in flight — drives the shimmer "Getting to know it…" state.
         var isIdentifying: Bool = false
         /// The identify result once it lands (used only to tone the reveal caption).
@@ -135,6 +142,8 @@ public struct PlantCaptureReducer {
 
     public enum Action: Equatable, BindableAction {
         case photoPicked(Data)
+        case makeStickerTapped
+        case stickerLifted(Data?)
         case skipPhotoTapped
         case identifyStart
         case identifyResponse(PlantIdentification?)
@@ -170,10 +179,32 @@ public struct PlantCaptureReducer {
             switch action {
             case let .photoPicked(data):
                 state.pendingPhoto = data
+                // A new photo invalidates any prior sticker cutout.
+                state.pendingSticker = nil
+                state.isLiftingSticker = false
+                state.stickerFailed = false
                 state.step = .identify
                 state.isIdentifying = true
                 state.identifyFailed = false
                 return .send(.identifyStart)
+
+            case .makeStickerTapped:
+                guard let source = state.pendingPhoto, !state.isLiftingSticker else { return .none }
+                state.isLiftingSticker = true
+                state.stickerFailed = false
+                return .run { send in
+                    // On-device Vision subject lift → white die-cut matte. Any failure ⇒ nil (fall back).
+                    var sticker: Data?
+                    if let ui = UIImage(data: source), let lifted = await SubjectLifter.liftSticker(from: ui) {
+                        sticker = lifted.pngData()
+                    }
+                    await send(.stickerLifted(sticker))
+                }
+
+            case let .stickerLifted(data):
+                state.isLiftingSticker = false
+                if let data { state.pendingSticker = data } else { state.stickerFailed = true }
+                return .none
 
             case .skipPhotoTapped:
                 // No photo → no identify; go straight to a warm manual name entry.
@@ -271,6 +302,7 @@ public struct PlantCaptureReducer {
                 state.saveError = nil
                 let item = state.buildItem()
                 let pending = state.pendingPhoto
+                let pendingSticker = state.pendingSticker
                 return .run { send in
                     @Dependency(\.persistence) var persistence
                     @Dependency(\.storage) var storage
@@ -280,6 +312,12 @@ public struct PlantCaptureReducer {
                         if let path = try? await storage.uploadCarePhoto(hid, toSave.id, jpeg) {
                             toSave.photoPath = path
                         }
+                    }
+                    // Upload the die-cut sticker ALONGSIDE the photo (never replacing it). Reuses the
+                    // existing care-photo upload under a `{id}/sticker` sub-key — no new Storage surface.
+                    if let pendingSticker,
+                       let sp = try? await storage.uploadCarePhoto(hid, "\(toSave.id)/sticker", pendingSticker) {
+                        toSave.stickerPath = sp
                     }
                     do {
                         try await persistence.saveCareItem(hid, toSave)
@@ -494,6 +532,7 @@ public struct PlantCaptureView: View {
                     identifyingShimmer
                 } else {
                     revealCard
+                    stickerAffordance
                 }
             }
             .padding(.horizontal, 20)
@@ -569,6 +608,47 @@ public struct PlantCaptureView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(18)
         .background(Color.familySurface, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+    }
+
+    /// P26-IMG-C2 — the "Make it a sticker ✂️" affordance below the reveal: on-device subject lift →
+    /// a die-cut cutout that lands with a `.stickerSlap`. Degrades to a warm note when there's no clean
+    /// subject; never blocks the flow.
+    @ViewBuilder
+    private var stickerAffordance: some View {
+        if let stickerData = store.pendingSticker, let ui = UIImage(data: stickerData) {
+            VStack(spacing: 6) {
+                StickerImage(image: ui)
+                    .frame(height: 150)
+                    .accessibilityIdentifier("plant-capture-sticker-preview")
+                Text("Sticker ready — it'll join the scrapbook ✂️")
+                    .font(.caption).foregroundStyle(Color.bacanGreen)
+            }
+            .frame(maxWidth: .infinity)
+        } else if store.isLiftingSticker {
+            HStack(spacing: 8) {
+                ProgressView().controlSize(.small)
+                Text("Lifting the subject…")
+            }
+            .font(.subheadline).foregroundStyle(Color.inkSoft)
+            .frame(maxWidth: .infinity)
+        } else {
+            VStack(spacing: 6) {
+                Button { store.send(.makeStickerTapped) } label: {
+                    Label("Make it a sticker ✂️", systemImage: "scissors")
+                        .font(.subheadline.weight(.medium)).foregroundStyle(Color.bacanGreen)
+                        .padding(.horizontal, 16).padding(.vertical, 10)
+                        .background(Color.bacanGreen.opacity(0.12), in: Capsule())
+                }
+                .buttonStyle(.pressable)
+                .accessibilityIdentifier("plant-capture-make-sticker")
+                if store.stickerFailed {
+                    Text("Couldn't lift a clean subject — the plain photo works great too.")
+                        .font(.caption).foregroundStyle(Color.inkSoft)
+                        .multilineTextAlignment(.center)
+                }
+            }
+            .frame(maxWidth: .infinity)
+        }
     }
 
     // MARK: Step 3 — Nickname
@@ -703,7 +783,10 @@ public struct PlantCaptureView: View {
         VStack(spacing: 24) {
             Spacer()
             Group {
-                if let data = store.pendingPhoto, let image = UIImage(data: data) {
+                if let stickerData = store.pendingSticker, let ui = UIImage(data: stickerData) {
+                    // The die-cut sticker gets the hero spot on the welcome beat — it slaps down.
+                    StickerImage(image: ui).frame(width: 210, height: 210)
+                } else if let data = store.pendingPhoto, let image = UIImage(data: data) {
                     Image(uiImage: image).resizable().scaledToFill()
                         .frame(width: 200, height: 200).clipShape(Circle())
                 } else {

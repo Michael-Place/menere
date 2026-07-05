@@ -1349,6 +1349,8 @@ private struct PlantDetailView: View {
     @Bindable var store: StoreOf<ChoresReducer>
     let plantID: String
     @Dependency(\.analytics) private var analytics
+    /// P26-IMG-C2 — flips the hero between the framed photo and the die-cut sticker (when one exists).
+    @State private var showSticker = false
 
     /// Re-derived live from the store so mark-done reflects immediately (and the page empties
     /// gracefully if the plant is deleted from the edit form).
@@ -1399,24 +1401,38 @@ private struct PlantDetailView: View {
     @ViewBuilder
     private func hero(_ plant: CareItem) -> some View {
         VStack(spacing: 12) {
-            ScrapbookPhoto(
-                image: plantImage(plant),
-                seed: plant.photoPath ?? plant.id,
-                caption: plant.name,
-                date: plant.createdAt,
-                aspect: 1.3
-            ) {
-                LinearGradient(
-                    colors: [Color.bacanGreen.opacity(0.35), Color.bacanGreen.opacity(0.12)],
-                    startPoint: .topLeading, endPoint: .bottomTrailing
-                )
-                .overlay {
-                    Image(systemName: "leaf.fill")
-                        .font(.system(size: 60))
+            if showSticker, let sticker = stickerImage(plant) {
+                ScrapbookSticker(
+                    image: sticker, seed: (plant.stickerPath ?? plant.id) + "-sticker",
+                    caption: plant.name, date: plant.createdAt, aspect: 1.3
+                ) {
+                    Image(systemName: "leaf.fill").font(.system(size: 60))
                         .foregroundStyle(Color.bacanGreen.opacity(0.6))
                 }
+                .frame(maxWidth: .infinity)
+            } else {
+                ScrapbookPhoto(
+                    image: plantImage(plant),
+                    seed: plant.photoPath ?? plant.id,
+                    caption: plant.name,
+                    date: plant.createdAt,
+                    aspect: 1.3
+                ) {
+                    LinearGradient(
+                        colors: [Color.bacanGreen.opacity(0.35), Color.bacanGreen.opacity(0.12)],
+                        startPoint: .topLeading, endPoint: .bottomTrailing
+                    )
+                    .overlay {
+                        Image(systemName: "leaf.fill")
+                            .font(.system(size: 60))
+                            .foregroundStyle(Color.bacanGreen.opacity(0.6))
+                    }
+                }
+                .frame(maxWidth: .infinity)
             }
-            .frame(maxWidth: .infinity)
+            if stickerImage(plant) != nil {
+                stickerToggle
+            }
             VStack(spacing: 6) {
                 if let species = heroSpecies(plant) {
                     Text(species).italic()
@@ -1430,9 +1446,36 @@ private struct PlantDetailView: View {
         }
     }
 
+    /// The little "Photo · Sticker" flip shown only when a die-cut sticker exists for this plant.
+    private var stickerToggle: some View {
+        HStack(spacing: 0) {
+            ForEach([false, true], id: \.self) { sticker in
+                Button {
+                    withAnimation(.snappy) { showSticker = sticker }
+                } label: {
+                    Text(sticker ? "Sticker ✂️" : "Photo")
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(showSticker == sticker ? .white : Color.ink)
+                        .padding(.horizontal, 14).padding(.vertical, 7)
+                        .background(showSticker == sticker ? Color.bacanGreen : Color.clear, in: Capsule())
+                }
+                .buttonStyle(.pressable)
+                .accessibilityIdentifier("plant-hero-toggle-\(sticker ? "sticker" : "photo")")
+            }
+        }
+        .padding(3)
+        .background(Color.familySurface, in: Capsule())
+    }
+
     /// Decoded cached photo for the plant, or `nil` (→ the scrapbook leaf fallback).
     private func plantImage(_ plant: CareItem) -> UIImage? {
         guard let path = plant.photoPath, let data = store.carePhotos[path] else { return nil }
+        return UIImage(data: data)
+    }
+
+    /// Decoded die-cut sticker cutout for the plant, or `nil` when it has none.
+    private func stickerImage(_ plant: CareItem) -> UIImage? {
+        guard let path = plant.stickerPath, let data = store.carePhotos[path] else { return nil }
         return UIImage(data: data)
     }
 
@@ -1984,6 +2027,8 @@ private struct PetDetailView: View {
     @Bindable var store: StoreOf<ChoresReducer>
     let petID: String
     @Environment(\.openURL) private var openURL
+    /// P26-IMG-C2 — flips the hero between the framed photo and the die-cut sticker (when one exists).
+    @State private var showSticker = false
 
     private var pet: CareItem? { store.careItems.first { $0.id == petID } }
 
@@ -2037,24 +2082,38 @@ private struct PetDetailView: View {
     @ViewBuilder
     private func hero(_ pet: CareItem) -> some View {
         VStack(spacing: 12) {
-            ScrapbookPhoto(
-                image: petImage(pet),
-                seed: pet.photoPath ?? pet.id,
-                caption: pet.name,
-                date: breedAgeLine(pet) == nil ? pet.createdAt : nil,
-                aspect: 1.2
-            ) {
-                LinearGradient(
-                    colors: [Color.sky.opacity(0.35), Color.sky.opacity(0.12)],
-                    startPoint: .topLeading, endPoint: .bottomTrailing
-                )
-                .overlay {
+            if showSticker, let sticker = stickerImage(pet) {
+                ScrapbookSticker(
+                    image: sticker, seed: (pet.stickerPath ?? pet.id) + "-sticker",
+                    caption: pet.name, date: breedAgeLine(pet) == nil ? pet.createdAt : nil, aspect: 1.2
+                ) {
                     Image(systemName: pet.iconSymbol.isEmpty ? "pawprint.fill" : pet.iconSymbol)
-                        .font(.system(size: 60))
-                        .foregroundStyle(Color.sky.opacity(0.6))
+                        .font(.system(size: 60)).foregroundStyle(Color.sky.opacity(0.6))
                 }
+                .frame(maxWidth: .infinity)
+            } else {
+                ScrapbookPhoto(
+                    image: petImage(pet),
+                    seed: pet.photoPath ?? pet.id,
+                    caption: pet.name,
+                    date: breedAgeLine(pet) == nil ? pet.createdAt : nil,
+                    aspect: 1.2
+                ) {
+                    LinearGradient(
+                        colors: [Color.sky.opacity(0.35), Color.sky.opacity(0.12)],
+                        startPoint: .topLeading, endPoint: .bottomTrailing
+                    )
+                    .overlay {
+                        Image(systemName: pet.iconSymbol.isEmpty ? "pawprint.fill" : pet.iconSymbol)
+                            .font(.system(size: 60))
+                            .foregroundStyle(Color.sky.opacity(0.6))
+                    }
+                }
+                .frame(maxWidth: .infinity)
             }
-            .frame(maxWidth: .infinity)
+            if stickerImage(pet) != nil {
+                stickerToggle
+            }
             VStack(spacing: 6) {
                 if let sub = breedAgeLine(pet) {
                     Text(sub)
@@ -2068,9 +2127,36 @@ private struct PetDetailView: View {
         }
     }
 
+    /// The little "Photo · Sticker" flip shown only when a die-cut sticker exists for this pet.
+    private var stickerToggle: some View {
+        HStack(spacing: 0) {
+            ForEach([false, true], id: \.self) { sticker in
+                Button {
+                    withAnimation(.snappy) { showSticker = sticker }
+                } label: {
+                    Text(sticker ? "Sticker ✂️" : "Photo")
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(showSticker == sticker ? .white : Color.ink)
+                        .padding(.horizontal, 14).padding(.vertical, 7)
+                        .background(showSticker == sticker ? Color.sky : Color.clear, in: Capsule())
+                }
+                .buttonStyle(.pressable)
+                .accessibilityIdentifier("pet-hero-toggle-\(sticker ? "sticker" : "photo")")
+            }
+        }
+        .padding(3)
+        .background(Color.familySurface, in: Capsule())
+    }
+
     /// Decoded cached photo for the pet, or `nil` (→ the scrapbook pawprint/cat fallback).
     private func petImage(_ pet: CareItem) -> UIImage? {
         guard let path = pet.photoPath, let data = store.carePhotos[path] else { return nil }
+        return UIImage(data: data)
+    }
+
+    /// Decoded die-cut sticker cutout for the pet, or `nil` when it has none.
+    private func stickerImage(_ pet: CareItem) -> UIImage? {
+        guard let path = pet.stickerPath, let data = store.carePhotos[path] else { return nil }
         return UIImage(data: data)
     }
 

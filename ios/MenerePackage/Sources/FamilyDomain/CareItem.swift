@@ -232,6 +232,11 @@ public struct CareItem: Codable, Equatable, Identifiable, Sendable {
     /// Storage path of the item's photo (`households/{hid}/care/{id}/photo.jpg`). Plant-flavored
     /// (P9) but kind-agnostic. Decode-safe additive field.
     public var photoPath: String?
+    /// Storage path of the item's die-cut STICKER cutout (`households/{hid}/care/{id}/sticker/photo.jpg`)
+    /// — the subject lifted onto a transparent background via Vision (P26-IMG-C2), stored alongside the
+    /// plain `photoPath` (never replacing it). Feeds the scrapbook look. Decode-safe additive field
+    /// (older items nil ⇒ no sticker, plain photo only).
+    public var stickerPath: String?
     /// Free-text species / common name (plants), e.g. "Monstera". C2 fills this from AI identify.
     public var species: String?
     /// Latin / botanical name, e.g. "Monstera deliciosa" — rendered italic when present.
@@ -269,6 +274,7 @@ public struct CareItem: Codable, Equatable, Identifiable, Sendable {
         tasks: [CareTask] = [],
         createdAt: Date = Date(),
         photoPath: String? = nil,
+        stickerPath: String? = nil,
         species: String? = nil,
         speciesLatin: String? = nil,
         careNotes: String? = nil,
@@ -288,6 +294,7 @@ public struct CareItem: Codable, Equatable, Identifiable, Sendable {
         self.tasks = tasks
         self.createdAt = createdAt
         self.photoPath = photoPath
+        self.stickerPath = stickerPath
         self.species = species
         self.speciesLatin = speciesLatin
         self.careNotes = careNotes
@@ -310,6 +317,7 @@ public struct CareItem: Codable, Equatable, Identifiable, Sendable {
         tasks = try c.decodeIfPresent([CareTask].self, forKey: .tasks) ?? []
         createdAt = try c.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
         photoPath = try c.decodeIfPresent(String.self, forKey: .photoPath)
+        stickerPath = try c.decodeIfPresent(String.self, forKey: .stickerPath)
         species = try c.decodeIfPresent(String.self, forKey: .species)
         speciesLatin = try c.decodeIfPresent(String.self, forKey: .speciesLatin)
         careNotes = try c.decodeIfPresent(String.self, forKey: .careNotes)
