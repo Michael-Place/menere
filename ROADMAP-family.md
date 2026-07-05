@@ -347,6 +347,42 @@ tasting notes, event/list notes. Keep short fields (names/titles) plain.
 Suggested chunks: C1 RichNoteEditor + Brain/recipe notes + blanket Writing Tools on existing
 fields; C2 extend to plant/event/tasting notes; C3 memory-log built rich-native.
 
+### P29 — Home Maintenance (PORT from Fambo) — Michael asked 2026-07-05
+Fambo has a rich, first-class home-maintenance pillar; Bacán has the empty shell (House-care
+hub = kind-agnostic `CareItem`/`CareTask` + `HouseHealth` banner, currently "Nothing under
+care yet"). Port Fambo's CONTENT+SCORING onto our existing infra. Source:
+`/Users/mplace/repo/incubator/fambo/FamboPackage/Sources`.
+- **C1 — Knowledge base + HomeProfile + materialize into house CareItems:** port
+  `MaintenanceKnowledgeBase` (91 tasks / 9 categories: hvac, plumbing, electrical, exterior,
+  interior, appliances, safety, yard, pool — each w/ default interval + season +
+  `requires{Yard,Pool,Basement,Garage,Septic,HVAC}` gates). A **HomeProfile** (home type,
+  climate zone, HVAC type, has-yard/pool/basement/garage/septic) that filters the library
+  (`filterForHome`) + a season-suggested subset. A "Home maintenance" setup + suggested/overdue
+  list → tap to **materialize a template into a house `CareItem`** (kind `.house`, carrying the
+  interval as a CareTask; "mark already done" = backdate lastDoneAt, no XP). PRE-FILL the Place
+  HomeProfile: septic✓ (Septic System Solutions invoices), garage✓ (HomeKit), yard/deck✓ (deck
+  project), central HVAC (Nest), NC/temperate climate.
+- **C2 — Home Health scoring:** port `HomeHealthCalculator` (frequency-window: task counts as
+  done if a matching CareTask lastDoneAt is within its interval → per-category % + overall 0-100
+  + trend) into Bacán's `HouseHealth`, so the House-care banner + Home-hub card show a real score.
+- **Improve-on-port:** true scheduled recurrence (Bacán already regenerates recurring care — carry
+  the template id) + tie receipts/warranties to the Family Brain (Fambo lacks cost/warranty).
+Notes: no AI in Fambo's maintenance path (opportunity: AI "what needs doing before winter?").
+Strings are localized in Fambo (i18n scaffolding comes free).
+
+### P30 — Typed lists: grocery specialization (PORT from Fambo) + optional new types
+Fambo's `ListType` = only `standard`|`grocery` (no packing/wishlist/templates), BUT its grocery
+layer is rich and complements our P23 meal-planning (which already generates FLAT grocery lists).
+- **C1 — Grocery specialization:** port `GroceryCategory` (15 aisles + `aisleOrder`) + the
+  `GroceryItemDB` (~365-item name→aisle auto-categorization + autocomplete) + the aisle-GROUPED
+  grocery detail UI (grouped/ordered by aisle, live category suggestion while typing, pending/
+  completed sections, clear-completed) + staples/favorites. Add grocery-type fields to our
+  `ListItem` (quantity/unit/category/note/recipeSourceID, decode-safe) and a `FamilyList.listType`.
+  Upgrade P23's meal-plan→grocery generation to tag categories + carry recipeSourceID.
+- **C2 (optional) — more list types:** the architecture extends cleanly (typed item fields +
+  type-branched detail). Could add packing / wishlist / shopping with light per-type behavior +
+  a small template layer. Build, not a lift (Fambo has neither). Only if Michael wants it.
+
 ### P28 — Tab restructure + the family JOURNAL (Memories) — decided 2026-07-05
 Michael: collapse Calendar into Today (removes the Today/Calendar "what's happening"
 redundancy) → frees a tab for a **dedicated Journal/Memories tab** (the rich journaling
