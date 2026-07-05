@@ -1,15 +1,19 @@
 import Foundation
 
 /// The kind of list, driving how its detail screen renders. Ported from Fambo (P30) and
-/// extended in P30.5 with `packing` (per-person + reusable templates) and `gift` (per
-/// recipient/occasion, bought-status). Decode-safe: persisted as an optional on `FamilyList`,
-/// and any unknown/`nil` raw value is treated as `.standard` (see the failable init below), so
-/// older clients never choke on a list type they predate.
+/// extended in P30.5 with `packing` (per-person + reusable templates), `gift` (per
+/// recipient/occasion, bought-status), `project` (home projects / honey-do with status + budget +
+/// linked Brain docs) and `wishlist` (non-grocery buys: price/link/store/priority/for-whom).
+/// Decode-safe: persisted as an optional on `FamilyList`, and any unknown/`nil` raw value is
+/// treated as `.standard` (see the failable init below), so older clients never choke on a list
+/// type they predate.
 public enum ListType: String, Codable, Sendable, Equatable {
     case standard
     case grocery
     case packing
     case gift
+    case project
+    case wishlist
 
     /// Decode-safe: an unknown raw value (a type this build predates) degrades to `.standard`
     /// instead of failing the whole `FamilyList` decode.
@@ -66,6 +70,13 @@ public struct FamilyList: Codable, Equatable, Identifiable, Sendable {
 
     /// Whether this list should render the gift experience (recipient/occasion/price/link/bought).
     public var isGift: Bool { listType == .gift }
+
+    /// Whether this list should render the home-projects / honey-do experience (status + budget +
+    /// linked Brain docs, grouped by status).
+    public var isProject: Bool { listType == .project }
+
+    /// Whether this list should render the wishlist experience (price/store/priority/link/bought).
+    public var isWishlist: Bool { listType == .wishlist }
 }
 
 /// An item within a `FamilyList`, optionally assigned to a member and/or given a due date.
@@ -112,10 +123,29 @@ public struct ListItem: Codable, Equatable, Identifiable, Sendable {
     public var recipient: String?
     /// The occasion ("Birthday", "Christmas", "Anniversary").
     public var occasion: String?
-    /// Estimated / actual price, used for the list's total-spend line.
+    /// Estimated / actual price, used for the list's total-spend line. Reused by wishlist items.
     public var price: Double?
-    /// A store / product URL for the idea.
+    /// A store / product URL for the idea. Reused by wishlist items.
     public var link: String?
+
+    // MARK: Project-specific fields (P30.5)
+    // Decode-safe optionals — project lists group by `projectStatus` and show budget + linked
+    // Brain docs. `note` (above) is reused for the project note. "Done" also reflected via status.
+    /// The lifecycle stage of this project (planning / in-progress / done).
+    public var projectStatus: ProjectStatus?
+    /// Estimated budget for the project (e.g. deck quotes). Distinct from wishlist/gift `price`.
+    public var budget: Double?
+    /// IDs of linked Family Brain documents (quotes, HOA approval, permits). Shown as a count +
+    /// IDs for now; deep-linking into the Brain is a future nicety.
+    public var linkedDocIDs: [String]?
+
+    // MARK: Wishlist-specific fields (P30.5)
+    // Decode-safe optionals — wishlist items reuse `price`, `link` and `forMemberID`, and add a
+    // store + priority. "Bought" reuses `isCompleted` (no new flag).
+    /// Where to buy it ("Costco", "Amazon", "Target").
+    public var store: String?
+    /// How much someone wants it — drives the priority chip + wishlist sort.
+    public var priority: WishlistPriority?
 
     public init(
         id: String = UUID().uuidString,
@@ -136,7 +166,12 @@ public struct ListItem: Codable, Equatable, Identifiable, Sendable {
         recipient: String? = nil,
         occasion: String? = nil,
         price: Double? = nil,
-        link: String? = nil
+        link: String? = nil,
+        projectStatus: ProjectStatus? = nil,
+        budget: Double? = nil,
+        linkedDocIDs: [String]? = nil,
+        store: String? = nil,
+        priority: WishlistPriority? = nil
     ) {
         self.id = id
         self.title = title
@@ -157,11 +192,21 @@ public struct ListItem: Codable, Equatable, Identifiable, Sendable {
         self.occasion = occasion
         self.price = price
         self.link = link
+        self.projectStatus = projectStatus
+        self.budget = budget
+        self.linkedDocIDs = linkedDocIDs
+        self.store = store
+        self.priority = priority
     }
 
     /// The packing bucket to display this item under (defaults to `.misc` for un-tagged items).
     public var effectivePackingCategory: PackingCategory {
         packingCategory ?? .misc
+    }
+
+    /// The status to group this project under (defaults to `.planning` for un-tagged items).
+    public var effectiveProjectStatus: ProjectStatus {
+        projectStatus ?? .planning
     }
 
     /// The aisle to display this item under: its stored category, else a best-effort lookup

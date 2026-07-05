@@ -36,6 +36,17 @@ public struct ListDetailReducer {
         var newGiftPrice = ""
         var newGiftLink = ""
 
+        // Project specialization (P30.5) — only used when `list.isProject`. Add-project form fields.
+        var newProjectStatus: ProjectStatus = .planning
+        var newProjectBudget = ""
+        var newProjectNote = ""
+
+        // Wishlist specialization (P30.5) — only used when `list.isWishlist`. Add-item form fields.
+        var newWishPrice = ""
+        var newWishStore = ""
+        var newWishLink = ""
+        var newWishPriority: WishlistPriority = .medium
+
         public init(list: FamilyList, members: [HouseholdMember]) {
             self.list = list
             self.members = members
@@ -95,6 +106,45 @@ public struct ListDetailReducer {
         var totalGiftSpend: Double {
             items.compactMap(\.price).reduce(0, +)
         }
+
+        // MARK: Project groupings (P30.5)
+
+        /// Projects grouped by status, ordered by `ProjectStatus.sortOrder` (in-progress first,
+        /// done last). Within a section, ordered by `sortOrder`.
+        var groupedProjectItems: [(status: ProjectStatus, items: [ListItem])] {
+            Dictionary(grouping: items, by: \.effectiveProjectStatus)
+                .map { (status: $0.key, items: $0.value.sorted { $0.sortOrder < $1.sortOrder }) }
+                .sorted { $0.status.sortOrder < $1.status.sortOrder }
+        }
+
+        /// Sum of every project's `budget` — the list's total-budget line.
+        var totalProjectBudget: Double {
+            items.compactMap(\.budget).reduce(0, +)
+        }
+
+        // MARK: Wishlist groupings (P30.5)
+
+        /// Wishlist items sorted by priority (high first, `nil` last), then unbought-first, then
+        /// `sortOrder`.
+        var wishlistItems: [ListItem] {
+            items.sorted { a, b in
+                let ra = a.priority?.sortRank ?? Int.max
+                let rb = b.priority?.sortRank ?? Int.max
+                if ra != rb { return ra < rb }
+                if a.isCompleted != b.isCompleted { return !a.isCompleted && b.isCompleted }
+                return a.sortOrder < b.sortOrder
+            }
+        }
+
+        /// Grand total of every item's `price`.
+        var totalWishlistSpend: Double {
+            items.compactMap(\.price).reduce(0, +)
+        }
+
+        /// Total of the `price` on items already marked bought.
+        var boughtWishlistSpend: Double {
+            items.filter(\.isCompleted).compactMap(\.price).reduce(0, +)
+        }
     }
 
     public enum Action: Equatable, BindableAction {
@@ -102,6 +152,8 @@ public struct ListDetailReducer {
         case itemsLoaded([ListItem])
         case addItem
         case addGift
+        case addProject
+        case addWishlistItem
         case seedTemplate(PackingTemplate)
         case setPackingFilter(String?)
         case suggestionTapped(String)
@@ -197,6 +249,58 @@ public struct ListDetailReducer {
                 state.newGiftOccasion = ""
                 state.newGiftPrice = ""
                 state.newGiftLink = ""
+                return .run { _ in
+                    @Dependency(\.persistence) var persistence
+                    try await persistence.saveListItem(hid, item)
+                }
+
+            case .addProject:
+                let title = state.newItemTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !title.isEmpty, let hid = hid() else { return .none }
+                func cleaned(_ s: String) -> String? {
+                    let t = s.trimmingCharacters(in: .whitespacesAndNewlines)
+                    return t.isEmpty ? nil : t
+                }
+                let item = ListItem(
+                    title: title,
+                    listID: state.list.id,
+                    sortOrder: (state.items.map(\.sortOrder).max() ?? 0) + 1,
+                    note: cleaned(state.newProjectNote),
+                    projectStatus: state.newProjectStatus,
+                    budget: Double(state.newProjectBudget.filter { $0.isNumber || $0 == "." })
+                )
+                state.items.append(item)
+                state.newItemTitle = ""
+                state.newProjectStatus = .planning
+                state.newProjectBudget = ""
+                state.newProjectNote = ""
+                return .run { _ in
+                    @Dependency(\.persistence) var persistence
+                    try await persistence.saveListItem(hid, item)
+                }
+
+            case .addWishlistItem:
+                let title = state.newItemTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !title.isEmpty, let hid = hid() else { return .none }
+                func cleaned(_ s: String) -> String? {
+                    let t = s.trimmingCharacters(in: .whitespacesAndNewlines)
+                    return t.isEmpty ? nil : t
+                }
+                let item = ListItem(
+                    title: title,
+                    listID: state.list.id,
+                    sortOrder: (state.items.map(\.sortOrder).max() ?? 0) + 1,
+                    price: Double(state.newWishPrice.filter { $0.isNumber || $0 == "." }),
+                    link: cleaned(state.newWishLink),
+                    store: cleaned(state.newWishStore),
+                    priority: state.newWishPriority
+                )
+                state.items.append(item)
+                state.newItemTitle = ""
+                state.newWishPrice = ""
+                state.newWishStore = ""
+                state.newWishLink = ""
+                state.newWishPriority = .medium
                 return .run { _ in
                     @Dependency(\.persistence) var persistence
                     try await persistence.saveListItem(hid, item)
@@ -327,6 +431,10 @@ public struct ListDetailView: View {
                 packingList
             } else if store.list.isGift {
                 giftList
+            } else if store.list.isProject {
+                projectList
+            } else if store.list.isWishlist {
+                wishlistList
             } else {
                 standardList
             }
@@ -714,6 +822,248 @@ public struct ListDetailView: View {
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmed.contains("://") { return trimmed }
         return "https://\(trimmed)"
+    }
+
+    // MARK: - Project (home projects / honey-do, grouped by status)
+
+    private var projectList: some View {
+        List {
+            Section {
+                TextField("Project name (e.g. Deck)…", text: $store.newItemTitle)
+                    .accessibilityIdentifier("new-list-item-field")
+                Picker("Status", selection: $store.newProjectStatus) {
+                    ForEach(ProjectStatus.allCases, id: \.self) { status in
+                        Label(status.displayName, systemImage: status.icon).tag(status)
+                    }
+                }
+                HStack {
+                    Text("$").foregroundStyle(Color.inkSoft)
+                    TextField("Budget", text: $store.newProjectBudget)
+                        .keyboardType(.decimalPad)
+                }
+                TextField("Note (scope, quotes, next step…)", text: $store.newProjectNote, axis: .vertical)
+                    .lineLimit(1...3)
+                Button { store.send(.addProject) } label: {
+                    Label("Add project", systemImage: "hammer.fill")
+                        .font(.callout.weight(.semibold))
+                        .foregroundStyle(Color.bacanGreen)
+                }
+                .buttonStyle(.pressable)
+                .disabled(store.newItemTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .accessibilityIdentifier("add-project-button")
+            } header: {
+                Text("Add a project")
+            } footer: {
+                if store.totalProjectBudget > 0 {
+                    Text("Total budget across projects: \(currency(store.totalProjectBudget)).")
+                        .font(.caption2)
+                        .foregroundStyle(Color.inkSoft)
+                }
+            }
+            .listRowBackground(Color.familySurface)
+
+            if store.items.isEmpty, !store.isLoading {
+                Section {
+                    ContentUnavailableView(
+                        "No projects yet",
+                        systemImage: "hammer",
+                        description: Text("Honey-do, home upgrades, weekend builds — track each with a status, budget, and the paperwork behind it.")
+                    )
+                }
+                .listRowBackground(Color.familySurface)
+            }
+
+            ForEach(store.groupedProjectItems, id: \.status) { group in
+                Section {
+                    ForEach(group.items) { item in
+                        projectRow(item)
+                    }
+                    .onDelete { indexSet in
+                        for index in indexSet { store.send(.deleteItem(id: group.items[index].id)) }
+                    }
+                } header: {
+                    Label(group.status.displayName, systemImage: group.status.icon)
+                        .foregroundStyle(projectStatusColor(group.status))
+                }
+                .listRowBackground(Color.familySurface)
+            }
+        }
+        .animation(.snappy(duration: 0.3), value: store.items.map(\.projectStatus))
+    }
+
+    @ViewBuilder
+    private func projectRow(_ item: ListItem) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 10) {
+                Text(item.title)
+                    .font(.body.weight(.semibold))
+                    .foregroundStyle(Color.ink)
+                Spacer()
+                statusChip(item.effectiveProjectStatus)
+            }
+            HStack(spacing: 12) {
+                if let budget = item.budget {
+                    Label(currency(budget), systemImage: "dollarsign.circle")
+                        .font(.caption).foregroundStyle(Color.inkSoft)
+                }
+                if let docs = item.linkedDocIDs, !docs.isEmpty {
+                    Label("\(docs.count) linked doc\(docs.count == 1 ? "" : "s")", systemImage: "brain")
+                        .font(.caption).foregroundStyle(Color.sky)
+                }
+            }
+            if let note = item.note, !note.isEmpty {
+                Text(note)
+                    .font(.caption)
+                    .foregroundStyle(Color.inkSoft)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if let docs = item.linkedDocIDs, !docs.isEmpty {
+                Text("Docs: \(docs.joined(separator: ", "))")
+                    .font(.caption2)
+                    .foregroundStyle(Color.inkSoft)
+                    .lineLimit(1)
+            }
+        }
+        .padding(.vertical, 2)
+    }
+
+    private func statusChip(_ status: ProjectStatus) -> some View {
+        Label(status.displayName, systemImage: status.icon)
+            .font(.caption2.weight(.semibold))
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(projectStatusColor(status).opacity(0.16))
+            .foregroundStyle(projectStatusColor(status))
+            .clipShape(Capsule())
+    }
+
+    private func projectStatusColor(_ status: ProjectStatus) -> Color {
+        switch status {
+        case .planning: .sky
+        case .inProgress: .marigold
+        case .done: .bacanGreen
+        }
+    }
+
+    // MARK: - Wishlist (item / price / store / priority / link, bought-status)
+
+    private var wishlistList: some View {
+        List {
+            Section {
+                TextField("What do you want?", text: $store.newItemTitle)
+                    .accessibilityIdentifier("new-list-item-field")
+                HStack {
+                    Text("$").foregroundStyle(Color.inkSoft)
+                    TextField("Price", text: $store.newWishPrice)
+                        .keyboardType(.decimalPad)
+                }
+                TextField("Store (Costco, Amazon…)", text: $store.newWishStore)
+                Picker("Priority", selection: $store.newWishPriority) {
+                    ForEach(WishlistPriority.allCases, id: \.self) { priority in
+                        Text(priority.displayName).tag(priority)
+                    }
+                }
+                TextField("Link", text: $store.newWishLink)
+                    .keyboardType(.URL)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                Button { store.send(.addWishlistItem) } label: {
+                    Label("Add to wishlist", systemImage: "star.fill")
+                        .font(.callout.weight(.semibold))
+                        .foregroundStyle(Color.bacanGreen)
+                }
+                .buttonStyle(.pressable)
+                .disabled(store.newItemTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .accessibilityIdentifier("add-wishlist-button")
+            } header: {
+                Text("Add a want")
+            }
+            .listRowBackground(Color.familySurface)
+
+            if store.wishlistItems.isEmpty, !store.isLoading {
+                Section {
+                    ContentUnavailableView(
+                        "Nothing on the wishlist yet",
+                        systemImage: "star",
+                        description: Text("Non-grocery buys — jot the item, price, where to get it, and how badly you want it.")
+                    )
+                }
+                .listRowBackground(Color.familySurface)
+            } else {
+                Section {
+                    ForEach(store.wishlistItems) { item in
+                        wishlistRow(item)
+                    }
+                    .onDelete { indexSet in
+                        for index in indexSet { store.send(.deleteItem(id: store.wishlistItems[index].id)) }
+                    }
+                } header: {
+                    Text("Wishlist").foregroundStyle(Color.inkSoft)
+                } footer: {
+                    if store.totalWishlistSpend > 0 {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Total: \(currency(store.totalWishlistSpend))")
+                            Text("Bought: \(currency(store.boughtWishlistSpend))")
+                        }
+                        .font(.caption)
+                        .foregroundStyle(Color.inkSoft)
+                    }
+                }
+                .listRowBackground(Color.familySurface)
+            }
+        }
+        .animation(.snappy(duration: 0.3), value: store.items.map(\.isCompleted))
+    }
+
+    @ViewBuilder
+    private func wishlistRow(_ item: ListItem) -> some View {
+        HStack(spacing: 12) {
+            checkButton(item)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(item.title)
+                    .strikethrough(item.isCompleted)
+                    .foregroundStyle(item.isCompleted ? Color.inkSoft : Color.ink)
+                let subtitle = [item.store].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · ")
+                if !subtitle.isEmpty {
+                    Text(subtitle).font(.caption2).foregroundStyle(Color.inkSoft)
+                }
+                if let link = item.link, let url = URL(string: normalizedURLString(link)) {
+                    Link(destination: url) {
+                        Label("Open link", systemImage: "link")
+                            .font(.caption2)
+                            .foregroundStyle(Color.sky)
+                    }
+                }
+            }
+            Spacer()
+            VStack(alignment: .trailing, spacing: 4) {
+                if let price = item.price {
+                    Text(currency(price))
+                        .font(.caption).foregroundStyle(Color.inkSoft)
+                }
+                if let priority = item.priority {
+                    priorityChip(priority)
+                }
+            }
+        }
+    }
+
+    private func priorityChip(_ priority: WishlistPriority) -> some View {
+        Label(priority.displayName, systemImage: priority.icon)
+            .font(.caption2.weight(.semibold))
+            .padding(.horizontal, 7)
+            .padding(.vertical, 3)
+            .background(priorityColor(priority).opacity(0.16))
+            .foregroundStyle(priorityColor(priority))
+            .clipShape(Capsule())
+    }
+
+    private func priorityColor(_ priority: WishlistPriority) -> Color {
+        switch priority {
+        case .high: .terracotta
+        case .medium: .marigold
+        case .low: .inkSoft
+        }
     }
 
     // MARK: - Shared pieces

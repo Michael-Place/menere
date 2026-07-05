@@ -111,6 +111,10 @@ public struct ListsReducer {
                     list = FamilyList(title: title, icon: "suitcase", color: .sky, listType: .packing)
                 case .gift:
                     list = FamilyList(title: title, icon: "gift", color: .terracotta, listType: .gift)
+                case .project:
+                    list = FamilyList(title: title, icon: "hammer.fill", color: .marigold, listType: .project)
+                case .wishlist:
+                    list = FamilyList(title: title, icon: "star.fill", color: .sky, listType: .wishlist)
                 case .standard:
                     list = FamilyList(title: title)
                 }
@@ -118,6 +122,8 @@ public struct ListsReducer {
                 switch state.newListType {
                 case .packing: analytics.log("packing_list_created")
                 case .gift: analytics.log("gift_list_created")
+                case .project: analytics.log("project_list_created")
+                case .wishlist: analytics.log("wishlist_created")
                 default: break
                 }
                 state.lists.append(list)
@@ -382,11 +388,13 @@ private struct NewListSheet: View {
         case .grocery: "Groceries"
         case .packing: "Packing list"
         case .gift: "Gift ideas"
+        case .project: "Home projects"
+        case .wishlist: "Wishlist"
         }
     }
 
     /// The set of all preset default titles — used to know when a title is still "untouched".
-    private let presetTitles: Set<String> = ["Groceries", "Packing list", "Gift ideas"]
+    private let presetTitles: Set<String> = ["Groceries", "Packing list", "Gift ideas", "Home projects", "Wishlist"]
 
     @ViewBuilder
     private func presetHint(_ text: String) -> some View {
@@ -410,6 +418,8 @@ private struct NewListSheet: View {
                         Label("Grocery List", systemImage: "cart").tag(ListType.grocery)
                         Label("Packing List", systemImage: "suitcase").tag(ListType.packing)
                         Label("Gift List", systemImage: "gift").tag(ListType.gift)
+                        Label("Home Projects", systemImage: "hammer.fill").tag(ListType.project)
+                        Label("Wishlist", systemImage: "star.fill").tag(ListType.wishlist)
                     }
                     .pickerStyle(.inline)
                     .labelsHidden()
@@ -420,6 +430,10 @@ private struct NewListSheet: View {
                         presetHint("Group by person and category — and seed it from a beach / weekend / flight-with-baby template.")
                     case .gift:
                         presetHint("Track ideas per recipient with price, link, and a bought toggle — hidden from whoever it's for.")
+                    case .project:
+                        presetHint("Honey-do & home projects: status (planning → in-progress → done), budget, notes, and linked Brain docs — grouped by status.")
+                    case .wishlist:
+                        presetHint("Non-grocery wants: price, store, priority, and a link — with a bought toggle and running totals.")
                     case .standard:
                         EmptyView()
                     }
