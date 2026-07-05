@@ -5,6 +5,7 @@ import ChoresFeature
 import ComposableArchitecture
 import DocsFeature
 import ListsFeature
+import MemoriesFeature
 import MenereUI
 import RecipesFeature
 import SettingsFeature
@@ -22,9 +23,14 @@ public struct MainTabReducer {
         var showSearch = false
         /// The Bacán assistant chat, presented as a sheet from the Today tab's sparkles button.
         var showAssistant = false
+        /// P28 — the full calendar is now a drill-in pushed from Today (Calendar is no longer a tab).
+        /// Bound to a `navigationDestination` on the Today tab's stack; the `calendar` child stays alive
+        /// so its EventKit two-way sync keeps running independently of the buried screen.
+        var showFullCalendar = false
         var search = BrainSearchReducer.State()
         var assistant = AssistantReducer.State()
         var today = TodayReducer.State()
+        var memories = MemoriesReducer.State()
         var lists = ListsReducer.State()
         var calendar = CalendarReducer.State()
         var chores = ChoresReducer.State()
@@ -36,6 +42,7 @@ public struct MainTabReducer {
 
     public enum Action: Equatable, BindableAction {
         case today(TodayReducer.Action)
+        case memories(MemoriesReducer.Action)
         case lists(ListsReducer.Action)
         case calendar(CalendarReducer.Action)
         case chores(ChoresReducer.Action)
@@ -53,6 +60,7 @@ public struct MainTabReducer {
         BindingReducer()
 
         Scope(state: \.today, action: \.today, child: TodayReducer.init)
+        Scope(state: \.memories, action: \.memories, child: MemoriesReducer.init)
         Scope(state: \.lists, action: \.lists, child: ListsReducer.init)
         Scope(state: \.calendar, action: \.calendar, child: CalendarReducer.init)
         Scope(state: \.chores, action: \.chores, child: ChoresReducer.init)
@@ -67,8 +75,16 @@ public struct MainTabReducer {
             case .tabSelected(let tab):
                 state.selectedTab = tab
                 analytics.log("tab_selected", ["tab": tab.eventName])
-                // Re-selecting Today re-aggregates its cards (cheap one-shot fetches).
+                // Re-selecting Today re-aggregates its cards (cheap one-shot fetches). `.today(.task)`
+                // also drives the Apple-Calendar sync below (P28), so this covers tab reselection too.
                 return tab == .today ? .send(.today(.task)) : .none
+
+            // P28 — Calendar is no longer a tab, so keep EventKit two-way sync fresh by piggybacking on
+            // every Today load/appear. `CalendarReducer.task` is internally guarded by the P2.2 trust
+            // logic (setup complete + enabled + access granted), so this is a cheap no-op otherwise and
+            // never fires a destructive reconcile without a live, granted EventKit session.
+            case .today(.task):
+                return .send(.calendar(.task))
 
             case .binding(\.showAssistant):
                 if state.showAssistant { analytics.log("assistant_opened") }
@@ -78,9 +94,10 @@ public struct MainTabReducer {
                 if state.showSearch { analytics.log("search_opened") }
                 return .none
 
-            // Today quick-action deep links → switch to the target tab.
+            // P28 — "Open full calendar" pushes the full CalendarFeature as a drill-in on the Today
+            // stack (Calendar is no longer a tab). The `calendar` child is already alive + synced.
             case .today(.delegate(.openCalendar)):
-                state.selectedTab = .calendar
+                state.showFullCalendar = true
                 return .none
             case .today(.delegate(.openLists)):
                 state.selectedTab = .lists
@@ -98,7 +115,7 @@ public struct MainTabReducer {
                 state.showAssistant = false
                 return .none
 
-            case .today, .lists, .calendar, .chores, .recipes, .settings, .search, .assistant, .binding:
+            case .today, .memories, .lists, .calendar, .chores, .recipes, .settings, .search, .assistant, .binding:
                 return .none
             }
         }
@@ -107,7 +124,7 @@ public struct MainTabReducer {
 
 public enum TabItem: Int, CaseIterable, Equatable {
     case today
-    case calendar
+    case memories                      // P28: took the old Calendar slot (Calendar folded into Today).
     case lists
     case chores
     case recipes
@@ -115,7 +132,7 @@ public enum TabItem: Int, CaseIterable, Equatable {
     var title: String {
         switch self {
         case .today: "Today"
-        case .calendar: "Calendar"
+        case .memories: "Memories"
         case .lists: "Lists"
         case .chores: "Home"           // P8: the Chores tab became the Home care hub (enum case
                                        // kept `chores` to avoid churn — display-only rename).
@@ -127,7 +144,7 @@ public enum TabItem: Int, CaseIterable, Equatable {
     var eventName: String {
         switch self {
         case .today: "today"
-        case .calendar: "calendar"
+        case .memories: "memories"
         case .lists: "lists"
         case .chores: "home"
         case .recipes: "kitchen"
@@ -137,7 +154,7 @@ public enum TabItem: Int, CaseIterable, Equatable {
     var systemImage: String {
         switch self {
         case .today: "sun.max"
-        case .calendar: "calendar"
+        case .memories: "book.closed"  // auto-fills to book.closed.fill when the tab is selected
         case .lists: "checklist"
         case .chores: "house"          // auto-fills to house.fill when the tab is selected
         case .recipes: "fork.knife"
@@ -157,6 +174,11 @@ public struct MainTabView: View {
             Tab(TabItem.today.title, systemImage: TabItem.today.systemImage, value: TabItem.today) {
                 NavigationStack {
                     TodayView(store: store.scope(state: \.today, action: \.today))
+                        // P28 — the full calendar (month grid + agenda + recurrence + Apple sync) is now
+                        // a drill-in pushed from Today's "Open full calendar" row.
+                        .navigationDestination(isPresented: $store.showFullCalendar) {
+                            CalendarView(store: store.scope(state: \.calendar, action: \.calendar))
+                        }
                         .toolbar {
                             familyToolbar
                             // Bacán assistant — Today only, alongside the shared search/family icons.
@@ -171,9 +193,9 @@ public struct MainTabView: View {
                 }
             }
 
-            Tab(TabItem.calendar.title, systemImage: TabItem.calendar.systemImage, value: TabItem.calendar) {
+            Tab(TabItem.memories.title, systemImage: TabItem.memories.systemImage, value: TabItem.memories) {
                 NavigationStack {
-                    CalendarView(store: store.scope(state: \.calendar, action: \.calendar))
+                    MemoriesView(store: store.scope(state: \.memories, action: \.memories))
                         .toolbar { familyToolbar }
                 }
             }

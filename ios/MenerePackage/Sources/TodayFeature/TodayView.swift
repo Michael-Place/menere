@@ -25,6 +25,7 @@ public struct TodayView: View {
 
                 briefingCard
 
+                weekStrip
                 scheduleCard
                 dinnerCard
                 quickActions
@@ -164,46 +165,159 @@ public struct TodayView: View {
         .shimmering()
     }
 
-    // MARK: Today's schedule
+    // MARK: Week strip (P28 — the calendar, folded into Today)
 
-    /// Time-aware schedule (P17-C1). The day is split at `now`: all-day events pin at the top,
-    /// upcoming/in-progress timed events follow, and events whose end already passed collapse under
-    /// an "Earlier today" disclosure. When everything's behind us, a warm "that's a wrap" line.
+    /// A horizontal 7-day glance for the week containing `now`. Each day shows its weekday initial,
+    /// date, and an event-dot when anything's scheduled; the day-of is ringed, the selected day is
+    /// filled. Tapping a day re-scopes the schedule card below. Backed by the same client-side
+    /// occurrence expansion the agenda uses.
+    private var weekStrip: some View {
+        let days = weekDays()
+        return HStack(spacing: 6) {
+            ForEach(days, id: \.self) { day in weekDayCell(day) }
+        }
+        .frame(maxWidth: .infinity)
+        .accessibilityIdentifier("today-week-strip")
+    }
+
+    private func weekDayCell(_ day: Date) -> some View {
+        let isToday = cal.isDate(day, inSameDayAs: now)
+        let isSelected = cal.isDate(day, inSameDayAs: store.selectedDay)
+        let count = occurrenceCount(on: day)
+        return Button {
+            store.send(.selectDay(day))
+        } label: {
+            VStack(spacing: 4) {
+                Text(weekdayInitial(day))
+                    .font(.system(.caption2, design: .rounded).weight(.semibold))
+                    .foregroundStyle(isSelected ? .white : Color.inkSoft)
+                Text("\(cal.component(.day, from: day))")
+                    .font(.system(.subheadline, design: .rounded).weight(.bold))
+                    .foregroundStyle(isSelected ? .white : Color.ink)
+                Circle()
+                    .fill(count > 0 ? (isSelected ? Color.white : Color.bacanGreen) : .clear)
+                    .frame(width: 5, height: 5)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 8)
+            .background(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(isSelected ? Color.bacanGreen : Color.familySurface)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .stroke(isToday && !isSelected ? Color.bacanGreen : .clear, lineWidth: 1.5)
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.pressable)
+        .accessibilityIdentifier("today-week-day-\(cal.component(.day, from: day))")
+    }
+
+    /// The seven days of the week (respecting the locale's first weekday) that contains `now`.
+    private func weekDays() -> [Date] {
+        let start = cal.startOfDay(for: now)
+        guard let interval = cal.dateInterval(of: .weekOfYear, for: start) else { return [start] }
+        return (0..<7).compactMap { cal.date(byAdding: .day, value: $0, to: interval.start) }
+    }
+
+    private func weekdayInitial(_ day: Date) -> String {
+        let idx = cal.component(.weekday, from: day) - 1
+        return cal.veryShortWeekdaySymbols[idx]
+    }
+
+    // MARK: Schedule (scoped to the week strip's selected day)
+
+    /// Time-aware schedule (P17-C1, P28). For the day-of, the day is split at `now`: all-day events
+    /// pin at the top, upcoming/in-progress timed events follow, and events whose end already passed
+    /// collapse under an "Earlier today" disclosure. For any OTHER selected day it's a plain agenda.
+    /// The header carries "+ Add event"; an "Open full calendar" row sits at the foot.
     private var scheduleCard: some View {
-        let all = todaysOccurrences()
+        let isToday = cal.isDate(store.selectedDay, inSameDayAs: now)
+        let all = occurrences(on: store.selectedDay)
+        return card {
+            HStack {
+                cardHeader(scheduleTitle, symbol: "calendar")
+                Spacer()
+                Button { store.send(.quickAddEventTapped) } label: {
+                    Label("Add event", systemImage: "plus.circle.fill")
+                        .font(.system(.caption, design: .rounded).weight(.semibold))
+                        .foregroundStyle(Color.bacanGreen)
+                }
+                .buttonStyle(.pressable)
+                .accessibilityIdentifier("today-schedule-add-event")
+            }
+
+            if all.isEmpty {
+                emptyLine(isToday ? "Nothing on the books — a rare quiet day." : "Nothing scheduled.")
+            } else if isToday {
+                todayScheduleBody(all)
+            } else {
+                VStack(spacing: 12) {
+                    ForEach(all) { item in scheduleRow(item) }
+                }
+            }
+
+            openCalendarRow
+        }
+    }
+
+    /// The day-of body: all-day + upcoming up top, earlier-today collapsed beneath.
+    @ViewBuilder
+    private func todayScheduleBody(_ all: [TodayOccurrence]) -> some View {
         let allDay = all.filter { $0.event.isAllDay }
         let timed = all.filter { !$0.event.isAllDay }
         let upcoming = timed.filter { occurrenceEnd($0) >= now }
         let earlier = timed.filter { occurrenceEnd($0) < now }
         let primary = allDay + upcoming
-        return card {
-            cardHeader("Today's schedule", symbol: "calendar")
-            if all.isEmpty {
-                emptyLine("Nothing on the books — a rare quiet day.")
+        VStack(spacing: 12) {
+            if primary.isEmpty {
+                emptyLine("That's a wrap on today 🌙")
             } else {
-                VStack(spacing: 12) {
-                    if primary.isEmpty {
-                        emptyLine("That's a wrap on today 🌙")
-                    } else {
-                        ForEach(primary) { item in scheduleRow(item) }
+                ForEach(primary) { item in scheduleRow(item) }
+            }
+            if !earlier.isEmpty {
+                DisclosureGroup {
+                    VStack(spacing: 12) {
+                        ForEach(earlier) { item in scheduleRow(item, past: true) }
                     }
-                    if !earlier.isEmpty {
-                        DisclosureGroup {
-                            VStack(spacing: 12) {
-                                ForEach(earlier) { item in scheduleRow(item, past: true) }
-                            }
-                            .padding(.top, 8)
-                        } label: {
-                            Text("Earlier today (\(earlier.count))")
-                                .font(.system(.caption, design: .rounded).weight(.semibold))
-                                .foregroundStyle(Color.inkSoft)
-                        }
-                        .tint(Color.inkSoft)
-                        .accessibilityIdentifier("today-schedule-earlier")
-                    }
+                    .padding(.top, 8)
+                } label: {
+                    Text("Earlier today (\(earlier.count))")
+                        .font(.system(.caption, design: .rounded).weight(.semibold))
+                        .foregroundStyle(Color.inkSoft)
                 }
+                .tint(Color.inkSoft)
+                .accessibilityIdentifier("today-schedule-earlier")
             }
         }
+    }
+
+    /// "Today's schedule" for the day-of; otherwise the selected day, e.g. "Mon, Jul 7".
+    private var scheduleTitle: String {
+        if cal.isDate(store.selectedDay, inSameDayAs: now) { return "Today's schedule" }
+        let f = DateFormatter()
+        f.dateFormat = "EEE, MMM d"
+        return f.string(from: store.selectedDay)
+    }
+
+    /// "Open full calendar ›" — pushes the untouched `CalendarFeature` (month grid + recurrence +
+    /// Apple two-way sync) as a drill-in. The parent (MainTabReducer) drives the navigation.
+    private var openCalendarRow: some View {
+        Button { store.send(.openFullCalendarTapped) } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "calendar")
+                Text("Open full calendar")
+                Spacer()
+                Image(systemName: "chevron.right").font(.footnote.weight(.semibold))
+            }
+            .font(.system(.subheadline, design: .rounded).weight(.semibold))
+            .foregroundStyle(Color.bacanGreen)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.pressable)
+        .padding(.top, 2)
+        .accessibilityIdentifier("today-open-full-calendar")
     }
 
     private func scheduleRow(_ item: TodayOccurrence, past: Bool = false) -> some View {
@@ -842,7 +956,13 @@ public struct TodayView: View {
     // MARK: Occurrence helpers (reuse the Calendar agenda's client-side expansion)
 
     private func todaysOccurrences() -> [TodayOccurrence] {
-        let start = cal.startOfDay(for: now)
+        occurrences(on: now)
+    }
+
+    /// Every materialized occurrence on the given day, sorted by start (all-day events sort by their
+    /// day-start). Shared by the week strip, the schedule card, and the family tiles.
+    private func occurrences(on day: Date) -> [TodayOccurrence] {
+        let start = cal.startOfDay(for: day)
         let end = cal.date(byAdding: .day, value: 1, to: start)!.addingTimeInterval(-1)
         return store.events
             .flatMap { event in
@@ -850,6 +970,11 @@ public struct TodayView: View {
                     .map { TodayOccurrence(event: event, date: $0) }
             }
             .sorted { $0.date < $1.date }
+    }
+
+    /// How many events fall on the given day — drives the week strip's event-dot.
+    private func occurrenceCount(on day: Date) -> Int {
+        occurrences(on: day).count
     }
 
     private func timeString(_ date: Date) -> String {

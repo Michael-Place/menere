@@ -18,6 +18,7 @@ let package = Package(
         .library(name: "FamilyDomain", targets: ["FamilyDomain"]),
         .library(name: "HouseFeature", targets: ["HouseFeature"]),
         .library(name: "TodayFeature", targets: ["TodayFeature"]),
+        .library(name: "MemoriesFeature", targets: ["MemoriesFeature"]),
         .library(name: "ListsFeature", targets: ["ListsFeature"]),
         .library(name: "DocsFeature", targets: ["DocsFeature"]),
         .library(name: "CalendarFeature", targets: ["CalendarFeature"]),
@@ -81,6 +82,7 @@ let package = Package(
                 "ScanFeature",
                 "CellarFeature",
                 "TodayFeature",
+                "MemoriesFeature",
                 "ListsFeature",
                 "DocsFeature",
                 "CalendarFeature",
@@ -183,6 +185,18 @@ let package = Package(
                 "HubspaceClient",
                 "MerossClient",
                 "HomeKitClient",
+            ]
+        ),
+        .target(
+            name: "MemoriesFeature",
+            dependencies: [
+                .product(name: "ComposableArchitecture", package: "swift-composable-architecture"),
+                "MenereUI",
+                "FamilyDomain",
+                "PersistenceClient",
+                "AnalyticsClient",
+                "UserDomain",
+                "StorageClient",
             ]
         ),
         .target(

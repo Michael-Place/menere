@@ -150,6 +150,11 @@ public struct TodayReducer {
         /// through the same persistence path the Kitchen tab uses).
         var showDinnerPicker = false
 
+        /// P28-C1 — the day the week strip has selected. The schedule card scopes to it; the day-of is
+        /// the default. `selectDay` moves it; today stays time-aware (past collapses), other days show a
+        /// plain agenda.
+        var selectedDay: Date = Calendar.current.startOfDay(for: Date())
+
         public init() {}
 
         /// The household's pets (care items of kind `.pet`) — the Family Radar names pet-linked docs
@@ -246,9 +251,16 @@ public struct TodayReducer {
         case addDinnerToCalendarTapped
         case dinnerEventAdded(FamilyEvent)
         // Quick-action deep links — the parent (MainTabReducer) switches tabs in response.
+        /// "+ Add event" (P28) — presents a NEW event in the SAME `EventFormReducer` the Calendar
+        /// drill-in uses (seeded on the week strip's selected day).
         case quickAddEventTapped
         case quickAddListTapped
         case planDinnerTapped
+        /// P28-C1 — "Open full calendar" pushes the full `CalendarFeature` (month grid + agenda +
+        /// recurrence + Apple sync). The parent (MainTabReducer) drives the push.
+        case openFullCalendarTapped
+        /// P28-C1 — a week-strip day was tapped; the schedule card re-scopes to it.
+        case selectDay(Date)
         // Family Radar (P20).
         /// The Radar detail list appeared — telemetry (`family_radar_opened`).
         case radarOpened
@@ -282,8 +294,9 @@ public struct TodayReducer {
         case delegate(Delegate)
     }
 
-    /// Tab deep-links surfaced to `MainTabReducer`. Feature-agnostic (no AppCore import) so the
-    /// parent owns the tab mapping.
+    /// Navigation intents surfaced to `MainTabReducer`. Feature-agnostic (no AppCore import) so the
+    /// parent owns the mapping. `openCalendar` now pushes the full calendar as a drill-in (P28);
+    /// `openLists`/`openKitchen` still switch tabs.
     public enum Delegate: Equatable {
         case openCalendar
         case openLists
@@ -646,7 +659,30 @@ public struct TodayReducer {
                 return .none
 
             case .quickAddEventTapped:
+                // P28: present a NEW event in the Calendar's own form, seeded on the selected day at a
+                // sensible hour — the same save path (and Apple push, on the next sync) as the Calendar.
+                @Dependency(\.date.now) var now
+                @Dependency(\.analytics) var analytics
+                analytics.log("today_add_event")
+                let cal = Calendar.current
+                let hour = (cal.component(.hour, from: now) + 1)
+                let start = cal.date(bySettingHour: min(hour, 22), minute: 0, second: 0, of: state.selectedDay)
+                    ?? state.selectedDay
+                state.eventForm = EventFormReducer.State(
+                    event: FamilyEvent(title: "", startDate: start, endDate: start.addingTimeInterval(3600)),
+                    isEditing: false,
+                    members: state.members
+                )
+                return .none
+
+            case .openFullCalendarTapped:
+                @Dependency(\.analytics) var analytics
+                analytics.log("today_open_full_calendar")
                 return .send(.delegate(.openCalendar))
+
+            case let .selectDay(day):
+                state.selectedDay = Calendar.current.startOfDay(for: day)
+                return .none
 
             case .quickAddListTapped:
                 return .send(.delegate(.openLists))
