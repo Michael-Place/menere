@@ -46,40 +46,242 @@ public struct MemoriesView: View {
     // MARK: Timeline
 
     private var timeline: some View {
+        VStack(spacing: 0) {
+            filterChips
+            content
+        }
+    }
+
+    @ViewBuilder
+    private var content: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 26, pinnedViews: [.sectionHeaders]) {
-                ForEach(monthGroups, id: \.key) { group in
-                    Section {
-                        ForEach(group.memories) { memory in
-                            Button {
-                                store.send(.memoryTapped(memory))
-                            } label: {
-                                MemoryScrapbookPage(memory: memory, store: store)
+                lastYearSection
+
+                if monthGroups.isEmpty {
+                    filteredEmptyState
+                } else {
+                    ForEach(monthGroups, id: \.key) { group in
+                        Section {
+                            recapCard(for: group.key)
+                            ForEach(group.memories) { memory in
+                                pageButton(memory)
                             }
-                            .buttonStyle(.plain)
-                            .accessibilityIdentifier("memory-page-\(memory.id)")
+                        } header: {
+                            monthHeader(group)
                         }
-                    } header: {
-                        monthHeader(group.title)
                     }
+                    captureBanner
+                        .padding(.top, 6)
                 }
-                captureBanner
-                    .padding(.top, 6)
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 14)
         }
     }
 
-    private func monthHeader(_ title: String) -> some View {
-        Text(title)
-            .font(.system(.headline, design: .rounded).weight(.bold))
-            .foregroundStyle(Color.bacanGreen)
-            .padding(.vertical, 6)
-            .padding(.horizontal, 12)
-            .background(Capsule(style: .continuous).fill(Color.bacanGreen.opacity(0.12)))
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.top, 4)
+    private func pageButton(_ memory: Memory) -> some View {
+        Button {
+            store.send(.memoryTapped(memory))
+        } label: {
+            MemoryScrapbookPage(memory: memory, store: store)
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("memory-page-\(memory.id)")
+    }
+
+    // MARK: Per-kid filter chips
+
+    private var filterChips: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                filterChip(title: "All", id: nil)
+                ForEach(store.members) { member in
+                    filterChip(title: firstName(member.name), id: member.id, member: member)
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+        }
+        .background(Color.familyCanvas)
+    }
+
+    private func filterChip(title: String, id: String?, member: HouseholdMember? = nil) -> some View {
+        let selected = store.selectedKidId == id
+        let tint: Color = member.map {
+            let rgb = $0.color.rgb
+            return Color(red: rgb.red, green: rgb.green, blue: rgb.blue)
+        } ?? Color.bacanGreen
+        return Button {
+            store.send(.kidFilterSelected(id), animation: .snappy)
+        } label: {
+            Text(title)
+                .font(.system(.subheadline, design: .rounded).weight(.semibold))
+                .foregroundStyle(selected ? .white : tint)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
+                .background(
+                    Capsule(style: .continuous)
+                        .fill(selected ? tint : tint.opacity(0.14))
+                )
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("memory-filter-\(id ?? "all")")
+    }
+
+    // MARK: This time last year
+
+    @ViewBuilder
+    private var lastYearSection: some View {
+        let pages = store.thisTimeLastYear
+        if !pages.isEmpty {
+            VStack(alignment: .leading, spacing: 16) {
+                HStack(spacing: 6) {
+                    Text("This time last year 💛")
+                        .font(.system(.headline, design: .rounded).weight(.bold))
+                        .foregroundStyle(Color.terracotta)
+                }
+                .padding(.vertical, 6)
+                .padding(.horizontal, 12)
+                .background(Capsule(style: .continuous).fill(Color.terracotta.opacity(0.12)))
+                .accessibilityIdentifier("memories-this-time-last-year")
+
+                ForEach(pages) { memory in
+                    pageButton(memory)
+                }
+            }
+            .padding(.bottom, 6)
+        }
+    }
+
+    // MARK: Month header + AI recap
+
+    private func monthHeader(_ group: (key: String, title: String, memories: [Memory])) -> some View {
+        HStack(spacing: 10) {
+            Text(group.title)
+                .font(.system(.headline, design: .rounded).weight(.bold))
+                .foregroundStyle(Color.bacanGreen)
+                .padding(.vertical, 6)
+                .padding(.horizontal, 12)
+                .background(Capsule(style: .continuous).fill(Color.bacanGreen.opacity(0.12)))
+
+            Spacer(minLength: 0)
+
+            if !recapReady(group.key) {
+                Button {
+                    store.send(.recapTapped(monthKey: group.key))
+                } label: {
+                    Label("Recap this month ✨", systemImage: "sparkles")
+                        .labelStyle(.titleOnly)
+                        .font(.system(.footnote, design: .rounded).weight(.semibold))
+                        .foregroundStyle(Color.marigold)
+                        .padding(.vertical, 6)
+                        .padding(.horizontal, 10)
+                        .background(Capsule(style: .continuous).fill(Color.marigold.opacity(0.16)))
+                }
+                .buttonStyle(.plain)
+                .disabled(recapLoading(group.key))
+                .accessibilityIdentifier("memory-recap-button-\(group.key)")
+            }
+        }
+        .padding(.top, 4)
+        .padding(.bottom, 2)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.familyCanvas)
+    }
+
+    private func recapReady(_ key: String) -> Bool {
+        if case .ready = store.recaps[key] { return true }
+        return false
+    }
+
+    private func recapLoading(_ key: String) -> Bool {
+        if case .loading = store.recaps[key] { return true }
+        return false
+    }
+
+    @ViewBuilder
+    private func recapCard(for key: String) -> some View {
+        switch store.recaps[key] {
+        case .loading:
+            recapShell {
+                Text("Weaving this month into a little story…")
+                    .redacted(reason: .placeholder)
+                    .shimmering()
+            }
+        case let .ready(text):
+            recapShell {
+                Text(text)
+                    .font(.system(.subheadline, design: .rounded))
+                    .foregroundStyle(Color.ink)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .accessibilityIdentifier("memory-recap-card-\(key)")
+        case .failed:
+            Button {
+                store.send(.recapTapped(monthKey: key))
+            } label: {
+                recapShell {
+                    Text("That recap didn't come through — tap to try again.")
+                        .font(.system(.footnote, design: .rounded))
+                        .foregroundStyle(Color.inkSoft)
+                }
+            }
+            .buttonStyle(.plain)
+        case .none:
+            EmptyView()
+        }
+    }
+
+    private func recapShell<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "sparkles")
+                .font(.subheadline)
+                .foregroundStyle(Color.marigold)
+            content()
+            Spacer(minLength: 0)
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .fill(Color.marigold.opacity(0.10))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .strokeBorder(Color.marigold.opacity(0.28), lineWidth: 1.5)
+        )
+    }
+
+    // MARK: Filtered empty state
+
+    private var filteredEmptyState: some View {
+        VStack(spacing: 12) {
+            Image(systemName: "camera.badge.ellipsis")
+                .font(.system(size: 40))
+                .foregroundStyle(Color.bacanGreen.opacity(0.7))
+            Text(filteredEmptyCopy)
+                .familyTitle(.subheadline)
+                .foregroundStyle(Color.inkSoft)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 60)
+        .padding(.horizontal, 24)
+        .accessibilityIdentifier("memories-filtered-empty")
+    }
+
+    private var filteredEmptyCopy: String {
+        let name = store.members.first { $0.id == store.selectedKidId }.map { firstName($0.name) }
+        if let name {
+            return "No memories tagged with \(name) yet — capture one and it'll land right here."
+        }
+        return "No memories yet — start your scrapbook with one little moment."
+    }
+
+    private func firstName(_ name: String) -> String {
+        name.split(separator: " ").first.map(String.init) ?? name
     }
 
     private var captureBanner: some View {
@@ -102,7 +304,7 @@ public struct MemoriesView: View {
         let cal = Calendar.current
         var order: [String] = []
         var buckets: [String: [Memory]] = [:]
-        for memory in store.memories {
+        for memory in store.visibleMemories {
             let comps = cal.dateComponents([.year, .month], from: memory.date)
             let key = "\(comps.year ?? 0)-\(comps.month ?? 0)"
             if buckets[key] == nil { order.append(key); buckets[key] = [] }

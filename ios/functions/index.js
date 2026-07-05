@@ -25,6 +25,7 @@ const { troubleshootPlant } = require("./plantTroubleshoot");
 const { runAgentTurn } = require("./agentTurn");
 const { planMealWeek } = require("./mealPlanWeek");
 const { summarizeSpending } = require("./spendingSummarize");
+const { memoryMonthSummary } = require("./memoryMonthSummary");
 const { reviewUsage } = require("./usageReview");
 const { notifyHousehold, memberName } = require("./notifications");
 const { awardChoreXP, reverseChoreXP } = require("./choreXP");
@@ -492,6 +493,35 @@ exports.summarizeSpending = onCall(
       });
     } catch (err) {
       throw new HttpsError("internal", `Spending summary failed: ${err.message}`);
+    }
+  }
+);
+
+/**
+ * `memoryMonthSummary` is a v2 HTTPS callable (us-central1) — the P28-C3 Family-Journal month recap.
+ * The phone groups its `memories` timeline by month, strips each story's markdown to plain text, and
+ * forwards ONE month's `[{ title, text, milestone, kidNames, date }]`; this asks `claude-sonnet-5`
+ * (forced tool-use) to weave those moments into `{ recap: string }` (2-4 warm family-voice
+ * sentences). Auth-required; reuses the existing `ANTHROPIC_API_KEY`; logs only counts (never memory
+ * text). No rate limiting (private app).
+ */
+exports.memoryMonthSummary = onCall(
+  { timeoutSeconds: 60, memory: "512MiB", secrets: [ANTHROPIC_API_KEY] },
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError("unauthenticated", "You must be signed in.");
+    }
+    const data = request.data || {};
+    const month = typeof data.month === "string" ? data.month : undefined;
+    const memories = Array.isArray(data.memories) ? data.memories : [];
+    try {
+      return await memoryMonthSummary({
+        apiKey: ANTHROPIC_API_KEY.value(),
+        month,
+        memories,
+      });
+    } catch (err) {
+      throw new HttpsError("internal", `Memory month recap failed: ${err.message}`);
     }
   }
 );
