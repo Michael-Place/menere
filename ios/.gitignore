@@ -22,3 +22,4 @@ Packages/
 *-adminsdk-*.json
 *.p8
 ServiceAccountKey*.json
+.dd-A/

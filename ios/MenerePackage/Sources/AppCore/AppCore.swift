@@ -4,6 +4,7 @@ import AuthenticationFeature
 import ComposableArchitecture
 import MenereUI
 import OnboardingFeature
+import PhotoCurationClient
 import Sharing
 import SwiftUI
 import UserDomain
@@ -163,6 +164,22 @@ public struct AppView: View {
     }
 
     public var body: some View {
+        #if DEBUG
+        // P27-T0 spike hook: `-photoCurationSpike` swaps the whole app for the Photo Curation
+        // harness so we can screenshot a real album being created + populated on the simulator.
+        // Removable: delete this branch + the PhotoCurationClient dependency to retire the spike.
+        if ProcessInfo.processInfo.arguments.contains("-photoCurationSpike") {
+            PhotoCurationDemoView()
+        } else {
+            mainContent
+        }
+        #else
+        mainContent
+        #endif
+    }
+
+    @ViewBuilder
+    private var mainContent: some View {
         if let store = store.scope(state: \.authentication, action: \.authentication) {
             ZStack {
                 switch store.case {
