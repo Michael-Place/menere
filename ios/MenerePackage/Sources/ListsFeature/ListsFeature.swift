@@ -19,6 +19,8 @@ public struct ListsReducer {
         var isLoading = false
         var showAddSheet = false
         var newTitle = ""
+        /// Which specialization the about-to-be-created list should take (P30 grocery preset).
+        var newListType: ListType = .standard
         @Presents var detail: ListDetailReducer.State?
 
         // Wine cellar is re-homed here as a pinned "collection" entry. Pushing the Cellar
@@ -93,16 +95,21 @@ public struct ListsReducer {
 
             case .addTapped:
                 state.newTitle = ""
+                state.newListType = .standard
                 state.showAddSheet = true
                 return .none
 
             case .createList:
                 let title = state.newTitle.trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !title.isEmpty, let hid = hid() else { return .none }
-                let list = FamilyList(title: title)
+                // Grocery preset flips the list into the aisle-grouped experience (cart icon).
+                let list = state.newListType == .grocery
+                    ? FamilyList(title: title, icon: "cart", color: .sage, listType: .grocery)
+                    : FamilyList(title: title)
                 state.lists.append(list)
                 state.showAddSheet = false
                 state.newTitle = ""
+                state.newListType = .standard
                 return .run { _ in
                     @Dependency(\.persistence) var persistence
                     try await persistence.saveList(hid, list)
@@ -342,10 +349,56 @@ public struct ListsView: View {
             // here, outside ScanView's own `.wineChrome()` tint scope) doesn't stay bacanGreen.
             .tint(.wine)
         }
-        .alert("New list", isPresented: $store.showAddSheet) {
-            TextField("Groceries, Costco, projects…", text: $store.newTitle)
-            Button("Cancel", role: .cancel) { store.showAddSheet = false }
-            Button("Create") { store.send(.createList) }
+        .sheet(isPresented: $store.showAddSheet) {
+            NewListSheet(store: store)
+                .presentationDetents([.medium])
+        }
+    }
+}
+
+/// The "New list" form. Offers a grocery preset (P30) that flips the new list into the
+/// aisle-grouped grocery experience with a cart icon.
+private struct NewListSheet: View {
+    @Bindable var store: StoreOf<ListsReducer>
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    TextField("Groceries, Costco, projects…", text: $store.newTitle)
+                        .accessibilityIdentifier("new-list-title-field")
+                }
+                .listRowBackground(Color.familySurface)
+
+                Section("Type") {
+                    Picker("List type", selection: $store.newListType) {
+                        Label("Checklist", systemImage: "checklist").tag(ListType.standard)
+                        Label("Grocery List", systemImage: "cart").tag(ListType.grocery)
+                    }
+                    .pickerStyle(.inline)
+                    .labelsHidden()
+                    if store.newListType == .grocery {
+                        Text("We'll sort items by aisle and auto-tag categories as you type.")
+                            .font(.caption)
+                            .foregroundStyle(Color.inkSoft)
+                    }
+                }
+                .listRowBackground(Color.familySurface)
+            }
+            .scrollContentBackground(.hidden)
+            .background(Color.familyCanvas)
+            .navigationTitle("New list")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { store.showAddSheet = false }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Create") { store.send(.createList) }
+                        .disabled(store.newTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        .accessibilityIdentifier("create-list-button")
+                }
+            }
         }
     }
 }
