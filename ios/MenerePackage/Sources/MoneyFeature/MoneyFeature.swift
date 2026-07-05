@@ -25,6 +25,13 @@ public struct MoneyReducer {
         var isLoading = false
         var currentUid: String?
 
+        // P22.1 — forward-looking spend.
+        /// "Now" reference for the recurring-bill forecast (set on `.task`; keeps the projection
+        /// deterministic + testable rather than reading `Date()` inside a derived property).
+        var referenceDate: Date = Date()
+        /// Intended future spend rolled up from the family's wishlist/gift/project lists (read-only).
+        var planned: PlannedSpending.Rollup = .empty
+
         // P22 — Spending intelligence.
         /// Whether the spending-insights sheet is presented.
         var showInsights = false
@@ -62,6 +69,17 @@ public struct MoneyReducer {
             SpendingInsights.report(expenses: expenses, documents: documents, month: monthAnchor)
         }
 
+        /// "Coming up" — the next expected charge for each recurring vendor, soonest first. Projects
+        /// off `report.recurring` so it mirrors the "Looks recurring" list. It's an estimate.
+        var forecast: [SpendingForecast.Upcoming] {
+            SpendingForecast.upcoming(
+                expenses: expenses,
+                documents: documents,
+                recurring: report.recurring,
+                now: referenceDate
+            )
+        }
+
         /// "New from the Brain": documents carrying an amount that aren't yet an expense and haven't
         /// been dismissed. Matches on `documentId`, so filing one makes it drop out of the inbox.
         var inboxDocuments: [FamilyDomain.Document] {
@@ -81,6 +99,7 @@ public struct MoneyReducer {
         case expensesLoaded([Expense])
         case documentsLoaded([FamilyDomain.Document])
         case budgetsLoaded(BudgetConfig?)
+        case plannedLoaded(PlannedSpending.Rollup)
         case previousMonthTapped
         case nextMonthTapped
         case insightsOpened
@@ -123,6 +142,7 @@ public struct MoneyReducer {
             switch action {
             case .task:
                 state.currentUid = uid()
+                state.referenceDate = date.now
                 guard let hid = hid() else { return .none }
                 state.isLoading = true
                 return .run { send in
@@ -132,6 +152,15 @@ public struct MoneyReducer {
                     await send(.expensesLoaded((try? await expenses) ?? []))
                     await send(.documentsLoaded((try? await documents) ?? []))
                     await send(.budgetsLoaded(try? await budgets))
+
+                    // Planned-spending rollup — read-only over the wishlist/gift/project lists.
+                    let lists = ((try? await persistence.lists(hid)) ?? [])
+                        .filter { $0.isWishlist || $0.isGift || $0.isProject }
+                    var itemsByList: [String: [ListItem]] = [:]
+                    for list in lists {
+                        itemsByList[list.id] = (try? await persistence.listItems(hid, list.id)) ?? []
+                    }
+                    await send(.plannedLoaded(PlannedSpending.rollup(lists: lists, itemsByList: itemsByList)))
                 }
 
             case let .expensesLoaded(expenses):
@@ -147,6 +176,10 @@ public struct MoneyReducer {
                 if let budgets { state.budgets = budgets }
                 return .none
 
+            case let .plannedLoaded(planned):
+                state.planned = planned
+                return .none
+
             case .previousMonthTapped:
                 state.monthAnchor = MoneyRollup.shiftMonth(state.monthAnchor, by: -1)
                 state.spendingSummary = nil // month changed — recap no longer applies
@@ -160,6 +193,7 @@ public struct MoneyReducer {
             case .insightsOpened:
                 state.showInsights = true
                 analytics.log("spending_insights_opened")
+                if !state.forecast.isEmpty || !state.planned.isEmpty { analytics.log("money_forecast_viewed") }
                 // Kick off the AI recap once per month view (refresh regenerates).
                 guard state.spendingSummary == nil, !state.isSummarizing else { return .none }
                 return .send(.generateSummary)

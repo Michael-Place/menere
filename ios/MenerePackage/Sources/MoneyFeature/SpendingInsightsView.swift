@@ -27,6 +27,9 @@ struct SpendingInsightsView: View {
                         if report.oneTimeTotal > 0 { oneTimeCard }
                         if report.allTimeTotal > 0 { allTimeCard }
                     }
+                    // Forward-looking (P22.1) — shown even on an empty month; they read history + lists.
+                    if !store.forecast.isEmpty { comingUpCard }
+                    if !store.planned.isEmpty { plannedCard }
                 }
                 .padding(16)
             }
@@ -270,6 +273,77 @@ struct SpendingInsightsView: View {
         .cardChrome()
     }
 
+    // MARK: Coming up (recurring-bill forecast)
+
+    private var comingUpCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Label("Coming up", systemImage: "calendar.badge.clock")
+                .font(.system(.subheadline, design: .rounded).weight(.semibold))
+                .foregroundStyle(Color.ink)
+            Text("Our best guess at the next charge from each recurring vendor.")
+                .font(.caption)
+                .foregroundStyle(Color.inkSoft)
+            ForEach(store.forecast) { item in
+                HStack(spacing: 10) {
+                    Image(systemName: item.category.symbolName)
+                        .foregroundStyle(item.category.tint)
+                        .frame(width: 24)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(item.name)
+                            .font(.subheadline.weight(.medium))
+                            .foregroundStyle(Color.ink)
+                        Text("~\(MoneyView.currency(item.typicalAmount)) · ~\(Self.forecastDay(item.nextDate))\(item.cadenceMonths > 1 ? " · every \(item.cadenceMonths) mo" : "")")
+                            .font(.caption)
+                            .foregroundStyle(Color.inkSoft)
+                    }
+                    Spacer()
+                    Text(Self.forecastMonth(item.nextDate))
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(item.category.tint)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(item.category.tint.opacity(0.14), in: Capsule())
+                }
+                .padding(.vertical, 2)
+                .accessibilityIdentifier("forecast-\(item.id)")
+            }
+            Text("Estimated from past timing — not exact due dates.")
+                .font(.caption2)
+                .foregroundStyle(Color.inkSoft)
+        }
+        .cardChrome()
+    }
+
+    // MARK: Planned / wishlist (intended future spend from lists)
+
+    private var plannedCard: some View {
+        let planned = store.planned
+        return VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Label("Planned / wishlist", systemImage: "cart.badge.plus")
+                    .font(.system(.subheadline, design: .rounded).weight(.semibold))
+                    .foregroundStyle(Color.ink)
+                Spacer()
+                Text(MoneyView.currency(planned.total))
+                    .font(.subheadline.weight(.bold).monospacedDigit())
+                    .foregroundStyle(Color.inkSoft)
+            }
+            Text("What you've earmarked in your lists — future spend, not yet spent.")
+                .font(.caption)
+                .foregroundStyle(Color.inkSoft)
+            if planned.wishlistTotal > 0 {
+                PlannedRow(symbol: "star.fill", tint: .marigold, label: "In wishlists", amount: planned.wishlistTotal, lists: planned.wishlistLists)
+            }
+            if planned.giftTotal > 0 {
+                PlannedRow(symbol: "gift.fill", tint: .terracotta, label: "In gift ideas", amount: planned.giftTotal, lists: planned.giftLists)
+            }
+            if planned.projectTotal > 0 {
+                PlannedRow(symbol: "hammer.fill", tint: .sky, label: "In project budgets", amount: planned.projectTotal, lists: planned.projectLists)
+            }
+        }
+        .cardChrome()
+    }
+
     // MARK: Empty state
 
     private var emptyState: some View {
@@ -292,6 +366,55 @@ struct SpendingInsightsView: View {
 
     static func percent(_ fraction: Double) -> String {
         fraction.formatted(.percent.precision(.fractionLength(0)))
+    }
+
+    /// "Aug 1" — the estimated next-charge day.
+    static func forecastDay(_ date: Date) -> String {
+        let df = DateFormatter()
+        df.dateFormat = "MMM d"
+        return df.string(from: date)
+    }
+
+    /// "Aug" — the month chip on a forecast row.
+    static func forecastMonth(_ date: Date) -> String {
+        let df = DateFormatter()
+        df.dateFormat = "MMM"
+        return df.string(from: date)
+    }
+}
+
+// MARK: - Planned-spending row
+
+private struct PlannedRow: View {
+    let symbol: String
+    let tint: Color
+    let label: String
+    let amount: Double
+    let lists: [String]
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: symbol)
+                .foregroundStyle(tint)
+                .frame(width: 24)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(label)
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(Color.ink)
+                if !lists.isEmpty {
+                    Text(lists.joined(separator: ", "))
+                        .font(.caption)
+                        .foregroundStyle(Color.inkSoft)
+                        .lineLimit(1)
+                }
+            }
+            Spacer()
+            Text(MoneyView.currency(amount))
+                .font(.subheadline.weight(.semibold).monospacedDigit())
+                .foregroundStyle(Color.ink)
+        }
+        .padding(.vertical, 2)
+        .accessibilityIdentifier("planned-\(label)")
     }
 }
 
