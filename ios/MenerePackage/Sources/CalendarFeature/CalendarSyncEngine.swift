@@ -13,9 +13,26 @@ import Foundation
 ///   2. **Update** edited imports: diff title/start/end/isAllDay/location/notes and refresh the copy
 ///      (fixes flaw #2 — Fambo skipped known events forever).
 ///   3. **Reconcile** deletions: an imported occurrence whose dedup key vanished from the window is
-///      deleted from Bacán.
+///      deleted from Bacán — but **only when the Apple fetch is trustworthy** (see P2.2 safety below).
 /// Plus **Push** Bacán → Apple: `.manual` / `.email` events with occurrences in the window are pushed
 /// (recurring ones with a real `EKRecurrenceRule` — fixes flaw #3).
+///
+/// ### P2.2 — non-destructive reconcile (the empty-/wrong-calendar fix)
+/// The reconcile phase is *never* allowed to delete a Firestore event just because Apple Calendar
+/// lacks it in an untrustworthy state. Three guards gate Phase 3:
+///   - **Auth guard** (`deletionsAllowed`): if calendar access isn't `.fullAccess`/granted, the delete
+///     phase is skipped entirely (a revoked/limited state can never authorize destructive deletes).
+///   - **Trust guard** (`fetchIsTrustworthy`): deletions run only when the Apple fetch still looks like
+///     the SAME store we imported from — i.e. it contains at least one of the in-window dedup keys we
+///     already hold. A fetch that shares NONE of them is untrustworthy and treated as "nothing to
+///     reconcile from," NOT "delete everything." This covers an empty Apple Calendar (fresh device/sim,
+///     revoked-then-empty), a *different* store (new phone), and a store that only surfaces unrelated
+///     events (e.g. a simulator's Holidays/Birthdays calendars) — all of which previously nuked real
+///     events. Safe upserts still run in every case.
+///   - **Import-provenance guard**: only events that were themselves imported from Apple
+///     (`source == .calendarImport` AND a non-empty `eventKitIdentifier`) can ever be deleted, and only
+///     when that specific Apple occurrence is confirmed gone from a *trusted* fetch. App-origin events
+///     (created in Bacán, no Apple id) are NEVER deleted by sync.
 public enum CalendarSyncEngine {
     public struct Plan: Equatable {
         /// Brand-new imports to write to Firestore.
@@ -35,11 +52,15 @@ public enum CalendarSyncEngine {
     }
 
     /// Compute the sync plan. `now` seeds `createdAt`/`updatedAt` on new imports (injected for tests).
+    /// - Parameter deletionsAllowed: caller's auth gate (P2.2). Pass `false` when EventKit access is
+    ///   not `.granted`/`.fullAccess`, so a revoked/limited state can never trigger destructive deletes.
+    ///   Defaults to `true`; the empty-fetch guard below is enforced regardless of this flag.
     public static func plan(
         existing: [FamilyEvent],
         imported: [ImportedEvent],
         windowStart: Date,
         windowEnd: Date,
+        deletionsAllowed: Bool = true,
         now: Date = Date(),
         calendar: Calendar = .current,
         makeID: () -> String = { UUID().uuidString }
@@ -89,13 +110,29 @@ public enum CalendarSyncEngine {
             }
         }
 
-        // Phase 3 — reconcile deletions (only for imports whose occurrence sits INSIDE the synced
-        // window; out-of-window imports are simply not in `imported` and must not be deleted).
-        for e in existingImports {
-            guard let key = e.eventKitIdentifier else { continue }
-            let inWindow = e.startDate >= windowStart && e.startDate <= windowEnd
-            if inWindow && !importedKeys.contains(key) {
-                plan.toDeleteImportIDs.append(e.id)
+        // Phase 3 — reconcile deletions. P2.2 SAFETY: never destroy Firestore events from an
+        // untrustworthy Apple state. Reconcile only IMPORT-provenance events (source == .calendarImport,
+        // non-empty eventKitIdentifier) whose occurrence sits inside the window. App-origin events are
+        // never in `existingImports`, so they can never be deleted here.
+        let inWindowImports = existingImports.filter { e in
+            guard let key = e.eventKitIdentifier, !key.isEmpty else { return false }
+            return e.startDate >= windowStart && e.startDate <= windowEnd
+        }
+        let inWindowImportKeys = Set(inWindowImports.compactMap(\.eventKitIdentifier))
+
+        // Trust guard: the fetch may authorize deletions only if it still contains at least one of the
+        // in-window keys we already hold — evidence it is the SAME Apple store we imported from. A fetch
+        // sharing NONE of them (empty calendar, a different/new device, or a store surfacing only
+        // unrelated events like a sim's holidays) is untrustworthy → skip deletes entirely. An empty
+        // fetch is the degenerate case (shares nothing → untrusted), so this subsumes the empty guard.
+        let fetchIsTrustworthy = !inWindowImportKeys.isDisjoint(with: importedKeys)
+
+        if deletionsAllowed && fetchIsTrustworthy {
+            for e in inWindowImports {
+                guard let key = e.eventKitIdentifier else { continue }
+                if !importedKeys.contains(key) {
+                    plan.toDeleteImportIDs.append(e.id)
+                }
             }
         }
 

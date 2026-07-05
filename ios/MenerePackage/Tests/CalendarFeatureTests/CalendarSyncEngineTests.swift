@@ -73,16 +73,99 @@ final class CalendarSyncEngineTests: XCTestCase {
 
     // MARK: Phase 3 — deletion reconcile
 
-    func testVanishedImportInWindowIsDeleted() {
-        let existing = FamilyEvent(
+    func testVanishedImportInWindowIsDeletedWhenFetchTrusted() {
+        // A TRUSTWORTHY fetch = still contains at least one held in-window key (`keeper`), proving it's
+        // the same Apple store. Within that fetch, `gone`'s key vanished → genuine Apple-side delete.
+        let keeper = FamilyEvent(
+            id: "fe-keep", title: "Keeper", startDate: inWindow,
+            eventKitIdentifier: "EK-keep#1", source: .calendarImport
+        )
+        let gone = FamilyEvent(
             id: "fe-gone", title: "Old", startDate: inWindow,
             eventKitIdentifier: "EK-gone#1", source: .calendarImport
         )
+        let imported = [ImportedEvent(dedupKey: "EK-keep#1", title: "Keeper", startDate: inWindow)]
         let plan = CalendarSyncEngine.plan(
-            existing: [existing], imported: [],
+            existing: [keeper, gone], imported: imported,
             windowStart: window.start, windowEnd: window.end
         )
-        XCTAssertEqual(plan.toDeleteImportIDs, ["fe-gone"])
+        XCTAssertEqual(plan.toDeleteImportIDs, ["fe-gone"], "only the genuinely-vanished import is deleted")
+    }
+
+    // MARK: P2.2 — non-destructive reconcile (the empty-/wrong-calendar fix)
+
+    /// The observed bug: an EMPTY Apple fetch must NEVER delete in-window imports. Empty Apple
+    /// Calendar = "nothing to reconcile from," not "delete everything."
+    func testEmptyFetchNeverDeletesImports() {
+        let imports = (0..<35).map { i in
+            FamilyEvent(
+                id: "fe-\(i)", title: "Real \(i)", startDate: inWindow,
+                eventKitIdentifier: "EK-\(i)#1", source: .calendarImport
+            )
+        }
+        let plan = CalendarSyncEngine.plan(
+            existing: imports, imported: [],
+            windowStart: window.start, windowEnd: window.end
+        )
+        XCTAssertTrue(plan.toDeleteImportIDs.isEmpty, "empty Apple fetch must delete nothing")
+    }
+
+    /// The EXACT observed regression: a NON-EMPTY but untrustworthy fetch (a sim's holidays — none of
+    /// which share our imported keys) must not delete a single real import.
+    func testUnrelatedNonEmptyFetchNeverDeletesImports() {
+        let realImports = (0..<26).map { i in
+            FamilyEvent(
+                id: "fe-\(i)", title: "Real \(i)", startDate: inWindow,
+                eventKitIdentifier: "EK-real-\(i)#1", source: .calendarImport
+            )
+        }
+        // Apple returns only holiday-like events sharing NONE of our keys.
+        let holidays = [
+            ImportedEvent(dedupKey: "EK-holiday-july4#1", title: "Independence Day", startDate: inWindow),
+            ImportedEvent(dedupKey: "EK-holiday-labor#1", title: "Labor Day", startDate: inWindow),
+        ]
+        let plan = CalendarSyncEngine.plan(
+            existing: realImports, imported: holidays,
+            windowStart: window.start, windowEnd: window.end
+        )
+        XCTAssertTrue(plan.toDeleteImportIDs.isEmpty, "a fetch sharing no held keys is untrusted → no deletes")
+    }
+
+    /// Auth gate: even a trustworthy fetch cannot trigger deletes when the caller reports access is not
+    /// granted (`deletionsAllowed: false`).
+    func testDeletionsDisallowedSkipsReconcile() {
+        let keeper = FamilyEvent(
+            id: "fe-keep", title: "Keeper", startDate: inWindow,
+            eventKitIdentifier: "EK-keep#1", source: .calendarImport
+        )
+        let gone = FamilyEvent(
+            id: "fe-gone", title: "Old", startDate: inWindow,
+            eventKitIdentifier: "EK-gone#1", source: .calendarImport
+        )
+        let imported = [ImportedEvent(dedupKey: "EK-keep#1", title: "Keeper", startDate: inWindow)]
+        let plan = CalendarSyncEngine.plan(
+            existing: [keeper, gone], imported: imported,
+            windowStart: window.start, windowEnd: window.end,
+            deletionsAllowed: false
+        )
+        XCTAssertTrue(plan.toDeleteImportIDs.isEmpty, "no deletes when access isn't granted")
+    }
+
+    /// App-origin events (manual/email, no Apple id) are never deleted by reconcile, even with a
+    /// trustworthy fetch that doesn't mention them.
+    func testAppOriginEventsNeverDeleted() {
+        let anchor = FamilyEvent(
+            id: "anchor", title: "Imported anchor", startDate: inWindow,
+            eventKitIdentifier: "EK-keep#1", source: .calendarImport
+        )
+        let manual = FamilyEvent(id: "m1", title: "Bacán-made", startDate: inWindow, source: .manual)
+        let email = FamilyEvent(id: "e1", title: "From email", startDate: inWindow, source: nil)
+        let imported = [ImportedEvent(dedupKey: "EK-keep#1", title: "Imported anchor", startDate: inWindow)]
+        let plan = CalendarSyncEngine.plan(
+            existing: [anchor, manual, email], imported: imported,
+            windowStart: window.start, windowEnd: window.end
+        )
+        XCTAssertTrue(plan.toDeleteImportIDs.isEmpty, "app-origin events are never reconcile-deleted")
     }
 
     func testOutOfWindowImportIsNotDeleted() {

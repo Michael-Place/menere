@@ -279,9 +279,15 @@ public struct CalendarReducer {
             let existing = (try? await persistence.events(hid)) ?? []
             let imported = try await client.fetchWindow(window.start, window.end, bacanID, enabledIDs)
 
+            // P2.2 auth gate: re-check EventKit access at sync time (it may have been revoked since the
+            // tab loaded). Only a granted state may ever authorize destructive reconcile-deletes; the
+            // engine additionally refuses to delete when the Apple fetch came back empty.
+            let deletionsAllowed = client.authorizationStatus() == .granted
+
             let plan = CalendarSyncEngine.plan(
                 existing: existing, imported: imported,
-                windowStart: window.start, windowEnd: window.end
+                windowStart: window.start, windowEnd: window.end,
+                deletionsAllowed: deletionsAllowed
             )
 
             // Phases 1 & 2 — import new + update edited.

@@ -25,13 +25,18 @@ final class CalendarReducerSyncTests: XCTestCase {
             let now = Calendar.current.startOfDay(for: Date())
             let inWindow = now.addingTimeInterval(60 * 60 * 24 * 3)
 
-            // Existing Firestore state: one manual event to push, one stale import to delete.
+            // Existing Firestore state: one manual event to push, one still-present import (anchors the
+            // P2.2 trust guard — proves the fetch is the same Apple store), one stale import to delete.
             let manual = FamilyEvent(id: "m1", title: "Famfis checkup", startDate: inWindow, source: .manual)
+            let liveImport = FamilyEvent(
+                id: "i-live", title: "Piano", startDate: inWindow,
+                eventKitIdentifier: "EK-live#1", source: .calendarImport
+            )
             let staleImport = FamilyEvent(
                 id: "i-old", title: "Gone", startDate: inWindow,
                 eventKitIdentifier: "EK-old#1", source: .calendarImport
             )
-            let existing = LockIsolated<[FamilyEvent]>([manual, staleImport])
+            let existing = LockIsolated<[FamilyEvent]>([manual, liveImport, staleImport])
 
             let savedEvents = LockIsolated<[FamilyEvent]>([])
             let deletedIDs = LockIsolated<[String]>([])
@@ -57,7 +62,12 @@ final class CalendarReducerSyncTests: XCTestCase {
                 $0.calendarSyncClient.ensureBacanCalendar = { _ in "bacan-1" }
                 $0.calendarSyncClient.availableCalendars = { [] }
                 $0.calendarSyncClient.fetchWindow = { _, _, _, _ in
-                    [ImportedEvent(dedupKey: "EK-new#1", title: "Dentist", startDate: inWindow)]
+                    [
+                        // The anchor: still present → makes the fetch trustworthy (P2.2), so reconcile runs.
+                        ImportedEvent(dedupKey: "EK-live#1", title: "Piano", startDate: inWindow),
+                        // A brand-new Apple occurrence → import (create).
+                        ImportedEvent(dedupKey: "EK-new#1", title: "Dentist", startDate: inWindow),
+                    ]
                 }
                 $0.calendarSyncClient.saveEvent = { e, _ in
                     pushedEvents.withValue { $0.append(e) }
