@@ -1407,6 +1407,8 @@ private struct PlantDetailView: View {
     @Dependency(\.analytics) private var analytics
     /// P26-IMG-C2 — flips the hero between the framed photo and the die-cut sticker (when one exists).
     @State private var showSticker = false
+    /// P31 — expands the "Recommended schedule" section (collapsed by default so the page stays calm).
+    @State private var scheduleExpanded = false
 
     /// Re-derived live from the store so mark-done reflects immediately (and the page empties
     /// gracefully if the plant is deleted from the edit form).
@@ -1425,6 +1427,7 @@ private struct PlantDetailView: View {
                         goodToKnowCard(profile)
                     }
                     careTasksCard(plant)
+                    recommendedScheduleCard(plant)
                     detailsCard(plant)
                     troubleshootSeam(plant)
                 }
@@ -1647,6 +1650,135 @@ private struct PlantDetailView: View {
                         )
                     }
                 }
+            }
+        }
+    }
+
+    // MARK: Recommended schedule (P31) — the smart, per-species care plan
+
+    /// The SMART per-species recommendation card (distinct from the manual "add care task" preset menu in
+    /// the edit form). Mirrors the pet schedule card: an up-to-date signal + missing recommendations with
+    /// ＋ (add due today) / ✓ (already do this / backdate), plus an "Already tracking" list. Reads
+    /// ``PlantCareKB/schedule(for:)`` — misting only shows for humidity-lovers, fertilizing only in the
+    /// growing season, watering at the plant's own cadence.
+    @ViewBuilder
+    private func recommendedScheduleCard(_ plant: CareItem) -> some View {
+        let schedule = PlantCareKB.schedule(for: plant)
+        let onScheduleCount = schedule.onScheduleCount()
+        let missing = schedule.missing
+        card {
+            Button {
+                withAnimation(.snappy) { scheduleExpanded.toggle() }
+                if scheduleExpanded { store.send(.plantScheduleSetupOpened(plantID: plant.id)) }
+            } label: {
+                HStack(spacing: 12) {
+                    ZStack {
+                        Circle().fill(Color.bacanGreen.opacity(0.15))
+                        Image(systemName: "sparkles").font(.subheadline).foregroundStyle(Color.bacanGreen)
+                    }
+                    .frame(width: 38, height: 38)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Recommended schedule").familyTitle(.headline)
+                        Text(scheduleSignal(onScheduleCount, of: schedule.total))
+                            .font(.caption).foregroundStyle(missing.isEmpty ? Color.bacanGreen : Color.inkSoft)
+                    }
+                    Spacer(minLength: 4)
+                    Image(systemName: scheduleExpanded ? "chevron.up" : "chevron.down")
+                        .font(.caption).foregroundStyle(Color.inkSoft)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("plant-schedule-toggle")
+
+            if scheduleExpanded {
+                Text("Tailored to this plant — misting only if it loves humidity, feeding only in the growing season.")
+                    .font(.caption2).foregroundStyle(Color.inkSoft)
+
+                ProgressView(value: Double(onScheduleCount), total: Double(max(schedule.total, 1)))
+                    .tint(missing.isEmpty ? .bacanGreen : .bacanGreen)
+
+                if missing.isEmpty {
+                    Text("Every recommendation is set up — \(plant.name)'s got a full care plan. 🌱")
+                        .font(.caption).foregroundStyle(Color.inkSoft)
+                } else {
+                    Text("Tap ＋ to add one to \(plant.name)'s care tasks, or ✓ if you already do it.")
+                        .font(.caption).foregroundStyle(Color.inkSoft)
+                    VStack(spacing: 10) {
+                        ForEach(missing) { item in
+                            scheduleSuggestionRow(item.template, plantID: plant.id)
+                        }
+                    }
+                }
+
+                if !schedule.present.isEmpty {
+                    Divider()
+                    Text("Already tracking")
+                        .font(.caption.weight(.semibold)).foregroundStyle(Color.inkSoft)
+                    VStack(spacing: 8) {
+                        ForEach(schedule.present) { item in
+                            scheduleHaveRow(item)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// "3 of 6 on schedule" / "All 6 on schedule 🎉" — the up-to-date signal.
+    private func scheduleSignal(_ n: Int, of total: Int) -> String {
+        if total > 0, n == total { return "All \(total) on schedule 🎉" }
+        return "\(n) of \(total) on schedule"
+    }
+
+    /// A missing recommendation: glyph, title, cadence + note, and add / "already do this" buttons.
+    private func scheduleSuggestionRow(_ template: PlantCareTemplate, plantID: String) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            ZStack {
+                Circle().fill(Color.bacanGreen.opacity(0.12))
+                Image(systemName: template.symbol).font(.subheadline).foregroundStyle(Color.bacanGreen)
+            }
+            .frame(width: 34, height: 34)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(template.title).foregroundStyle(Color.ink)
+                Text(template.frequencyLabel).font(.caption2).foregroundStyle(Color.bacanGreen)
+                Text(template.note).font(.caption2).foregroundStyle(Color.inkSoft).lineLimit(2)
+            }
+            Spacer(minLength: 4)
+            // "I already do this" — materialize backdated so it lands caught-up.
+            Button {
+                store.send(.materializePlantCareTask(plantID: plantID, templateID: template.id, alreadyDone: true))
+            } label: {
+                Image(systemName: "checkmark.circle").font(.title3).foregroundStyle(Color.bacanGreen)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Mark \(template.title) already done")
+            .accessibilityIdentifier("plant-schedule-done-\(template.id)")
+            // Add to the plant's care tasks as due.
+            Button {
+                store.send(.materializePlantCareTask(plantID: plantID, templateID: template.id, alreadyDone: false))
+            } label: {
+                Image(systemName: "plus.circle.fill").font(.title3).foregroundStyle(Color.bacanGreen)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Add \(template.title)")
+            .accessibilityIdentifier("plant-schedule-add-\(template.id)")
+        }
+    }
+
+    /// An already-tracked recommendation row — a green check with the current due/overdue state.
+    private func scheduleHaveRow(_ item: PlantScheduleItem) -> some View {
+        let overdue = item.existingTask?.isOverdue() ?? false
+        return HStack(spacing: 10) {
+            Image(systemName: overdue ? "exclamationmark.circle.fill" : "checkmark.circle.fill")
+                .font(.subheadline)
+                .foregroundStyle(overdue ? Color.terracotta : Color.bacanGreen)
+            Text(item.template.title).font(.caption).foregroundStyle(Color.ink)
+            Spacer(minLength: 0)
+            if overdue, let d = item.existingTask?.daysUntilDue() {
+                Text("overdue \(-d)d").font(.caption2.weight(.semibold)).foregroundStyle(Color.terracotta)
+            } else {
+                Text(item.template.frequencyLabel).font(.caption2).foregroundStyle(Color.inkSoft)
             }
         }
     }

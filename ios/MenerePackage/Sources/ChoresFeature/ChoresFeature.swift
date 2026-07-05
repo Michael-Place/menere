@@ -136,6 +136,13 @@ public struct ChoresReducer {
         /// Materialize a ``PetCareKB`` recommendation into the pet's own ``CareTask`` list. `alreadyDone`
         /// backdates it to caught-up (the "I already do this" path); otherwise it lands due-today.
         case materializePetCareTask(petID: String, templateID: String, alreadyDone: Bool)
+        // P31 — Plant care schedules (PlantCareKB). Smart per-species "Recommended schedule" section on a
+        // plant's DETAIL screen.
+        /// Logged once the recommended-schedule section is expanded on a plant's detail — `plant_schedule_setup`.
+        case plantScheduleSetupOpened(plantID: String)
+        /// Materialize a ``PlantCareKB`` recommendation into the plant's own ``CareTask`` list. `alreadyDone`
+        /// backdates it to caught-up (the "I already do this" path); otherwise it lands due-today.
+        case materializePlantCareTask(plantID: String, templateID: String, alreadyDone: Bool)
         case carePhotosLoaded([String: Data])
         // P19-C3 — open the AI troubleshoot sheet for a plant (from its DETAIL screen).
         case openTroubleshoot(plantID: String)
@@ -570,6 +577,33 @@ public struct ChoresReducer {
                     guard let toSave else { return }
                     @Dependency(\.persistence) var persistence
                     try await persistence.saveCareItem(hid, toSave)
+                }
+
+            case .plantScheduleSetupOpened:
+                // Fire-and-forget telemetry when the plant's "Recommended schedule" section is opened.
+                analytics.log("plant_schedule_setup")
+                return .none
+
+            case let .materializePlantCareTask(plantID, templateID, alreadyDone):
+                // Append a PlantCareKB recommendation onto the plant's OWN CareItem (plants already exist
+                // as care items — unlike house maintenance, which mints a fresh item). Backdated when the
+                // family already does it, else due today. Persist through the same saveCareItem path.
+                guard let (hid, uid) = ctx(),
+                      let i = state.careItems.firstIndex(where: { $0.id == plantID }),
+                      state.careItems[i].kind == .plant,
+                      let template = PlantCareKB.template(id: templateID, for: state.careItems[i])
+                else { return .none }
+                // Don't duplicate a recommendation the plant already tracks (title-keyword match).
+                guard !state.careItems[i].tasks.contains(where: { template.matches($0) }) else { return .none }
+                let plantTask = template.makeCareTask(alreadyDone: alreadyDone, by: uid)
+                state.careItems[i].tasks.append(plantTask)
+                state.careItems = Self.sortedCare(state.careItems)
+                let plantToSave = state.careItems.first { $0.id == plantID }
+                analytics.log("plant_care_task_added", ["template": templateID])
+                return .run { _ in
+                    guard let plantToSave else { return }
+                    @Dependency(\.persistence) var persistence
+                    try await persistence.saveCareItem(hid, plantToSave)
                 }
 
             case let .recallRitual(ritual):
