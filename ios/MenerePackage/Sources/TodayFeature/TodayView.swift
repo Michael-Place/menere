@@ -29,6 +29,7 @@ public struct TodayView: View {
                 scheduleCard
                 dinnerCard
                 quickActions
+                captureMomentButton
 
                 choresCard
                 homeCareCard
@@ -514,6 +515,39 @@ public struct TodayView: View {
             quickAction("Add to list", symbol: "checklist") { store.send(.quickAddListTapped) }
             quickAction("Plan dinner", symbol: "fork.knife") { store.send(.planDinnerTapped) }
         }
+    }
+
+    /// P28-C2 — a warm entry to the family scrapbook, right in the flow of Today. Opens the same
+    /// "capture a moment" editor as the Memories tab (via the `openMemories` delegate).
+    private var captureMomentButton: some View {
+        Button {
+            store.send(.captureMomentTapped)
+        } label: {
+            HStack(spacing: 10) {
+                Image(systemName: "camera.fill")
+                    .font(.headline)
+                Text("Capture a moment 📸")
+                    .font(.system(.subheadline, design: .rounded).weight(.semibold))
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(Color.terracotta.opacity(0.6))
+            }
+            .foregroundStyle(Color.terracotta)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 14)
+            .frame(maxWidth: .infinity)
+            .background(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .fill(Color.terracotta.opacity(0.12))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .strokeBorder(Color.terracotta.opacity(0.28), lineWidth: 1)
+            )
+        }
+        .buttonStyle(.pressable)
+        .accessibilityIdentifier("today-capture-moment")
     }
 
     private func quickAction(_ title: String, symbol: String, _ action: @escaping () -> Void) -> some View {

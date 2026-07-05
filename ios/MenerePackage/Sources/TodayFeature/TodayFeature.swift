@@ -256,6 +256,9 @@ public struct TodayReducer {
         case quickAddEventTapped
         case quickAddListTapped
         case planDinnerTapped
+        /// P28-C2 — "Capture a moment" quick-action → the parent switches to the Memories tab and
+        /// opens the scrapbook-page editor.
+        case captureMomentTapped
         /// P28-C1 — "Open full calendar" pushes the full `CalendarFeature` (month grid + agenda +
         /// recurrence + Apple sync). The parent (MainTabReducer) drives the push.
         case openFullCalendarTapped
@@ -301,6 +304,8 @@ public struct TodayReducer {
         case openCalendar
         case openLists
         case openKitchen
+        /// P28-C2 — jump to the Memories tab and open the "capture a moment" scrapbook editor.
+        case openMemories
     }
 
     public init() {}
@@ -689,6 +694,11 @@ public struct TodayReducer {
 
             case .planDinnerTapped:
                 return .send(.delegate(.openKitchen))
+
+            case .captureMomentTapped:
+                @Dependency(\.analytics) var analytics
+                analytics.log("today_capture_moment")
+                return .send(.delegate(.openMemories))
 
             case .radarOpened:
                 @Dependency(\.analytics) var analytics

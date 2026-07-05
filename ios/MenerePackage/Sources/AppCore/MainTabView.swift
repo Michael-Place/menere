@@ -106,6 +106,10 @@ public struct MainTabReducer {
                 state.selectedTab = .recipes
                 // "Plan dinner" lands on Kitchen's Meal Plan segment (current week).
                 return .send(.recipes(.showMealPlan))
+            // P28-C2 — "Capture a moment" from Today jumps to the Memories tab and opens the editor.
+            case .today(.delegate(.openMemories)):
+                state.selectedTab = .memories
+                return .send(.memories(.captureMomentTapped))
 
             case .search(.closeTapped):
                 state.showSearch = false

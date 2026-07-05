@@ -33,6 +33,15 @@ public struct StorageClient: Sendable {
     /// documents). Stored at `households/{hid}/care/{itemId}/photo.jpg` — a single canonical path per
     /// item, so re-uploading replaces the previous photo.
     public var uploadCarePhoto: @Sendable (_ hid: String, _ itemId: String, _ data: Data) async throws -> String
+
+    // MARK: Family journal — memory photos & stickers (P28)
+    /// Upload one JPEG photo of a memory (scrapbook page) and return its **Storage path** (member-gated,
+    /// like documents/care). Stored at `households/{hid}/memories/{memoryId}/photo-{index}.jpg`, so
+    /// re-uploading the same slot replaces it.
+    public var uploadMemoryPhoto: @Sendable (_ hid: String, _ memoryId: String, _ index: Int, _ data: Data) async throws -> String
+    /// Upload one die-cut **sticker** (transparent PNG) for a memory and return its Storage path.
+    /// Stored at `households/{hid}/memories/{memoryId}/sticker-{index}.png`.
+    public var uploadMemorySticker: @Sendable (_ hid: String, _ memoryId: String, _ index: Int, _ data: Data) async throws -> String
 }
 
 extension StorageClient: DependencyKey {
@@ -78,6 +87,22 @@ extension StorageClient: DependencyKey {
                 metadata.contentType = "image/jpeg"
                 _ = try await ref.putDataAsync(data, metadata: metadata)
                 return path
+            },
+            uploadMemoryPhoto: { hid, memoryId, index, data in
+                let path = "households/\(hid)/memories/\(memoryId)/photo-\(index).jpg"
+                let ref = Storage.storage().reference().child(path)
+                let metadata = StorageMetadata()
+                metadata.contentType = "image/jpeg"
+                _ = try await ref.putDataAsync(data, metadata: metadata)
+                return path
+            },
+            uploadMemorySticker: { hid, memoryId, index, data in
+                let path = "households/\(hid)/memories/\(memoryId)/sticker-\(index).png"
+                let ref = Storage.storage().reference().child(path)
+                let metadata = StorageMetadata()
+                metadata.contentType = "image/png"
+                _ = try await ref.putDataAsync(data, metadata: metadata)
+                return path
             }
         )
     }()
@@ -96,6 +121,12 @@ extension StorageClient: DependencyKey {
         downloadData: { _ in Data() },
         uploadCarePhoto: { hid, itemId, _ in
             "households/\(hid)/care/\(itemId)/photo.jpg"
+        },
+        uploadMemoryPhoto: { hid, memoryId, index, _ in
+            "households/\(hid)/memories/\(memoryId)/photo-\(index).jpg"
+        },
+        uploadMemorySticker: { hid, memoryId, index, _ in
+            "households/\(hid)/memories/\(memoryId)/sticker-\(index).png"
         }
     )
 }
