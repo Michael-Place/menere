@@ -35,6 +35,11 @@ public struct AppleTVScreensaverReducer {
         var includePlants = true
         /// Include pet photos (`CareKind.pet`).
         var includePets = true
+        /// Include kids' moments — the family **memory** photos (`households/{hid}/memories`). P27-T1
+        /// flipped this from "coming soon" to working.
+        var includeKids = true
+        /// Presents the full-screen **"Play on TV"** ambient slideshow.
+        var showSlideshow = false
         /// Live authorization for the Photos library (drives the denied/allowed copy).
         var authStatus: PHAuthorizationStatus = .notDetermined
         /// A sync is in flight — disables the button + shows progress.
@@ -51,13 +56,14 @@ public struct AppleTVScreensaverReducer {
         public init() {}
 
         /// `true` when at least one category is selected — the sync button needs something to gather.
-        var canSync: Bool { includePlants || includePets }
+        var canSync: Bool { includePlants || includePets || includeKids }
     }
 
     public enum Action: Equatable, BindableAction {
         case task
         case authResolved(PHAuthorizationStatus, albumCount: Int)
         case syncTapped
+        case playTapped
         case progressed(String)
         case syncFinished(added: Int, albumCount: Int)
         case accessDenied
@@ -100,6 +106,7 @@ public struct AppleTVScreensaverReducer {
                 state.progress = "Preparing…"
                 let includePlants = state.includePlants
                 let includePets = state.includePets
+                let includeKids = state.includeKids
                 return .run { send in
                     @Dependency(\.photoCuration) var photoCuration
                     @Dependency(\.storage) var storage
@@ -119,7 +126,8 @@ public struct AppleTVScreensaverReducer {
                     // 2. Ensure the album exists.
                     _ = await photoCuration.ensureAlbum(Self.albumName)
 
-                    // 3. Gather the family's plant/pet care photos (READ-ONLY on app data).
+                    // 3. Gather the family's plant/pet care photos + (when Kids' moments is on) the
+                    // memory photos (READ-ONLY on app data).
                     await send(.progressed("Gathering photos…"))
                     let items = (try? await persistence.careItems(hid)) ?? []
                     let wantedKinds: Set<CareKind> = {
@@ -128,14 +136,27 @@ public struct AppleTVScreensaverReducer {
                         if includePets { s.insert(.pet) }
                         return s
                     }()
-                    let candidatePaths: [String] = items
+                    let carePaths: [String] = items
                         .filter { wantedKinds.contains($0.kind) }
                         .compactMap(\.photoPath)
                         .filter { !$0.isEmpty }
 
+                    // Kids' moments: every memory's photos (households/{hid}/memories → photoPaths).
+                    let memoryPaths: [String] = includeKids
+                        ? ((try? await persistence.memories(hid)) ?? []).flatMap(\.photoPaths).filter { !$0.isEmpty }
+                        : []
+
+                    // Combined candidates, deduped by path (a memory photo and a care photo never collide,
+                    // but a memory could list the same path twice).
+                    var seenCandidate = Set<String>()
+                    let candidatePaths: [String] = (carePaths + memoryPaths).filter { seenCandidate.insert($0).inserted }
+
                     // 4. Dedup: skip anything already published to the album.
                     let alreadySynced = Self.loadSyncedPaths()
                     let newPaths = candidatePaths.filter { !alreadySynced.contains($0) }
+                    // How many of the newly-syncing photos are kids' moments (for the tv_kids_synced signal).
+                    let memoryPathSet = Set(memoryPaths)
+                    let newKidsCount = newPaths.filter { memoryPathSet.contains($0) }.count
 
                     guard !newPaths.isEmpty else {
                         // Nothing new — just re-report the album's current count.
@@ -174,8 +195,15 @@ public struct AppleTVScreensaverReducer {
                         Self.saveSyncedPaths(alreadySynced.union(downloadedPaths))
                     }
                     analytics.log("tv_screensaver_synced", ["count": String(result.addedCount)])
+                    if includeKids && newKidsCount > 0 {
+                        analytics.log("tv_kids_synced", ["count": String(newKidsCount)])
+                    }
                     await send(.syncFinished(added: result.addedCount, albumCount: result.albumAssetCount))
                 }
+
+            case .playTapped:
+                state.showSlideshow = true
+                return .none
 
             case let .progressed(line):
                 state.progress = line
@@ -226,6 +254,7 @@ public struct AppleTVScreensaverView: View {
         NavigationStack {
             List {
                 heroSection
+                playSection
                 setupStepsSection
                 categoriesSection
                 syncSection
@@ -236,6 +265,9 @@ public struct AppleTVScreensaverView: View {
             .navigationTitle("Apple TV screensaver")
             .navigationBarTitleDisplayMode(.inline)
             .task { store.send(.task) }
+            .fullScreenCover(isPresented: $store.showSlideshow) {
+                AmbientSlideshow()
+            }
         }
     }
 
@@ -258,6 +290,35 @@ public struct AppleTVScreensaverView: View {
             }
             .padding(.vertical, 4)
             .listRowBackground(Color.sky.opacity(0.18))
+        }
+    }
+
+    private var playSection: some View {
+        Section {
+            Button {
+                store.send(.playTapped)
+            } label: {
+                HStack(spacing: 10) {
+                    Image(systemName: "play.circle.fill")
+                        .font(.title3)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Play on TV")
+                            .fontWeight(.semibold)
+                        Text("AirPlay-mirror an ambient family slideshow, right now")
+                            .font(.caption)
+                            .foregroundStyle(.white.opacity(0.9))
+                    }
+                    Spacer()
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.vertical, 6)
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(Color.terracotta)
+            .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
+            .accessibilityIdentifier("tv-play-button")
+        } footer: {
+            Text("No setup needed — plays inside Bacán. Swipe into Control Center and Screen Mirror to your Apple TV to fill the big screen.")
         }
     }
 
@@ -303,18 +364,16 @@ public struct AppleTVScreensaverView: View {
             .tint(Color.bacanGreen)
             .accessibilityIdentifier("tv-toggle-pets")
 
-            HStack {
+            Toggle(isOn: $store.includeKids) {
                 Label("Kids' moments", systemImage: "figure.and.child.holdinghands")
-                    .foregroundStyle(.secondary)
-                Spacer()
-                Text("Coming soon")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Color.ink)
             }
+            .tint(Color.bacanGreen)
+            .accessibilityIdentifier("tv-toggle-kids")
         } header: {
             Text("What to include")
         } footer: {
-            Text("Pick which family photos land on the TV.")
+            Text("Pick which family photos land on the TV — pets, plants, and the boys' memories.")
         }
     }
 
