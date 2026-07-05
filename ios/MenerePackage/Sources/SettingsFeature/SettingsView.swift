@@ -33,6 +33,8 @@ public struct SettingsReducer {
         /// The household id we just joined, held while the joiner decides which persona is them.
         var joinedHid: String?
         @Presents var profileEdit: ProfileEditReducer.State?
+        /// P31 — per-kid "Health schedule" sheet (well-child visits, vaccines, milestones).
+        @Presents var childHealth: ChildHealthReducer.State?
         /// P25 — "Ideas for Bacán" wishlist capture sheet.
         @Presents var wishlist: WishlistReducer.State?
         /// P25-C2 — "How we're using Bacán" AI usage-review sheet (closing the signal loop).
@@ -145,6 +147,9 @@ public struct SettingsReducer {
         case dismissJoinSheet
         case editProfileTapped
         case profileEdit(PresentationAction<ProfileEditReducer.Action>)
+        // P31 — per-kid Health schedule.
+        case memberTapped(HouseholdMember)
+        case childHealth(PresentationAction<ChildHealthReducer.Action>)
         // P25 — Ideas for Bacán wishlist
         case ideasTapped
         case wishlist(PresentationAction<WishlistReducer.Action>)
@@ -279,6 +284,19 @@ public struct SettingsReducer {
                 return .none
 
             case .profileEdit:
+                return .none
+
+            case let .memberTapped(member):
+                state.childHealth = ChildHealthReducer.State(member: member)
+                return .none
+
+            case let .childHealth(.presented(.delegate(.saved(member)))):
+                if let i = state.members.firstIndex(where: { $0.id == member.id }) {
+                    state.members[i] = member
+                }
+                return .none
+
+            case .childHealth:
                 return .none
 
             case .signOutTapped:
@@ -843,6 +861,9 @@ public struct SettingsReducer {
         .ifLet(\.$profileEdit, action: \.profileEdit) {
             ProfileEditReducer()
         }
+        .ifLet(\.$childHealth, action: \.childHealth) {
+            ChildHealthReducer()
+        }
         .ifLet(\.$wishlist, action: \.wishlist) {
             WishlistReducer()
         }
@@ -915,7 +936,12 @@ public struct SettingsView: View {
                     ProgressView()
                 } else {
                     ForEach(store.members) { member in
-                        memberRow(member, isManaged: isManagedPersona(member))
+                        Button {
+                            store.send(.memberTapped(member))
+                        } label: {
+                            memberRow(member, isManaged: isManagedPersona(member))
+                        }
+                        .accessibilityIdentifier("member-row-\(member.id)")
                     }
                 }
             }
@@ -1073,6 +1099,7 @@ public struct SettingsView: View {
         .sheet(item: $store.scope(state: \.profileEdit, action: \.profileEdit)) { editStore in
             ProfileEditView(store: editStore)
         }
+        .modifier(ChildHealthPresentation(store: store))
         .sheet(item: $store.scope(state: \.wishlist, action: \.wishlist)) { wishlistStore in
             WishlistView(store: wishlistStore)
         }
@@ -1838,8 +1865,13 @@ public struct SettingsView: View {
                 .foregroundStyle(Color(red: rgb.red, green: rgb.green, blue: rgb.blue))
                 .opacity(isManaged ? 0.55 : 1)
                 .accessibilityHidden(true)
-            Text(member.name)
-                .foregroundStyle(isManaged ? Color.secondary : Color.ink)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(member.name)
+                    .foregroundStyle(isManaged ? Color.secondary : Color.ink)
+                if let age = member.ageDescription() {
+                    Text(age).font(.caption2).foregroundStyle(Color.inkSoft)
+                }
+            }
             Spacer()
             if isManaged {
                 Text("Not joined yet")
@@ -1859,7 +1891,9 @@ public struct SettingsView: View {
                     .padding(.vertical, 2)
                     .background(Capsule().fill(Color.secondary.opacity(0.15)))
             }
+            Image(systemName: "chevron.right").font(.caption).foregroundStyle(.secondary)
         }
+        .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
     }
 
@@ -2030,6 +2064,19 @@ private struct HueRemoveAllPresentation: ViewModifier {
 
 /// The HomeKit "Clear demo data" confirmation (P15-C8) — deletes the mock config doc. The live local
 /// Home is never stored here, so it's untouched.
+/// P31 — the per-kid Health schedule sheet, factored into a modifier so it doesn't deepen the main
+/// `body` modifier chain (which the type-checker was already solving near its budget).
+private struct ChildHealthPresentation: ViewModifier {
+    @Bindable var store: StoreOf<SettingsReducer>
+
+    func body(content: Content) -> some View {
+        content
+            .sheet(item: $store.scope(state: \.childHealth, action: \.childHealth)) { childStore in
+                ChildHealthView(store: childStore)
+            }
+    }
+}
+
 private struct HomeKitRemovePresentation: ViewModifier {
     @Bindable var store: StoreOf<SettingsReducer>
 

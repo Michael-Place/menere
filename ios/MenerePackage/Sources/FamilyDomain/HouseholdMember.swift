@@ -30,6 +30,11 @@ public struct HouseholdMember: Codable, Equatable, Identifiable, Sendable {
     public var avatarSystemName: String
     public var role: Role
     public var joinedAt: Date
+    /// The member's date of birth (P31 — child care schedules). Optional and **decode-safe**: existing
+    /// member docs that predate this field decode with `nil`. Serializes through the synthesized
+    /// `Codable` (a plain `Date`) so no `PersistenceClient` change is needed. Powers `ageInMonths` /
+    /// `ageInYears` and the per-kid Health schedule (well-child visits, vaccines, milestones).
+    public var birthdate: Date?
 
     public init(
         id: String,
@@ -39,7 +44,8 @@ public struct HouseholdMember: Codable, Equatable, Identifiable, Sendable {
         avatarSystemName: String = "person.circle.fill",
         role: Role = .admin,
         joinedAt: Date = Date(),
-        uid: String? = nil
+        uid: String? = nil,
+        birthdate: Date? = nil
     ) {
         self.id = id
         self.name = name
@@ -49,6 +55,7 @@ public struct HouseholdMember: Codable, Equatable, Identifiable, Sendable {
         self.role = role
         self.joinedAt = joinedAt
         self.uid = uid
+        self.birthdate = birthdate
     }
 
     public init(from decoder: Decoder) throws {
@@ -61,6 +68,7 @@ public struct HouseholdMember: Codable, Equatable, Identifiable, Sendable {
         avatarSystemName = try c.decodeIfPresent(String.self, forKey: .avatarSystemName) ?? "person.circle.fill"
         role = try c.decodeIfPresent(Role.self, forKey: .role) ?? .admin
         joinedAt = try c.decodeIfPresent(Date.self, forKey: .joinedAt) ?? Date()
+        birthdate = try c.decodeIfPresent(Date.self, forKey: .birthdate)
     }
 
     public enum Role: String, Codable, Sendable {
@@ -79,6 +87,43 @@ public struct HouseholdMember: Codable, Equatable, Identifiable, Sendable {
     /// authoritative check (`uid == nil && !household.members.contains(id)`); this convenience is for
     /// contexts without that array.
     public var isManaged: Bool { uid == nil && role == .member }
+
+    // MARK: - Age (P31 — child care schedules)
+
+    /// Whole months elapsed since ``birthdate`` (floored), or `nil` when no birthday is set. The unit the
+    /// child-care KB reasons in — a 15-month-old is `15`, a 3-year-old is `36`.
+    public func ageInMonths(asOf now: Date = Date(), calendar: Calendar = .current) -> Int? {
+        guard let birthdate else { return nil }
+        let months = calendar.dateComponents([.month], from: birthdate, to: now).month ?? 0
+        return max(0, months)
+    }
+
+    /// Whole years elapsed since ``birthdate`` (floored), or `nil` when no birthday is set.
+    public func ageInYears(asOf now: Date = Date(), calendar: Calendar = .current) -> Int? {
+        guard let birthdate else { return nil }
+        let years = calendar.dateComponents([.year], from: birthdate, to: now).year ?? 0
+        return max(0, years)
+    }
+
+    /// A warm, human age label — "3 months", "1 year", "3 yr 4 mo" — or `nil` without a birthday.
+    /// Under two years reads in months (how parents talk); after that, years (with the remainder months
+    /// when non-zero) so a toddler's rapid change still shows.
+    public func ageDescription(asOf now: Date = Date(), calendar: Calendar = .current) -> String? {
+        guard let months = ageInMonths(asOf: now, calendar: calendar) else { return nil }
+        if months < 24 {
+            return months == 1 ? "1 month" : "\(months) months"
+        }
+        let years = months / 12
+        let remainder = months % 12
+        if remainder == 0 { return years == 1 ? "1 year" : "\(years) years" }
+        return "\(years) yr \(remainder) mo"
+    }
+
+    /// `true` when the member has a birthday and is under 18 — i.e. the child Health schedule applies.
+    public func isChild(asOf now: Date = Date(), calendar: Calendar = .current) -> Bool {
+        guard let years = ageInYears(asOf: now, calendar: calendar) else { return false }
+        return years < 18
+    }
 
     /// Curated SF Symbol options for the profile avatar picker.
     public static let avatarOptions: [String] = [
