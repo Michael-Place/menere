@@ -218,6 +218,9 @@ public struct PersistenceClient: Sendable {
     public var activity: @Sendable (_ hid: String) async throws -> [ActivityItem]
     /// Append an activity-feed entry (fire-and-forget at call sites).
     public var logActivity: @Sendable (_ hid: String, _ item: ActivityItem) async throws -> Void
+    /// Delete an activity-feed entry at `households/{hid}/activity/{id}`. Used by the care-undo path
+    /// so undoing a mark-done also removes the optimistic entry from Firestore (best-effort).
+    public var deleteActivity: @Sendable (_ hid: String, _ id: String) async throws -> Void
 
     // MARK: Apple Calendar sync prefs (P2.1)
     /// The user's EventKit sync prefs at `users/{uid}/settings/calendarSync`, or nil when never set up.
@@ -649,6 +652,9 @@ extension PersistenceClient: DependencyKey {
                 try await households().document(hid).collection("activity").document(item.id).setData(
                     Firestore.Encoder().encode(item)
                 )
+            },
+            deleteActivity: { hid, id in
+                try await households().document(hid).collection("activity").document(id).delete()
             },
             calendarSyncPrefs: { uid in
                 let s = try await db().collection("users").document(uid)

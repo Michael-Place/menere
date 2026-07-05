@@ -102,11 +102,14 @@ public struct HomeMaintenanceReducer {
 
             case .saveProfileTapped:
                 guard let hid = hid() else { return .none }
-                var profile = state.draft
-                profile.updatedAt = Date()
-                state.profile = profile
+                var draft = state.draft
+                draft.updatedAt = Date()
+                state.profile = draft
                 state.mode = .browse
                 analytics.log("home_maintenance_setup")
+                // Capture an immutable copy so the concurrent closure doesn't reference a captured
+                // `var` (Swift 6 #SendableClosureCaptures).
+                let profile = draft
                 return .merge(
                     .run { _ in
                         @Dependency(\.persistence) var persistence

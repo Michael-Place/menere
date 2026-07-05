@@ -446,7 +446,8 @@ public struct ChoresReducer {
                 // the restored item back through the same `saveCareItem` path the completion used.
                 state.careItems[i].tasks[ti].lastDoneAt = undo.priorLastDoneAt
                 state.careItems[i].tasks[ti].lastDoneBy = undo.priorLastDoneBy
-                if let aid = undo.activityID { state.activity.removeAll { $0.id == aid } }
+                let undoneActivityID = undo.activityID
+                if let aid = undoneActivityID { state.activity.removeAll { $0.id == aid } }
                 let restored = state.careItems[i]
                 state.careUndo = nil
                 return .merge(
@@ -454,6 +455,11 @@ public struct ChoresReducer {
                     .run { _ in
                         @Dependency(\.persistence) var persistence
                         try await persistence.saveCareItem(hid, restored)
+                        // Also delete the optimistic activity doc the mark-done wrote, so a stale
+                        // "watered …" entry doesn't linger in Firestore. Best-effort — never surface.
+                        if let aid = undoneActivityID {
+                            try? await persistence.deleteActivity(hid, aid)
+                        }
                     }
                 )
 
