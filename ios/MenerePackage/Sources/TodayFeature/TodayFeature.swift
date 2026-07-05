@@ -164,7 +164,7 @@ public struct TodayReducer {
         /// The Family Radar over every document + pet — the pure model behind the card and the detail
         /// list. Recomputed on demand (cheap at family scale) so it always reflects the latest docs.
         func radar(now: Date = Date()) -> FamilyRadar {
-            FamilyRadar.compute(documents: documents, pets: pets, now: now)
+            FamilyRadar.compute(documents: documents, pets: pets, careItems: careItems, now: now)
         }
 
         /// Whether an all-day event with this doc's title already sits on its `dueDate` day — drives
@@ -277,6 +277,9 @@ public struct TodayReducer {
         case radarEventAdded(FamilyEvent)
         /// P20-C2 — snooze a radar item off the loud card (~90 days). Persists `radarDismissedUntil`.
         case radarItemDismissed(docID: String)
+        /// P20 (care extension) — a one-tap "mark done" on an overdue CARE row on the radar. Logs
+        /// `radar_care_item` telemetry, then routes through the shared `markCareTaskDone` completion.
+        case radarCareItemMarkedDone(itemID: String, taskID: String)
         case docDetail(PresentationAction<DocumentDetailReducer.Action>)
         // P17-C1 — actionable Today.
         /// A schedule row was tapped → open that event for edit (logs `today_event_tapped`).
@@ -757,6 +760,14 @@ public struct TodayReducer {
                     try? await persistence.logActivity(hid, .eventAdded(title: event.title, actorID: actorID))
                     await send(.radarEventAdded(event))
                 }
+
+            case let .radarCareItemMarkedDone(itemID, taskID):
+                // Overdue-care row on the radar → reuse the shared care-completion path (same as the
+                // Home tab + the "Care due" card). Just log which kind of care it was first.
+                @Dependency(\.analytics) var analytics
+                let kind = state.careItems.first { $0.id == itemID }?.kind.rawValue ?? "care"
+                analytics.log("radar_care_item", ["kind": kind])
+                return .send(.markCareTaskDone(itemID: itemID, taskID: taskID))
 
             case let .radarEventAdded(event):
                 state.events.append(event)

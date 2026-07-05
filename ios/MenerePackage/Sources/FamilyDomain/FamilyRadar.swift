@@ -78,6 +78,58 @@ public struct FamilyRadar: Equatable, Sendable {
         }
     }
 
+    /// An OVERDUE **care task** surfaced on the radar as an ACTIONABLE alert — distinct from a
+    /// document expiry (which is a paperwork/renewal signal). The care system (`CareItem`/`CareTask`,
+    /// kind house/zone/plant/pet) already knows what's overdue; the radar promotes those onto the
+    /// family's can't-miss surface next to the doc alerts.
+    ///
+    /// High-signal by design: overdue **house/zone** maintenance ("HVAC filter") and overdue **pet**
+    /// care ("Sprinkle: heartworm") each get their own row, but overdue **plant watering** is
+    /// high-volume (the house has 32 plants), so it's SUMMARIZED into a single "N plants need water"
+    /// row rather than N rows — one glance, not a flood. A grouped row is informational (no single
+    /// entity to act on); a single-task row carries a one-tap "mark done".
+    public struct CareRadarItem: Equatable, Identifiable, Sendable {
+        /// The flavor of care — drives the row's glyph, copy, and tap target.
+        public enum Category: String, Equatable, Sendable, CaseIterable {
+            case house      // house + zone maintenance (HVAC filter, gutters, deep-clean rotation)
+            case pet        // Fajita/Sprinkle meds, heartworm, grooming
+            case plant      // watering / prune / re-pot
+        }
+
+        public let id: String
+        /// The humanized headline — "HVAC filter", "Sprinkle: heartworm", "6 plants need water".
+        public let label: String
+        /// The row glyph (the care item's own icon, or a droplet for the grouped water summary).
+        public let iconSymbol: String
+        /// Whole days past due for the most-overdue task this row represents (positive = days over).
+        public let daysOver: Int
+        public let category: Category
+        /// The care item this row acts on — **nil only** for the grouped multi-plant water summary.
+        public let careItemID: String?
+        /// The specific overdue task — **nil only** for the grouped multi-plant water summary.
+        public let taskID: String?
+        /// How many overdue tasks this row stands for (1 for a single task; N for "N plants need water").
+        public let count: Int
+
+        public init(
+            id: String, label: String, iconSymbol: String, daysOver: Int, category: Category,
+            careItemID: String?, taskID: String?, count: Int = 1
+        ) {
+            self.id = id
+            self.label = label
+            self.iconSymbol = iconSymbol
+            self.daysOver = daysOver
+            self.category = category
+            self.careItemID = careItemID
+            self.taskID = taskID
+            self.count = count
+        }
+
+        /// A single, actionable task (house/pet/single plant) → offers a one-tap "mark done". The
+        /// grouped multi-plant water summary is informational only (no single task to complete).
+        public var isActionable: Bool { careItemID != nil && taskID != nil }
+    }
+
     /// Items already past their driving date — most-overdue first. The loudest bucket. Renewable only.
     public let expired: [Item]
     /// Items due/expiring within the horizon (not yet past) — soonest first. Renewable only.
@@ -85,17 +137,24 @@ public struct FamilyRadar: Equatable, Sendable {
     /// P20-C2 — past-dated HISTORICAL records (a COVID card, a vet visit) demoted OUT of the alarm
     /// into a calm, collapsed "Records" list. Most-recent first. Never on the loud card.
     public let records: [Item]
+    /// Overdue CARE tasks (house/pet/plant) promoted onto the radar — most-overdue first. An
+    /// ACTIONABLE category alongside the document alerts.
+    public let care: [CareRadarItem]
 
-    public init(expired: [Item], upcoming: [Item], records: [Item] = []) {
+    public init(
+        expired: [Item], upcoming: [Item], records: [Item] = [], care: [CareRadarItem] = []
+    ) {
         self.expired = expired
         self.upcoming = upcoming
         self.records = records
+        self.care = care
     }
 
     /// Every LOUD radar item, expired-first then soonest-upcoming (records excluded — they're calm).
     public var all: [Item] { expired + upcoming }
-    /// True when nothing needs the family's attention — records don't count (they never shout).
-    public var isEmpty: Bool { expired.isEmpty && upcoming.isEmpty }
+    /// True when nothing needs the family's attention — records don't count (they never shout), but
+    /// an overdue care task does.
+    public var isEmpty: Bool { expired.isEmpty && upcoming.isEmpty && care.isEmpty }
 
     /// The top items for the compact Today card — expired first, capped so the card stays glanceable.
     public func topItems(limit: Int = 4) -> [Item] { Array(all.prefix(limit)) }
@@ -110,8 +169,13 @@ public struct FamilyRadar: Equatable, Sendable {
     ///
     /// Pet association is by `linkedPetIds` (names the pet in the label). Expired sorts most-overdue
     /// first; upcoming sorts soonest first.
+    ///
+    /// `careItems` (the household's whole care roster — a superset of `pets`) additionally feeds the
+    /// ACTIONABLE overdue-care rows via ``computeCare(careItems:now:)``; pass `[]` to keep the
+    /// documents-only radar. `pets` still drives the pet-name labels on vaccine documents.
     public static func compute(
-        documents: [Document], pets: [CareItem], now: Date = Date(), horizonDays: Int = 90
+        documents: [Document], pets: [CareItem], careItems: [CareItem] = [],
+        now: Date = Date(), horizonDays: Int = 90
     ) -> FamilyRadar {
         var expired: [Item] = []
         var upcoming: [Item] = []
@@ -156,8 +220,97 @@ public struct FamilyRadar: Equatable, Sendable {
         return FamilyRadar(
             expired: expired.sorted { $0.days < $1.days },   // most overdue first
             upcoming: upcoming.sorted { $0.days < $1.days }, // soonest first
-            records: records.sorted { $0.date > $1.date }    // most-recent record first
+            records: records.sorted { $0.date > $1.date },   // most-recent record first
+            care: computeCare(careItems: careItems, now: now)
         )
+    }
+
+    // MARK: Overdue care (P20 care extension)
+
+    /// Build the ACTIONABLE overdue-care rows from the household's care roster.
+    ///
+    /// Only truly **overdue** tasks qualify (`CareTask.isOverdue` — a real anchor that's in the past),
+    /// so a never-done, un-anchored task doesn't cry wolf. Then:
+    /// - **house / zone** upkeep → one row each ("HVAC filter", "Deep clean: kitchen").
+    /// - **pet** care → one row each, name-first ("Sprinkle: heartworm").
+    /// - **plant watering** → SUMMARIZED: one "N plants need water" row when 2+ plants are overdue on a
+    ///   watering task (a single overdue plant reads as its own "Japanese maple: water" row). This is
+    ///   the volume valve — 32 plants must never become 32 radar rows.
+    /// - other **plant** tasks (prune, re-pot, fertilize) → one row each — low-volume, so no grouping.
+    ///
+    /// Rows sort most-overdue first.
+    public static func computeCare(careItems: [CareItem], now: Date = Date()) -> [CareRadarItem] {
+        var rows: [CareRadarItem] = []
+        // (item, task, daysOver) for every plant on an overdue WATERING task — grouped below.
+        var overdueWatering: [(item: CareItem, task: CareTask, daysOver: Int)] = []
+
+        for item in careItems {
+            for task in item.tasks where task.isOverdue(now: now) {
+                let daysOver = -(task.daysUntilDue(now: now) ?? 0)   // overdue ⇒ positive
+                switch item.kind {
+                case .plant where isWateringTask(task):
+                    overdueWatering.append((item, task, daysOver))
+                case .plant:
+                    rows.append(CareRadarItem(
+                        id: "care-\(item.id)-\(task.id)",
+                        label: careLabel(item: item, task: task),
+                        iconSymbol: item.iconSymbol, daysOver: daysOver, category: .plant,
+                        careItemID: item.id, taskID: task.id
+                    ))
+                case .pet:
+                    rows.append(CareRadarItem(
+                        id: "care-\(item.id)-\(task.id)",
+                        label: "\(firstName(item.name)): \(task.title.lowercased())",
+                        iconSymbol: item.iconSymbol, daysOver: daysOver, category: .pet,
+                        careItemID: item.id, taskID: task.id
+                    ))
+                case .house, .zone:
+                    rows.append(CareRadarItem(
+                        id: "care-\(item.id)-\(task.id)",
+                        label: careLabel(item: item, task: task),
+                        iconSymbol: item.iconSymbol, daysOver: daysOver, category: .house,
+                        careItemID: item.id, taskID: task.id
+                    ))
+                }
+            }
+        }
+
+        // Summarize overdue plant watering: 1 plant → its own actionable row; 2+ → one grouped row.
+        if overdueWatering.count == 1, let only = overdueWatering.first {
+            rows.append(CareRadarItem(
+                id: "care-\(only.item.id)-\(only.task.id)",
+                label: "\(only.item.name): needs water",
+                iconSymbol: "drop.fill", daysOver: only.daysOver, category: .plant,
+                careItemID: only.item.id, taskID: only.task.id
+            ))
+        } else if overdueWatering.count > 1 {
+            let worst = overdueWatering.map(\.daysOver).max() ?? 0
+            rows.append(CareRadarItem(
+                id: "care-plants-water",
+                label: "\(overdueWatering.count) plants need water",
+                iconSymbol: "drop.fill", daysOver: worst, category: .plant,
+                careItemID: nil, taskID: nil, count: overdueWatering.count
+            ))
+        }
+
+        return rows.sorted { $0.daysOver > $1.daysOver }   // most overdue first
+    }
+
+    /// A watering task — the high-volume plant chore we summarize rather than list per-plant.
+    static func isWateringTask(_ task: CareTask) -> Bool {
+        task.title.lowercased().contains("water")
+    }
+
+    /// A short row headline for a care task, de-duplicating a name that already contains the task (or
+    /// vice-versa): item "HVAC filter" + task "Replace filter" → "HVAC filter — Replace filter" only
+    /// when they don't overlap; when one contains the other, the longer wins.
+    static func careLabel(item: CareItem, task: CareTask) -> String {
+        let name = item.name.trimmingCharacters(in: .whitespaces)
+        let title = task.title.trimmingCharacters(in: .whitespaces)
+        let n = name.lowercased(), t = title.lowercased()
+        if t.contains(n) { return title }
+        if n.contains(t) { return name }
+        return "\(name): \(title.lowercased())"
     }
 
     /// Whether a document is currently snoozed off the loud radar (family tapped Dismiss/Snooze).

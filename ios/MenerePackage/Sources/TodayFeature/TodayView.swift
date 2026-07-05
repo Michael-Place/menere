@@ -846,19 +846,24 @@ public struct TodayView: View {
             }
         } else {
             let top = radar.topItems()
+            // Overdue CARE rows share the card with the doc alerts — capped so the card stays
+            // glanceable (the rest live in "See all"). Plant watering is already summarized upstream.
+            let topCare = Array(radar.care.prefix(3))
             card {
                 cardHeader("Family Radar", symbol: "dot.radiowaves.left.and.right")
                 VStack(spacing: 12) {
                     ForEach(top) { item in RadarRow(store: store, item: item) }
-                    // Surface the detail (which carries the calm "Records" list) when there are more
-                    // loud items than fit, OR any demoted historical records to browse.
-                    if radar.all.count > top.count || !radar.records.isEmpty {
+                    ForEach(topCare) { item in CareRadarRow(store: store, item: item) }
+                    // Surface the detail (which carries the care section + the calm "Records" list)
+                    // when there are more loud items than fit, more care rows, OR records to browse.
+                    if radar.all.count > top.count || radar.care.count > topCare.count
+                        || !radar.records.isEmpty {
                         NavigationLink {
                             RadarDetailView(store: store)
                         } label: {
                             HStack(spacing: 6) {
                                 Image(systemName: "list.bullet")
-                                Text("See all (\(radar.all.count + radar.records.count))")
+                                Text("See all (\(radar.all.count + radar.care.count + radar.records.count))")
                                 Spacer()
                                 Image(systemName: "chevron.right").font(.footnote.weight(.semibold))
                             }
@@ -1170,6 +1175,63 @@ private struct RadarRow: View {
     }
 }
 
+/// A single Family Radar CARE row (P20 care extension) — an OVERDUE care task (house/pet/plant)
+/// promoted onto the radar. Visually distinct from a doc alert: the care item's own glyph (leaf /
+/// pawprint / house) + a terracotta "Nd over" chip, and NO loud warning triangle (overdue care is
+/// attention-worthy, not doc-expired red). Actionable rows (a single task) carry a one-tap "mark
+/// done"; the grouped "N plants need water" summary is informational (no single task to complete).
+private struct CareRadarRow: View {
+    let store: StoreOf<TodayReducer>
+    let item: FamilyRadar.CareRadarItem
+
+    @State private var slapOn = false
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: item.iconSymbol)
+                .font(.subheadline)
+                .foregroundStyle(Color.terracotta)
+                .frame(width: 22)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(item.label)
+                    .foregroundStyle(Color.ink)
+                    .lineLimit(1)
+                overdueChip
+            }
+            Spacer(minLength: 0)
+            if item.isActionable, let careItemID = item.careItemID, let taskID = item.taskID {
+                Button {
+                    store.send(.radarCareItemMarkedDone(itemID: careItemID, taskID: taskID))
+                    slapOn = true
+                    Task { try? await Task.sleep(for: .milliseconds(800)); slapOn = false }
+                } label: {
+                    let isPlant = item.category == .plant
+                    Image(systemName: isPlant ? "drop.fill" : "checkmark.circle.fill")
+                        .font(.title3)
+                        .foregroundStyle(Color.bacanGreen)
+                        .frame(width: 30, height: 30)
+                        .stickerSlap(isOn: isPlant ? false : slapOn, color: .bacanGreen)
+                        .leafUnfurl(isOn: isPlant ? slapOn : false, color: .bacanGreen)
+                }
+                .buttonStyle(.pressable)
+                .accessibilityLabel(item.category == .plant ? "Water" : "Mark done")
+                .accessibilityIdentifier("today-radar-care-done-\(item.id)")
+            }
+        }
+        .accessibilityIdentifier("today-radar-care-\(item.id)")
+    }
+
+    /// Terracotta "Nd over" chip — overdue care is late, but calmer than an expired-doc alarm.
+    private var overdueChip: some View {
+        Text(item.daysOver <= 0 ? "Due" : "\(item.daysOver)d over")
+            .font(.system(.caption2, design: .rounded).weight(.semibold))
+            .foregroundStyle(Color.terracotta)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+            .background(Capsule().fill(Color.terracotta.opacity(0.14)))
+    }
+}
+
 /// A calm, muted Family Radar record row (P20-C2) — a past-dated HISTORICAL doc demoted out of the
 /// alarm. No warning triangle, no red, no action; the doc-type glyph + humanized label + a quiet
 /// "· 2023" year. Tapping still opens the linked document.
@@ -1214,6 +1276,7 @@ private struct RadarDetailView: View {
             let later = radar.upcoming.filter { $0.days > 30 }
             VStack(alignment: .leading, spacing: 20) {
                 group("Expired", symbol: "exclamationmark.triangle.fill", tint: .terracotta, items: radar.expired)
+                careGroup(radar.care)
                 group("This month", symbol: "calendar", tint: .marigold, items: thisMonth)
                 group("Later", symbol: "clock", tint: .inkSoft, items: later)
                 if radar.isEmpty && radar.records.isEmpty {
@@ -1258,6 +1321,31 @@ private struct RadarDetailView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(RoundedRectangle(cornerRadius: 18, style: .continuous).fill(Color.familySurface))
             .accessibilityIdentifier("today-radar-records")
+        }
+    }
+
+    /// The ACTIONABLE "Overdue care" section — house/pet/plant tasks past due, most-overdue first.
+    /// Rendered as its own group between the loud doc "Expired" and the softer upcoming buckets.
+    @ViewBuilder
+    private func careGroup(_ items: [FamilyRadar.CareRadarItem]) -> some View {
+        if !items.isEmpty {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(spacing: 8) {
+                    Image(systemName: "wrench.and.screwdriver.fill").font(.subheadline)
+                        .foregroundStyle(Color.terracotta)
+                    Text("Overdue care").familyTitle(.headline).foregroundStyle(Color.ink)
+                    Text("\(items.count)")
+                        .font(.system(.caption, design: .rounded).weight(.semibold))
+                        .foregroundStyle(Color.inkSoft)
+                }
+                VStack(spacing: 12) {
+                    ForEach(items) { item in CareRadarRow(store: store, item: item) }
+                }
+                .padding(16)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(RoundedRectangle(cornerRadius: 18, style: .continuous).fill(Color.familySurface))
+            }
+            .accessibilityIdentifier("today-radar-care-section")
         }
     }
 
