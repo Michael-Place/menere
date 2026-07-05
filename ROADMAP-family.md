@@ -266,6 +266,37 @@ Michael's playtest feedback, turned around same-day (commits 9ced9db…39b9571):
   SwiftPM EventKit tests; recurring-import E2E is unit-tested only.
 - Also: Hubspace mock cleared via Admin SDK (unblocked login); `idb` works again.
 
+### BACKLOG — Native rich text + Writing Tools + Genmoji (researched 2026-07-05)
+iOS 26 makes this mostly *free* by using standard controls. What's possible:
+- **Rich text in SwiftUI `TextEditor`**: bind to `AttributedString` (iOS 26+) → native
+  bold/italic/underline/strikethrough/color/font/paragraph styles + Markdown, with
+  formatting shortcuts + menu for free. Custom toolbars via `AttributedTextSelection` +
+  `transformAttributes(in:)`. (WWDC25 session 280.)
+- **Writing Tools** (Apple Intelligence — proofread / rewrite friendly·pro·concise /
+  summarize / key points / list / table / compose): AUTOMATIC on `TextField`/`TextEditor`/
+  selectable `Text`. Just add `.writingToolsBehavior(.complete)` (or `.limited`/`.disabled`
+  for sensitive fields). No `UIWritingToolsCoordinator` needed (that's only for custom text
+  engines — we don't have one). Needs an Apple-Intelligence-capable device; degrades
+  gracefully.
+- **Genmoji**: supported inside the rich `AttributedString` TextEditor — playful for a
+  family app.
+**Where to apply (freeform surfaces, highest value first):** the future **Kids' memory
+log** (the star — journaling milestones, polish + summarize with Writing Tools), Family
+Brain document notes, recipe notes/personal tweaks, plant `careContext`/notes, wine
+tasting notes, event/list notes. Keep short fields (names/titles) plain.
+**How best to apply:**
+- Build ONE reusable `RichNoteEditor` (TextEditor+AttributedString + small format toolbar +
+  `.writingToolsBehavior(.complete)` + Genmoji); adopt in 1-2 surfaces first (Brain notes +
+  recipe notes), then extend.
+- **Persistence: store as Markdown string** (portable, Firestore-friendly, future
+  web-client-friendly) rather than archived AttributedString `Data`. Decode-safe migration:
+  existing plain-`String` fields read as unformatted; new writes store Markdown.
+- **Near-free immediate win:** add `.writingToolsBehavior(.complete)` (+ Genmoji where apt)
+  to EXISTING text controls now — proofread/rewrite everywhere for ~zero code.
+- Gate rich features on iOS 26 baseline + Apple-Intelligence availability; plain-text fallback.
+Suggested chunks: C1 RichNoteEditor + Brain/recipe notes + blanket Writing Tools on existing
+fields; C2 extend to plant/event/tasting notes; C3 memory-log built rich-native.
+
 # Act IV — The intelligence era (2026-07-04)
 
 **Reframe (from a step-back review of the real data + integrations):** the app has
