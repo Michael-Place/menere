@@ -76,6 +76,7 @@ public struct AssistantReducer {
         case sendTapped
         case streamEvent(AgentLoopEvent)
         case confirmationResponded(Bool)
+        case newChatTapped
         case dismissTapped
         case binding(BindingAction<State>)
     }
@@ -128,22 +129,30 @@ public struct AssistantReducer {
                 state.input = ""
                 state.isThinking = true
 
-                // Build the live registry + loop in the reducer body (dependency context is active
-                // here) so `confirmationResponded` can resume the SAME actor later.
-                let context = AgentContext(hid: hid, uid: uid, firstName: state.firstName)
-                let registry = AgentToolRegistry.live(context: context)
-                let loop = AgentLoop(registry: registry)
-                state.loopBox = LoopBox(loop)
+                // Reuse the SESSION's loop so its retained transcript carries context across turns
+                // ("water the monstera" → "when's it due again?"). Only build a fresh loop when there
+                // isn't one yet (first turn, or after New chat). Built in the reducer body because the
+                // dependency context is active here, so `confirmationResponded` can resume the actor.
+                let loop: AgentLoop
+                if let existing = state.loopBox.loop {
+                    loop = existing
+                } else {
+                    let context = AgentContext(hid: hid, uid: uid, firstName: state.firstName)
+                    let registry = AgentToolRegistry.live(context: context)
+                    loop = AgentLoop(registry: registry)
+                    state.loopBox = LoopBox(loop)
+                }
 
                 let firstName = state.firstName
                 let members = state.members
                 return .run { send in
-                    // Ground the model with a live snapshot inline (cheap, best-effort).
-                    let snapshot = try? await registry.tool(named: "get_today_snapshot")?.execute([:]).content
+                    // Ground the model with a live snapshot each turn (cheap, best-effort) so "today"
+                    // stays fresh even as the conversation grows.
+                    let snapshot = await loop.todaySnapshot()
                     let prompt = AgentSystemPrompt.build(
                         firstName: firstName,
                         members: members,
-                        todaySnapshot: snapshot ?? nil
+                        todaySnapshot: snapshot
                     )
                     for await event in loop.run(utterance: text, systemPrompt: prompt) {
                         await send(.streamEvent(event))
@@ -163,6 +172,20 @@ public struct AssistantReducer {
                 return .run { _ in
                     await loop?.resume(id: pending.id, approved: approved)
                 }
+
+            case .newChatTapped:
+                // Start a fresh conversation: clear the transcript + the session loop (its retained
+                // history goes with it), cancel anything in flight, and drop any confirmation gate.
+                let loop = state.loopBox.loop
+                state.messages.removeAll()
+                state.input = ""
+                state.isThinking = false
+                state.pendingConfirmation = nil
+                state.loopBox = LoopBox()
+                return .merge(
+                    .cancel(id: CancelID.stream),
+                    .run { _ in await loop?.reset() }
+                )
 
             case .dismissTapped:
                 // Parent owns the presentation flag; just stop any in-flight loop.

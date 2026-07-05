@@ -166,6 +166,50 @@ struct AgentLoopTests {
         if case .failed = events.first { } else { Issue.record("expected a failed event, got \(events)") }
     }
 
+    // MARK: multi-turn memory — turn 2 carries turn 1's user + assistant messages
+    @Test func multiTurnHistoryAccumulates() async {
+        // A proxy that records the messages array it receives each turn, and always ends the turn.
+        actor Recorder {
+            private(set) var perCall: [[AgentMessage]] = []
+            private var calls = 0
+            func record(_ messages: [AgentMessage]) -> AgentTurnResponse {
+                perCall.append(messages)
+                calls += 1
+                return AgentTurnResponse(content: [.text("Reply \(calls).")], stopReason: "end_turn")
+            }
+            nonisolated func client() -> AgentProxyClient {
+                AgentProxyClient(turn: { _, messages, _ in await self.record(messages) })
+            }
+            var snapshots: [[AgentMessage]] { perCall }
+        }
+        let recorder = Recorder()
+        let loop = AgentLoop(registry: AgentToolRegistry(tools: []), proxy: recorder.client())
+
+        // Turn 1.
+        for await _ in loop.run(utterance: "water the monstera", systemPrompt: "sys") {}
+        // Turn 2 — same loop, so history should carry turn 1.
+        for await _ in loop.run(utterance: "when's it due again?", systemPrompt: "sys") {}
+
+        let calls = await recorder.snapshots
+        #expect(calls.count == 2)
+        // Turn 1 was sent alone.
+        #expect(calls[0].count == 1)
+        // Turn 2 must include turn 1's user + assistant turns AND the new follow-up.
+        #expect(calls[1].count == 3)
+        let turn2Texts = calls[1].flatMap { $0.content.compactMap { block -> String? in
+            if case let .text(t) = block { return t } else { return nil }
+        } }
+        #expect(turn2Texts.contains("water the monstera"))
+        #expect(turn2Texts.contains("Reply 1."))
+        #expect(turn2Texts.contains("when's it due again?"))
+
+        // reset() clears the retained transcript → next turn starts fresh.
+        await loop.reset()
+        for await _ in loop.run(utterance: "brand new question", systemPrompt: "sys") {}
+        let after = await recorder.snapshots
+        #expect(after[2].count == 1)
+    }
+
     // A confirmation-gated tool that emits a receipt when it runs.
     private func confirmingTool() -> BasicAgentTool {
         BasicAgentTool(

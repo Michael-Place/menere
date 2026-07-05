@@ -24,6 +24,16 @@ public struct AssistantView: View {
             .navigationTitle("")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    if !store.messages.isEmpty {
+                        Button { store.send(.newChatTapped) } label: {
+                            Image(systemName: "square.and.pencil")
+                        }
+                        .tint(.bacanGreen)
+                        .accessibilityLabel("New chat")
+                        .accessibilityIdentifier("assistant-new-chat")
+                    }
+                }
                 ToolbarItem(placement: .principal) {
                     HStack(spacing: 6) {
                         Image(systemName: "sparkles").foregroundStyle(Color.bacanGreen)
