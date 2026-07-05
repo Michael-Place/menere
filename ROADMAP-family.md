@@ -347,6 +347,19 @@ tasting notes, event/list notes. Keep short fields (names/titles) plain.
 Suggested chunks: C1 RichNoteEditor + Brain/recipe notes + blanket Writing Tools on existing
 fields; C2 extend to plant/event/tasting notes; C3 memory-log built rich-native.
 
+### BUGS — from live build-25 testing (Michael, 2026-07-05)
+- **BUG-pet-photo-camera-only:** Pet detail → Edit → "select photo" ALWAYS opens the
+  camera; no way to pick from the photo library. → Being fixed by **P26-IMG-C2** (adds a
+  PhotosPicker-first capture flow); MUST cover the pet-photo-edit path, not just plants.
+- **BUG-pet-overview-checkmark:** the blue checkmark on the right of each pet row in the
+  Pets OVERVIEW is cryptic — it marks the pet's *soonest care task* done (updates the
+  done-date), but (a) it's unclear what it means on a glance screen, and (b) it's ONE-WAY:
+  tapping again does NOT uncheck / undo. Fix: label what it does (which task) + a confirm or
+  undo, or remove the inline check from the overview glance and manage care in the pet
+  detail instead. Lives in `ChoresView` (pets overview) — do AFTER IMG-C2 merges to avoid a
+  file collision. Note: the same one-tap-care affordance likely reads the same way on the
+  PLANTS overview / hub — audit for consistency while fixing.
+
 # Act IV — The intelligence era (2026-07-04)
 
 **Reframe (from a step-back review of the real data + integrations):** the app has
