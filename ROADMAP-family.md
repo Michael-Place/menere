@@ -383,6 +383,46 @@ layer is rich and complements our P23 meal-planning (which already generates FLA
   type-branched detail). Could add packing / wishlist / shopping with light per-type behavior +
   a small template layer. Build, not a lift (Fambo has neither). Only if Michael wants it.
 
+### P31 — CARE SCHEDULES engine: generalize the maintenance-KB paradigm to pet/plant/child
+Michael's insight (2026-07-05): the Fambo maintenance paradigm generalizes. Bacán's
+`CareItem`/`CareTask` is ALREADY kind-agnostic → build ONE knowledge-base-driven scheduling
+engine that works across home/pet/plant/child: **recommended recurring tasks → filtered by a
+profile → materialized into tracked CareTasks → rolled into a health score + the Family Radar.**
+P29 (home) is the first instance; these are siblings reusing the same engine:
+- **Pets** — species+age care KB. Dogs: heartworm (monthly), flea&tick (monthly), annual vet,
+  rabies (1–3yr), DHPP, dental (yearly), nail trim (monthly), deworming, weight. Cats (Fireball):
+  FVRCP, rabies, flea, annual vet, dental. Pets already carry breed+birthday → filter by
+  species/age; "want me to set up their schedule?" materializes the tasks. Extends the Radar that
+  already caught the expired rabies. Adds a pet up-to-date score.
+- **Plants** — species care KB. We already capture species profiles (P19-C4: light/humidity/
+  fertilizer/water/toxicity). KB auto-schedules the RIGHT tasks per species (calathea → mist +
+  weekly water; succulent → no mist, sparse water) + SEASONAL (fertilize spring/summer, rest
+  winter). Auto-populates correct care across the 32 plants vs manual.
+- **Kids** — age-based development KB. Well-child pediatric visits (2/4/6/9/12/15/18mo → annual),
+  CDC vaccination schedule, dental (first visit ~age 1, then 6-mo), vision/hearing screenings,
+  and developmental MILESTONES-to-watch → loop into the JOURNAL ("Francis due for 15-mo checkup;
+  watch for X"). Needs kid birthdates on members. Ties to Radar + calendar + memory log. Oliver(3)
+  + Francis(1) have concrete schedules. Genuinely differentiated — no consumer app does this well.
+Shared design: a `CareSchedule`/KB per kind (recommended tasks + interval + profile gates +
+season/age conditions) + a `materialize(template) → CareItem/CareTask` + an up-to-date score per
+entity feeding the existing HouseHealth-style banners + Family Radar. Build P29 first (proves the
+engine), then pet/plant/child KBs as siblings.
+
+### P30.5 — More specialized list types (extend P30 beyond grocery)
+Ranked for the Place family (each = `ListItem` + a few type fields + type-branched detail, per
+Fambo's grocery pattern):
+- **Packing** ⭐ — per-person sections + categories + REUSABLE TEMPLATES (beach/weekend/flight-
+  with-baby) + tie to a calendar TRIP event (they travel — DR). Francis diapers/formula, Oliver
+  comfort items.
+- **Gift** ⭐ — per recipient/occasion; idea+price+link+bought-status, HIDDEN from recipient,
+  surfaced by the Radar as a birthday (already in calendar) approaches; ties to Money.
+- **Home projects / honey-do** ⭐ — status(planning→in-progress→done)+budget+steps+LINKED Brain
+  docs & expenses. The DECK PROJECT ($43k quotes + HOA approval, already in the Brain) = the first
+  project card.
+- **Wishlist/shopping** — non-grocery buys: item+price+link+store+priority+for-whom; ties to Money.
+- Later/maybe: errands-by-location, watchlist/vinyl want-list (Michael's collection), restaurants-
+  to-try, baby-supply restock.
+
 ### P28 — Tab restructure + the family JOURNAL (Memories) — decided 2026-07-05
 Michael: collapse Calendar into Today (removes the Today/Calendar "what's happening"
 redundancy) → frees a tab for a **dedicated Journal/Memories tab** (the rich journaling
