@@ -186,15 +186,29 @@ public struct UsageReviewView: View {
         NavigationStack {
             List {
                 if let review = store.review {
-                    loadedContent(review)
+                    if review.isSparse { sparseBanner }
+                    summarySection(review)
+                    if !review.topFeatures.isEmpty {
+                        labelSection("What's getting used", icon: "star.fill", tint: .bacanGreen, items: review.topFeatures)
+                    }
+                    if !review.underusedFeatures.isEmpty {
+                        labelSection("Quiet corners", icon: "moon.zzz.fill", tint: .sky, items: review.underusedFeatures)
+                    }
+                    if !review.frictionSignals.isEmpty {
+                        labelSection("Little snags", icon: "exclamationmark.triangle.fill", tint: .terracotta, items: review.frictionSignals)
+                    }
+                    if !review.suggestions.isEmpty { suggestionsSection(review) }
                 } else if store.isLoading {
                     loadingContent
                 } else if let error = store.errorMessage {
                     Section {
-                        Text(error).foregroundStyle(.secondary)
+                        Text(error)
+                            .foregroundStyle(.secondary)
+                            .listRowBackground(Color.familyCanvas)
                     }
                 }
             }
+            .listStyle(.plain)
             .scrollContentBackground(.hidden)
             .background(Color.familyCanvas)
             .navigationTitle("How we're using Bacán")
@@ -214,56 +228,48 @@ public struct UsageReviewView: View {
         }
     }
 
-    @ViewBuilder
-    private func loadedContent(_ review: UsageReview) -> some View {
-        // The "still early" banner — the telemetry is only days old.
-        if review.isSparse {
-            Section {
-                HStack(spacing: 10) {
-                    Image(systemName: "hourglass")
-                        .foregroundStyle(Color.marigold)
-                    Text("Still early — this fills in as the family uses the app.")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                }
-                .padding(.vertical, 2)
+    // The "still early" banner — the telemetry is only days old.
+    private var sparseBanner: some View {
+        Section {
+            HStack(spacing: 10) {
+                Image(systemName: "hourglass")
+                    .foregroundStyle(Color.marigold)
+                Text("Still early — this fills in as the family uses the app.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
             }
+            .padding(.vertical, 2)
+            .listRowBackground(Color.familyCanvas)
         }
+    }
 
+    private func summarySection(_ review: UsageReview) -> some View {
         Section {
             Text(review.summary)
                 .foregroundStyle(Color.ink)
                 .shimmering(active: store.isLoading)
                 .accessibilityIdentifier("usage-review-summary")
+                .listRowBackground(Color.familyCanvas)
         } header: {
             Text(windowLabel(review))
         }
+    }
 
-        if !review.topFeatures.isEmpty {
-            labelSection("What's getting used", icon: "star.fill", tint: .bacanGreen, items: review.topFeatures)
-        }
-        if !review.underusedFeatures.isEmpty {
-            labelSection("Quiet corners", icon: "moon.zzz.fill", tint: .sky, items: review.underusedFeatures)
-        }
-        if !review.frictionSignals.isEmpty {
-            labelSection("Little snags", icon: "exclamationmark.triangle.fill", tint: .terracotta, items: review.frictionSignals)
-        }
-
-        if !review.suggestions.isEmpty {
-            Section("Three ideas") {
-                ForEach(review.suggestions) { suggestion in
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(suggestion.title)
-                            .fontWeight(.semibold)
-                            .foregroundStyle(Color.ink)
-                        if !suggestion.why.isEmpty {
-                            Text(suggestion.why)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
+    private func suggestionsSection(_ review: UsageReview) -> some View {
+        Section("Three ideas") {
+            ForEach(review.suggestions) { suggestion in
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(suggestion.title)
+                        .fontWeight(.semibold)
+                        .foregroundStyle(Color.ink)
+                    if !suggestion.why.isEmpty {
+                        Text(suggestion.why)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
-                    .padding(.vertical, 2)
                 }
+                .padding(.vertical, 2)
+                .listRowBackground(Color.familyCanvas)
             }
         }
     }
@@ -285,6 +291,7 @@ public struct UsageReviewView: View {
             .redacted(reason: .placeholder)
             .shimmering()
             .accessibilityIdentifier("usage-review-shimmer")
+            .listRowBackground(Color.familyCanvas)
         } header: {
             Text("Reading the tea leaves…")
         }
@@ -300,6 +307,7 @@ public struct UsageReviewView: View {
                     Text(item).foregroundStyle(Color.ink)
                 }
                 .padding(.vertical, 1)
+                .listRowBackground(Color.familyCanvas)
             }
         }
     }

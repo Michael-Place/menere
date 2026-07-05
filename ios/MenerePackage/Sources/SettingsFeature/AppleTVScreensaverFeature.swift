@@ -52,6 +52,9 @@ public struct AppleTVScreensaverReducer {
         var albumCount: Int?
         /// Set when Photos access is denied/restricted — shows the Settings deep-link.
         var accessDenied = false
+        /// Guards the auto-sync-on-open so it fires at most once per time the screen is shown
+        /// (a re-entrant `.task` or a fresh auth resolve won't kick off a second sync).
+        var didAutoSync = false
 
         public init() {}
 
@@ -97,6 +100,17 @@ public struct AppleTVScreensaverReducer {
                 state.authStatus = status
                 state.accessDenied = status == .denied || status == .restricted
                 if status == .authorized || status == .limited { state.albumCount = count }
+                // Auto-sync-on-open: keep the TV album fresh without a tap — but ONLY when setup
+                // already looks done. That means (a) Photos access is already granted (we never
+                // prompt unsolicited on open) and (b) we've built the album before (it has photos,
+                // or a prior sync recorded paths). `didAutoSync` + the `.syncTapped` guards keep it
+                // from double-running.
+                let accessGranted = status == .authorized || status == .limited
+                let setupComplete = count > 0 || !Self.loadSyncedPaths().isEmpty
+                if accessGranted, setupComplete, !state.didAutoSync, !state.isSyncing, state.canSync {
+                    state.didAutoSync = true
+                    return .send(.syncTapped)
+                }
                 return .none
 
             case .syncTapped:
@@ -330,7 +344,7 @@ public struct AppleTVScreensaverView: View {
         } header: {
             Text("One-time setup on the TV")
         } footer: {
-            Text("You only do this once, ever. After that, tap Sync here whenever there are new pet or plant photos and they'll appear on the TV on their own.")
+            Text("You only do this once, ever. After that, Bacán tops up the album on its own each time you open this screen — and there's a Sync button below whenever you want to nudge it.")
         }
     }
 
