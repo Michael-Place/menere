@@ -88,6 +88,8 @@ public struct DocumentDetailReducer {
         case eventAdded(FamilyEvent)
         case editTitleTapped
         case commitTitle
+        /// The rich-text notes editor changed (Rich-Text C1); persisted debounced as Markdown.
+        case notesChanged(String)
         case typeSelected(DocumentType)
         case reprocessTapped
         case reprocessed(FamilyDomain.Document?)
@@ -111,6 +113,11 @@ public struct DocumentDetailReducer {
     @Dependency(\.uuid) var uuid
     @Dependency(\.date) var date
     @Dependency(\.dismiss) var dismiss
+    @Dependency(\.continuousClock) var clock
+
+    /// Debounce the notes save so a burst of keystrokes collapses to one Firestore write.
+    private enum CancelID: Hashable { case saveNotes }
+    static let notesDebounce: Duration = .milliseconds(700)
 
     private func hid() -> String? {
         @Shared(.user) var user
@@ -242,6 +249,19 @@ public struct DocumentDetailReducer {
                     await send(.delegate(.didChange(doc)))
                 }
 
+            case let .notesChanged(markdown):
+                let trimmed = markdown.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    ? nil : markdown
+                guard trimmed != state.doc.notes, let hid = hid() else { return .none }
+                state.doc.notes = trimmed
+                let doc = state.doc
+                return .run { send in
+                    try await clock.sleep(for: Self.notesDebounce)
+                    try await persistence.saveDocument(hid, doc)
+                    await send(.delegate(.didChange(doc)))
+                }
+                .cancellable(id: CancelID.saveNotes, cancelInFlight: true)
+
             case let .typeSelected(type):
                 guard type != state.doc.type, let hid = hid() else { return .none }
                 state.doc.type = type
@@ -312,6 +332,7 @@ public struct DocumentDetailView: View {
                     calendarAction
                 }
                 fieldsSection
+                notesSection
                 relatedSection
                 if doc.processingState != .processed {
                     processingSection
@@ -521,6 +542,29 @@ public struct DocumentDetailView: View {
             Spacer()
             Text(value).foregroundStyle(Color.ink).multilineTextAlignment(.trailing)
         }
+    }
+
+    // MARK: Notes (Rich-Text C1 — the family's own annotations)
+
+    /// A rich-text notes card. Edits persist debounced as a Markdown string via `notesChanged`.
+    /// Writing Tools + Genmoji ride along on the standard control (Apple-Intelligence devices only).
+    private var notesSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Notes")
+                .familyTitle(.subheadline)
+                .foregroundStyle(Color.ink)
+            RichNoteEditor(
+                markdown: Binding(
+                    get: { store.doc.notes ?? "" },
+                    set: { store.send(.notesChanged($0)) }
+                ),
+                placeholder: "Add a note — what this is, where it's filed, follow-ups…"
+            )
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(16)
+        .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Color.familySurface))
+        .accessibilityIdentifier("detail-notes-section")
     }
 
     // MARK: Related (P24 — the navigable graph)

@@ -3,7 +3,7 @@
 
 # Tooling caches
 .xcodebuildmcp/
-ios/.dd-tv/
+ios/.dd-*/
 
 # Secrets (belt-and-suspenders; ios/.gitignore also covers these)
 *-adminsdk-*.json

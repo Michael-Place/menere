@@ -86,6 +86,10 @@ public struct Document: Codable, Equatable, Identifiable, Sendable {
     /// card until this instant (family tapped "Dismiss" / "Snooze"). Decode-safe (nil = never
     /// dismissed); the AI pipeline never writes it, so it survives re-processing.
     public var radarDismissedUntil: Date?
+    /// The family's personal notes on this document, stored as a portable **Markdown string**
+    /// (Rich-Text C1). Optional + decode-safe: the AI pipeline never writes it, so it survives
+    /// re-processing; older docs omit the field and empty/plain strings render as unformatted text.
+    public var notes: String?
     /// The uid of the member who filed it.
     public var uploadedBy: String
     public var createdAt: Date
@@ -107,6 +111,7 @@ public struct Document: Codable, Equatable, Identifiable, Sendable {
         extractedText: String? = nil,
         pagePaths: [String] = [],
         radarDismissedUntil: Date? = nil,
+        notes: String? = nil,
         uploadedBy: String,
         createdAt: Date = Date(),
         processingState: DocumentProcessingState = .pending
@@ -126,6 +131,7 @@ public struct Document: Codable, Equatable, Identifiable, Sendable {
         self.extractedText = extractedText
         self.pagePaths = pagePaths
         self.radarDismissedUntil = radarDismissedUntil
+        self.notes = notes
         self.uploadedBy = uploadedBy
         self.createdAt = createdAt
         self.processingState = processingState
@@ -167,6 +173,7 @@ public struct Document: Codable, Equatable, Identifiable, Sendable {
         extractedText = try c.decodeIfPresent(String.self, forKey: .extractedText)
         pagePaths = try c.decodeIfPresent([String].self, forKey: .pagePaths) ?? []
         radarDismissedUntil = try c.decodeIfPresent(Date.self, forKey: .radarDismissedUntil)
+        notes = try c.decodeIfPresent(String.self, forKey: .notes)
         uploadedBy = try c.decodeIfPresent(String.self, forKey: .uploadedBy) ?? ""
         createdAt = try c.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
         processingState = try c.decodeIfPresent(DocumentProcessingState.self, forKey: .processingState) ?? .pending

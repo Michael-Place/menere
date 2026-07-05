@@ -239,10 +239,26 @@ public struct RecipeFormView: View {
                     .onDelete { store.send(.removeInstructions($0)) }
                     HStack {
                         TextField("Add step", text: $store.newInstruction, axis: .vertical)
+                            .writingToolsBehavior(.complete)
                             .onSubmit { store.send(.addInstruction) }
                         Button { store.send(.addInstruction) } label: { Image(systemName: "plus.circle.fill") }
                             .buttonStyle(.borderless).foregroundStyle(Color.bacanGreen)
                     }
+                }
+
+                // Rich-Text C1 — the family's personal tweaks ("Mom's tweak: less sugar…"),
+                // persisted as Markdown via the recipe's own Save path. Writing Tools + Genmoji ride
+                // along for free (Apple-Intelligence devices only).
+                Section("Notes") {
+                    RichNoteEditor(
+                        markdown: Binding(
+                            get: { store.recipe.notes ?? "" },
+                            set: { store.recipe.notes = $0.isEmpty ? nil : $0 }
+                        ),
+                        placeholder: "Mom's tweak, swaps, what worked…"
+                    )
+                    .listRowInsets(EdgeInsets(top: 8, leading: 12, bottom: 8, trailing: 12))
+                    .listRowBackground(Color.clear)
                 }
 
                 if store.isEditing {

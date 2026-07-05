@@ -42,6 +42,10 @@ public struct Recipe: Codable, Equatable, Identifiable, Sendable {
     public var ingredients: [Ingredient]
     public var instructions: [String]
     public var isFavorite: Bool
+    /// The family's personal notes on this recipe, stored as a portable **Markdown string**
+    /// (Rich-Text C1 — "Mom's tweak: less sugar…"). Optional + decode-safe: older recipes have no
+    /// notes and omit the field; empty/plain strings render as unformatted text.
+    public var notes: String?
     public var createdAt: Date
     public var updatedAt: Date
 
@@ -54,6 +58,7 @@ public struct Recipe: Codable, Equatable, Identifiable, Sendable {
         ingredients: [Ingredient] = [],
         instructions: [String] = [],
         isFavorite: Bool = false,
+        notes: String? = nil,
         createdAt: Date = Date(),
         updatedAt: Date = Date()
     ) {
@@ -65,13 +70,14 @@ public struct Recipe: Codable, Equatable, Identifiable, Sendable {
         self.ingredients = ingredients
         self.instructions = instructions
         self.isFavorite = isFavorite
+        self.notes = notes
         self.createdAt = createdAt
         self.updatedAt = updatedAt
     }
 
     private enum CodingKeys: String, CodingKey {
         case id, title, servings, sourceURL, imageURL
-        case ingredients, instructions, isFavorite, createdAt, updatedAt
+        case ingredients, instructions, isFavorite, notes, createdAt, updatedAt
     }
 
     public init(from decoder: Decoder) throws {
@@ -84,6 +90,7 @@ public struct Recipe: Codable, Equatable, Identifiable, Sendable {
         ingredients = try c.decodeIfPresent([Ingredient].self, forKey: .ingredients) ?? []
         instructions = try c.decodeIfPresent([String].self, forKey: .instructions) ?? []
         isFavorite = try c.decodeIfPresent(Bool.self, forKey: .isFavorite) ?? false
+        notes = try c.decodeIfPresent(String.self, forKey: .notes)
         createdAt = try c.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
         updatedAt = try c.decodeIfPresent(Date.self, forKey: .updatedAt) ?? Date()
     }
@@ -100,6 +107,7 @@ public struct Recipe: Codable, Equatable, Identifiable, Sendable {
         try c.encode(ingredients, forKey: .ingredients)
         try c.encode(instructions, forKey: .instructions)
         try c.encode(isFavorite, forKey: .isFavorite)
+        try c.encodeIfPresent(notes, forKey: .notes)
         try c.encode(createdAt, forKey: .createdAt)
         try c.encode(updatedAt, forKey: .updatedAt)
     }
