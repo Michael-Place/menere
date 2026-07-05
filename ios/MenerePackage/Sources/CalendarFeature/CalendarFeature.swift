@@ -295,6 +295,10 @@ public struct CalendarReducer {
             for event in plan.toUpdate { try await persistence.saveEvent(hid, event) }
             // Phase 3 — reconcile deletions of vanished imports.
             for id in plan.toDeleteImportIDs { try await persistence.deleteEvent(hid, id) }
+            // P2.3 observability: a wrong/empty/different Apple calendar would have deleted these.
+            if plan.suppressedDeleteCount > 0 {
+                print("[CalendarSync] P2.3 safety gate suppressed \(plan.suppressedDeleteCount) reconcile-delete(s) — untrusted/wrong Apple fetch; family events preserved.")
+            }
             // Push — manual/email events into the Bacán calendar (recurring → true EK rule).
             for var event in plan.toPush {
                 let ekID = try await client.saveEvent(event, bacanID)

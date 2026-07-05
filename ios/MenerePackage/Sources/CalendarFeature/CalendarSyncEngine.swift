@@ -33,6 +33,25 @@ import Foundation
 ///     (`source == .calendarImport` AND a non-empty `eventKitIdentifier`) can ever be deleted, and only
 ///     when that specific Apple occurrence is confirmed gone from a *trusted* fetch. App-origin events
 ///     (created in Bacán, no Apple id) are NEVER deleted by sync.
+///
+/// ### P2.3 — mass-deletion circuit breaker (the wrong-calendar fix)
+/// P2.2's "shares ≥1 key" trust guard proved INSUFFICIENT: a wrong Apple Calendar (a simulator's
+/// handful of sample/holiday events) can still, by coincidence or with zero shared keys, drive a
+/// reconcile that deletes most/all of the real family calendar (the observed 35→9 wipe). Because
+/// C1 now fires the sync on app-launch (not just when the calendar screen opens), a catastrophic
+/// wrong-calendar wipe is one bad fetch away. Two additional, deterministic gates on Phase 3:
+///   - **Circuit breaker** (primary): a genuine user deletes an event or two; a wrong / empty /
+///     different calendar "deletes" most or all. So if the number of proposed reconcile-deletes
+///     exceeds `max(2, inWindowImports.count / 2)` — i.e. more than ~half (and more than 2) of the
+///     in-window imports would vanish — treat it as a wrong-calendar signal and SKIP ALL reconcile
+///     deletes (`suppressedDeleteCount` records how many were blocked, for logging).
+///   - **Strengthened trust guard**: upgraded from "shares ≥1 in-window key" to a MEANINGFUL overlap —
+///     the fetch must still contain at least ~half of the in-window dedup keys we hold before ANY
+///     delete is allowed. A fetch sharing none (empty / wrong store / a sim's holidays) or only a
+///     sliver (1 of 30) is untrusted.
+/// The two gates intentionally guard the same "most of the calendar vanished" boundary from two
+/// angles (delete count vs. key overlap) — belt-and-suspenders for an irreversible operation. The
+/// additive Import/Update phases and the Bacán→Apple Push are NEVER gated; only destructive deletes.
 public enum CalendarSyncEngine {
     public struct Plan: Equatable {
         /// Brand-new imports to write to Firestore.
@@ -43,6 +62,10 @@ public enum CalendarSyncEngine {
         public var toDeleteImportIDs: [String] = []
         /// `.manual` / `.email` events to push/update into the Bacán Apple calendar.
         public var toPush: [FamilyEvent] = []
+        /// How many reconcile-deletes were computed but then SUPPRESSED by a P2.3 safety gate
+        /// (circuit breaker or the strengthened trust guard). `0` in the normal case. Purely for
+        /// observability/logging — the caller may surface it; it does not affect the writes above.
+        public var suppressedDeleteCount: Int = 0
 
         public init() {}
 
@@ -120,20 +143,40 @@ public enum CalendarSyncEngine {
         }
         let inWindowImportKeys = Set(inWindowImports.compactMap(\.eventKitIdentifier))
 
-        // Trust guard: the fetch may authorize deletions only if it still contains at least one of the
-        // in-window keys we already hold — evidence it is the SAME Apple store we imported from. A fetch
-        // sharing NONE of them (empty calendar, a different/new device, or a store surfacing only
-        // unrelated events like a sim's holidays) is untrustworthy → skip deletes entirely. An empty
-        // fetch is the degenerate case (shares nothing → untrusted), so this subsumes the empty guard.
-        let fetchIsTrustworthy = !inWindowImportKeys.isDisjoint(with: importedKeys)
-
-        if deletionsAllowed && fetchIsTrustworthy {
+        // Candidate deletes: in-window imports whose Apple occurrence is absent from the fetch. Gated
+        // only by the auth guard here; the P2.3 safety gates below decide whether they actually run.
+        var candidateDeletes: [String] = []
+        if deletionsAllowed {
             for e in inWindowImports {
                 guard let key = e.eventKitIdentifier else { continue }
-                if !importedKeys.contains(key) {
-                    plan.toDeleteImportIDs.append(e.id)
-                }
+                if !importedKeys.contains(key) { candidateDeletes.append(e.id) }
             }
+        }
+
+        // P2.3 SAFETY — two deterministic gates on the destructive reconcile. Either one clears ALL
+        // candidate deletes (never a partial trim); a genuine user deletion of one or two events
+        // trips neither.
+        //
+        // (1) Circuit breaker — the primary wrong-calendar guard. A real user deletes an event or two;
+        // a wrong / empty / different calendar makes MOST or ALL in-window imports look "gone." So if
+        // the delete count exceeds ~half (and more than 2) of the in-window imports, it's a
+        // wrong-calendar signal → suppress every reconcile delete. This alone catches the 35→9 wipe
+        // (all 35 keys absent from a 9-event sim calendar → 35 > max(2, 17) → blocked).
+        let deleteCeiling = max(2, inWindowImports.count / 2)
+        // (2) Strengthened trust guard — the fetch must still contain a MEANINGFUL fraction (≥ ~half)
+        // of the in-window keys we hold, proving it's the same Apple store. Sharing none (empty / wrong
+        // store / a sim's holidays) or a sliver (1 of 30) is untrusted. `!isEmpty` so a no-imports
+        // window can't be "trusted" against an empty intersection.
+        let sharedKeyCount = inWindowImportKeys.intersection(importedKeys).count
+        let fetchIsTrustworthy = !inWindowImportKeys.isEmpty
+            && sharedKeyCount * 2 >= inWindowImportKeys.count
+
+        if candidateDeletes.count > deleteCeiling {
+            plan.suppressedDeleteCount = candidateDeletes.count   // mass-deletion circuit breaker tripped
+        } else if !fetchIsTrustworthy {
+            plan.suppressedDeleteCount = candidateDeletes.count   // untrusted fetch → refuse all deletes
+        } else {
+            plan.toDeleteImportIDs = candidateDeletes
         }
 
         // Push — manual/email events with any occurrence in the window.

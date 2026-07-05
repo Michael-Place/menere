@@ -181,6 +181,94 @@ final class CalendarSyncEngineTests: XCTestCase {
         XCTAssertTrue(plan.toDeleteImportIDs.isEmpty, "imports outside the synced window must survive")
     }
 
+    // MARK: P2.3 — mass-deletion circuit breaker (the wrong-calendar wipe fix)
+
+    /// Helper: `n` in-window imported events with stable, distinct dedup keys.
+    private func realImports(_ n: Int) -> [FamilyEvent] {
+        (0..<n).map { i in
+            FamilyEvent(
+                id: "fe-\(i)", title: "Real \(i)", startDate: inWindow,
+                eventKitIdentifier: "EK-\(i)#1", source: .calendarImport
+            )
+        }
+    }
+
+    /// THE exact observed catastrophe (35→9): we hold 30 in-window imports; Apple hands back 9
+    /// totally-unrelated events (a wrong simulator calendar). Reconcile must delete NOTHING, while the
+    /// additive import of the 9 new events still runs.
+    func testWrongCalendarWith30ImportsAnd9UnrelatedEventsDeletesNothingButStillImports() {
+        let existing = realImports(30)
+        let wrongCalendar = (0..<9).map { i in
+            ImportedEvent(dedupKey: "EK-sim-sample-\(i)#1", title: "Sim Sample \(i)", startDate: inWindow)
+        }
+        var counter = 0
+        let plan = CalendarSyncEngine.plan(
+            existing: existing, imported: wrongCalendar,
+            windowStart: window.start, windowEnd: window.end,
+            makeID: { counter += 1; return "new-\(counter)" }
+        )
+        XCTAssertEqual(plan.toDeleteImportIDs, [], "the 35→9 scenario: a wrong calendar must delete ZERO real imports")
+        XCTAssertEqual(plan.toCreate.count, 9, "additive import still runs — the 9 new events are created")
+        XCTAssertEqual(plan.suppressedDeleteCount, 30, "all 30 would-be deletes are recorded as suppressed")
+    }
+
+    /// Empty Apple fetch against 30 imports → zero deletes (breaker + trust guard both refuse).
+    func testEmptyCalendarWith30ImportsDeletesNothing() {
+        let plan = CalendarSyncEngine.plan(
+            existing: realImports(30), imported: [],
+            windowStart: window.start, windowEnd: window.end
+        )
+        XCTAssertEqual(plan.toDeleteImportIDs, [], "empty Apple fetch must delete nothing")
+        XCTAssertEqual(plan.suppressedDeleteCount, 30)
+    }
+
+    /// A genuine single deletion still reconciles — the circuit breaker must NOT block a normal small
+    /// delete. Apple returns the same 30 minus one (29 shared keys, 1 vanished).
+    func testGenuineSingleDeletionStillDeletesExactlyOne() {
+        let existing = realImports(30)
+        let imported = (1..<30).map { i in
+            ImportedEvent(dedupKey: "EK-\(i)#1", title: "Real \(i)", startDate: inWindow)
+        }
+        let plan = CalendarSyncEngine.plan(
+            existing: existing, imported: imported,
+            windowStart: window.start, windowEnd: window.end
+        )
+        XCTAssertEqual(plan.toDeleteImportIDs, ["fe-0"], "the one genuinely-vanished import is still deleted")
+        XCTAssertEqual(plan.toDeleteImportIDs.count, 1, "exactly one delete — real two-way deletion survives")
+        XCTAssertEqual(plan.suppressedDeleteCount, 0, "nothing suppressed on a legitimate small delete")
+    }
+
+    /// A genuine handful of deletions (30 minus 2) still runs — two real deletions are under the
+    /// breaker's ceiling.
+    func testGenuineFewDeletionsStillAllowed() {
+        let existing = realImports(30)
+        let imported = (2..<30).map { i in
+            ImportedEvent(dedupKey: "EK-\(i)#1", title: "Real \(i)", startDate: inWindow)
+        }
+        let plan = CalendarSyncEngine.plan(
+            existing: existing, imported: imported,
+            windowStart: window.start, windowEnd: window.end
+        )
+        XCTAssertEqual(Set(plan.toDeleteImportIDs), ["fe-0", "fe-1"], "both genuinely-vanished imports are deleted")
+        XCTAssertEqual(plan.toDeleteImportIDs.count, 2)
+        XCTAssertEqual(plan.suppressedDeleteCount, 0)
+    }
+
+    /// A fetch sharing only a sliver of held keys (1 of 30) is untrusted → no deletes, even though it
+    /// isn't strictly the "delete most of them" case.
+    func testSliverOverlapFetchIsUntrustedAndDeletesNothing() {
+        let existing = realImports(30)
+        // Apple shares exactly ONE of our 30 keys (EK-0#1); everything else is unrelated noise.
+        let imported = [ImportedEvent(dedupKey: "EK-0#1", title: "Real 0", startDate: inWindow)]
+            + (0..<3).map { i in ImportedEvent(dedupKey: "EK-noise-\(i)#1", title: "Noise \(i)", startDate: inWindow) }
+        let plan = CalendarSyncEngine.plan(
+            existing: existing, imported: imported,
+            windowStart: window.start, windowEnd: window.end
+        )
+        XCTAssertEqual(plan.toDeleteImportIDs, [], "1-of-30 overlap is untrusted → no deletes")
+        XCTAssertEqual(plan.toCreate.count, 3, "the 3 unrelated events still import additively")
+    }
+
     // MARK: Push — manual/email → Apple
 
     func testManualEventInWindowIsPushed() {
