@@ -102,10 +102,24 @@ public struct ListsReducer {
             case .createList:
                 let title = state.newTitle.trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !title.isEmpty, let hid = hid() else { return .none }
-                // Grocery preset flips the list into the aisle-grouped experience (cart icon).
-                let list = state.newListType == .grocery
-                    ? FamilyList(title: title, icon: "cart", color: .sage, listType: .grocery)
-                    : FamilyList(title: title)
+                // Each preset flips the list into its specialized detail experience + a fitting icon.
+                let list: FamilyList
+                switch state.newListType {
+                case .grocery:
+                    list = FamilyList(title: title, icon: "cart", color: .sage, listType: .grocery)
+                case .packing:
+                    list = FamilyList(title: title, icon: "suitcase", color: .sky, listType: .packing)
+                case .gift:
+                    list = FamilyList(title: title, icon: "gift", color: .terracotta, listType: .gift)
+                case .standard:
+                    list = FamilyList(title: title)
+                }
+                @Dependency(\.analytics) var analytics
+                switch state.newListType {
+                case .packing: analytics.log("packing_list_created")
+                case .gift: analytics.log("gift_list_created")
+                default: break
+                }
                 state.lists.append(list)
                 state.showAddSheet = false
                 state.newTitle = ""
@@ -361,6 +375,26 @@ public struct ListsView: View {
 private struct NewListSheet: View {
     @Bindable var store: StoreOf<ListsReducer>
 
+    /// The sensible default title we'd suggest for a given preset (empty for a plain checklist).
+    private func defaultTitle(for type: ListType) -> String {
+        switch type {
+        case .standard: ""
+        case .grocery: "Groceries"
+        case .packing: "Packing list"
+        case .gift: "Gift ideas"
+        }
+    }
+
+    /// The set of all preset default titles — used to know when a title is still "untouched".
+    private let presetTitles: Set<String> = ["Groceries", "Packing list", "Gift ideas"]
+
+    @ViewBuilder
+    private func presetHint(_ text: String) -> some View {
+        Text(text)
+            .font(.caption)
+            .foregroundStyle(Color.inkSoft)
+    }
+
     var body: some View {
         NavigationStack {
             Form {
@@ -374,19 +408,35 @@ private struct NewListSheet: View {
                     Picker("List type", selection: $store.newListType) {
                         Label("Checklist", systemImage: "checklist").tag(ListType.standard)
                         Label("Grocery List", systemImage: "cart").tag(ListType.grocery)
+                        Label("Packing List", systemImage: "suitcase").tag(ListType.packing)
+                        Label("Gift List", systemImage: "gift").tag(ListType.gift)
                     }
                     .pickerStyle(.inline)
                     .labelsHidden()
-                    if store.newListType == .grocery {
-                        Text("We'll sort items by aisle and auto-tag categories as you type.")
-                            .font(.caption)
-                            .foregroundStyle(Color.inkSoft)
+                    switch store.newListType {
+                    case .grocery:
+                        presetHint("We'll sort items by aisle and auto-tag categories as you type.")
+                    case .packing:
+                        presetHint("Group by person and category — and seed it from a beach / weekend / flight-with-baby template.")
+                    case .gift:
+                        presetHint("Track ideas per recipient with price, link, and a bought toggle — hidden from whoever it's for.")
+                    case .standard:
+                        EmptyView()
                     }
                 }
                 .listRowBackground(Color.familySurface)
             }
             .scrollContentBackground(.hidden)
             .background(Color.familyCanvas)
+            .onChange(of: store.newListType) { _, newType in
+                // Auto-suggest a title when the field is still empty or holding another preset's
+                // default, so picking "Packing List" fills "Packing list" — but never clobber a
+                // title the user actually typed.
+                let current = store.newTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+                if current.isEmpty || presetTitles.contains(current) {
+                    store.newTitle = defaultTitle(for: newType)
+                }
+            }
             .navigationTitle("New list")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

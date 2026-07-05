@@ -1,10 +1,22 @@
 import Foundation
 
-/// The kind of list, driving how its detail screen renders. Ported from Fambo (P30).
-/// Decode-safe: persisted as an optional on `FamilyList`, and `nil` is treated as `.standard`.
+/// The kind of list, driving how its detail screen renders. Ported from Fambo (P30) and
+/// extended in P30.5 with `packing` (per-person + reusable templates) and `gift` (per
+/// recipient/occasion, bought-status). Decode-safe: persisted as an optional on `FamilyList`,
+/// and any unknown/`nil` raw value is treated as `.standard` (see the failable init below), so
+/// older clients never choke on a list type they predate.
 public enum ListType: String, Codable, Sendable, Equatable {
     case standard
     case grocery
+    case packing
+    case gift
+
+    /// Decode-safe: an unknown raw value (a type this build predates) degrades to `.standard`
+    /// instead of failing the whole `FamilyList` decode.
+    public init(from decoder: Decoder) throws {
+        let raw = try decoder.singleValueContainer().decode(String.self)
+        self = ListType(rawValue: raw) ?? .standard
+    }
 }
 
 /// A shared family list (shopping, tasks, etc.). Ported from Fambo's `FamboList`, trimmed to
@@ -48,6 +60,12 @@ public struct FamilyList: Codable, Equatable, Identifiable, Sendable {
     public var isGrocery: Bool {
         listType == .grocery || icon == "cart"
     }
+
+    /// Whether this list should render the per-person, category-grouped packing experience (P30.5).
+    public var isPacking: Bool { listType == .packing }
+
+    /// Whether this list should render the gift experience (recipient/occasion/price/link/bought).
+    public var isGift: Bool { listType == .gift }
 }
 
 /// An item within a `FamilyList`, optionally assigned to a member and/or given a due date.
@@ -78,6 +96,27 @@ public struct ListItem: Codable, Equatable, Identifiable, Sendable {
     /// The `Recipe.id` this item was generated from (P23 meal-plan → grocery), if any.
     public var recipeSourceID: String?
 
+    // MARK: Packing-specific fields (P30.5)
+    // Decode-safe optionals — packing lists group by `packingCategory` and (optionally) filter by
+    // `forMemberID`. "Packed" reuses `isCompleted` (no new flag).
+    /// The packing bucket this item belongs to (clothes / toiletries / documents / …).
+    public var packingCategory: PackingCategory?
+    /// The `HouseholdMember.id` this packing item is *for* (per-person sections). Distinct from
+    /// `assigneeID` (who's responsible) — a packing list is organized by whose bag it goes in.
+    public var forMemberID: String?
+
+    // MARK: Gift-specific fields (P30.5)
+    // Decode-safe optionals — gift lists show recipient/occasion/price/link. "Bought" reuses
+    // `isCompleted` (no new flag).
+    /// Who the gift is for (freeform name, or a `HouseholdMember.id`).
+    public var recipient: String?
+    /// The occasion ("Birthday", "Christmas", "Anniversary").
+    public var occasion: String?
+    /// Estimated / actual price, used for the list's total-spend line.
+    public var price: Double?
+    /// A store / product URL for the idea.
+    public var link: String?
+
     public init(
         id: String = UUID().uuidString,
         title: String,
@@ -91,7 +130,13 @@ public struct ListItem: Codable, Equatable, Identifiable, Sendable {
         unit: String? = nil,
         groceryCategory: GroceryCategory? = nil,
         note: String? = nil,
-        recipeSourceID: String? = nil
+        recipeSourceID: String? = nil,
+        packingCategory: PackingCategory? = nil,
+        forMemberID: String? = nil,
+        recipient: String? = nil,
+        occasion: String? = nil,
+        price: Double? = nil,
+        link: String? = nil
     ) {
         self.id = id
         self.title = title
@@ -106,6 +151,17 @@ public struct ListItem: Codable, Equatable, Identifiable, Sendable {
         self.groceryCategory = groceryCategory
         self.note = note
         self.recipeSourceID = recipeSourceID
+        self.packingCategory = packingCategory
+        self.forMemberID = forMemberID
+        self.recipient = recipient
+        self.occasion = occasion
+        self.price = price
+        self.link = link
+    }
+
+    /// The packing bucket to display this item under (defaults to `.misc` for un-tagged items).
+    public var effectivePackingCategory: PackingCategory {
+        packingCategory ?? .misc
     }
 
     /// The aisle to display this item under: its stored category, else a best-effort lookup
