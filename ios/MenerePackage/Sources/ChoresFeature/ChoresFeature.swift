@@ -130,6 +130,12 @@ public struct ChoresReducer {
         case addPetTapped
         case petSuggestionTapped(PetSuggestion)
         case dismissPetSuggestions
+        // P31 — Pet care schedules (PetCareKB). Setup section on a pet's DETAIL screen.
+        /// Logged once the setup section is expanded on a pet's detail — `pet_schedule_setup`.
+        case petScheduleSetupOpened(petID: String)
+        /// Materialize a ``PetCareKB`` recommendation into the pet's own ``CareTask`` list. `alreadyDone`
+        /// backdates it to caught-up (the "I already do this" path); otherwise it lands due-today.
+        case materializePetCareTask(petID: String, templateID: String, alreadyDone: Bool)
         case carePhotosLoaded([String: Data])
         // P19-C3 — open the AI troubleshoot sheet for a plant (from its DETAIL screen).
         case openTroubleshoot(plantID: String)
@@ -538,6 +544,33 @@ public struct ChoresReducer {
             case .dismissPetSuggestions:
                 state.petSuggestionsDismissed = true
                 return .none
+
+            case .petScheduleSetupOpened:
+                // Fire-and-forget telemetry when the pet's "Set up care schedule" section is opened.
+                analytics.log("pet_schedule_setup")
+                return .none
+
+            case let .materializePetCareTask(petID, templateID, alreadyDone):
+                // Append a PetCareKB recommendation onto the pet's OWN CareItem (pets already exist as
+                // care items — unlike house maintenance, which mints a fresh item). Backdated when the
+                // family already does it, else due today. Persist through the same saveCareItem path.
+                guard let (hid, uid) = ctx(),
+                      let i = state.careItems.firstIndex(where: { $0.id == petID }),
+                      state.careItems[i].kind == .pet,
+                      let template = PetCareKB.template(id: templateID)
+                else { return .none }
+                // Don't duplicate a recommendation the pet already tracks (title-keyword match).
+                guard !state.careItems[i].tasks.contains(where: { template.matches($0) }) else { return .none }
+                let task = template.makeCareTask(alreadyDone: alreadyDone, by: uid)
+                state.careItems[i].tasks.append(task)
+                state.careItems = Self.sortedCare(state.careItems)
+                let toSave = state.careItems.first { $0.id == petID }
+                analytics.log("pet_care_task_added", ["template": templateID])
+                return .run { _ in
+                    guard let toSave else { return }
+                    @Dependency(\.persistence) var persistence
+                    try await persistence.saveCareItem(hid, toSave)
+                }
 
             case let .recallRitual(ritual):
                 // Route the recall to the ritual's OWN bridge (mirrors Today's card); ignore if that

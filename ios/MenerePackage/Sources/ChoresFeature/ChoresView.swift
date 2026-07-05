@@ -2099,6 +2099,8 @@ private struct PetDetailView: View {
     @Environment(\.openURL) private var openURL
     /// P26-IMG-C2 — flips the hero between the framed photo and the die-cut sticker (when one exists).
     @State private var showSticker = false
+    /// P31 — expands the "Set up care schedule" section (collapsed by default so the page stays calm).
+    @State private var scheduleExpanded = false
 
     private var pet: CareItem? { store.careItems.first { $0.id == petID } }
 
@@ -2123,6 +2125,7 @@ private struct PetDetailView: View {
                     hero(pet)
                     overviewCard(pet)
                     careTasksCard(pet)
+                    scheduleSetupCard(pet)
                     vetRecordsCard
                     detailsCard(pet)
                 }
@@ -2360,6 +2363,133 @@ private struct PetDetailView: View {
                         )
                     }
                 }
+            }
+        }
+    }
+
+    // MARK: Recommended care schedule (P31)
+
+    /// The species-appropriate recommended schedule (``PetCareKB``): an "N of M on schedule" signal,
+    /// which recommendations the pet ALREADY has (checked off), and the missing ones — each tappable to
+    /// materialize into the pet's care tasks (add as due, or "I already do this" to backdate). Warm,
+    /// mirrors the plant/home-care setup UX.
+    @ViewBuilder
+    private func scheduleSetupCard(_ pet: CareItem) -> some View {
+        let schedule = PetCareKB.schedule(for: pet)
+        let onScheduleCount = schedule.onScheduleCount()
+        let missing = schedule.missing
+        careDetailCard {
+            Button {
+                withAnimation(.snappy) { scheduleExpanded.toggle() }
+                if scheduleExpanded { store.send(.petScheduleSetupOpened(petID: pet.id)) }
+            } label: {
+                HStack(spacing: 12) {
+                    ZStack {
+                        Circle().fill(Color.sky.opacity(0.15))
+                        Image(systemName: "checklist").font(.subheadline).foregroundStyle(Color.sky)
+                    }
+                    .frame(width: 38, height: 38)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Care schedule").familyTitle(.headline)
+                        Text(scheduleSignal(onScheduleCount, of: schedule.total, species: schedule.species))
+                            .font(.caption).foregroundStyle(missing.isEmpty ? Color.bacanGreen : Color.inkSoft)
+                    }
+                    Spacer(minLength: 4)
+                    Image(systemName: scheduleExpanded ? "chevron.up" : "chevron.down")
+                        .font(.caption).foregroundStyle(Color.inkSoft)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("pet-schedule-toggle")
+
+            if scheduleExpanded {
+                // On-schedule progress bar (N of M).
+                ProgressView(value: Double(onScheduleCount), total: Double(max(schedule.total, 1)))
+                    .tint(missing.isEmpty ? .bacanGreen : .sky)
+
+                if missing.isEmpty {
+                    Text("Every \(schedule.species.displayName.lowercased()) recommendation is set up. \(pet.name)'s dialed in. 🐾")
+                        .font(.caption).foregroundStyle(Color.inkSoft)
+                } else {
+                    Text("Tap ＋ to add one to \(pet.name)'s care tasks, or ✓ if you already do it.")
+                        .font(.caption).foregroundStyle(Color.inkSoft)
+                    VStack(spacing: 10) {
+                        ForEach(missing) { item in
+                            scheduleSuggestionRow(item.template, petID: pet.id)
+                        }
+                    }
+                }
+
+                // Already-tracked recommendations, checked off for reassurance.
+                if !schedule.present.isEmpty {
+                    Divider()
+                    Text("Already tracking")
+                        .font(.caption.weight(.semibold)).foregroundStyle(Color.inkSoft)
+                    VStack(spacing: 8) {
+                        ForEach(schedule.present) { item in
+                            scheduleHaveRow(item)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// "5 of 9 on schedule" / "All 6 on schedule 🎉" — the up-to-date signal.
+    private func scheduleSignal(_ n: Int, of total: Int, species: PetSpecies) -> String {
+        if total > 0, n == total { return "All \(total) on schedule 🎉" }
+        return "\(n) of \(total) on schedule"
+    }
+
+    /// A missing recommendation: glyph, title, cadence + note, and add / "already do this" buttons.
+    private func scheduleSuggestionRow(_ template: PetCareTemplate, petID: String) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            ZStack {
+                Circle().fill(Color.sky.opacity(0.12))
+                Image(systemName: petTaskGlyph(template.title)).font(.subheadline).foregroundStyle(Color.sky)
+            }
+            .frame(width: 34, height: 34)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(template.title).foregroundStyle(Color.ink)
+                Text(template.frequencyLabel).font(.caption2).foregroundStyle(Color.sky)
+                Text(template.note).font(.caption2).foregroundStyle(Color.inkSoft).lineLimit(2)
+            }
+            Spacer(minLength: 4)
+            // "I already do this" — materialize backdated so it lands caught-up.
+            Button {
+                store.send(.materializePetCareTask(petID: petID, templateID: template.id, alreadyDone: true))
+            } label: {
+                Image(systemName: "checkmark.circle").font(.title3).foregroundStyle(Color.bacanGreen)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Mark \(template.title) already done")
+            .accessibilityIdentifier("pet-schedule-done-\(template.id)")
+            // Add to the pet's care tasks as due.
+            Button {
+                store.send(.materializePetCareTask(petID: petID, templateID: template.id, alreadyDone: false))
+            } label: {
+                Image(systemName: "plus.circle.fill").font(.title3).foregroundStyle(Color.sky)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Add \(template.title)")
+            .accessibilityIdentifier("pet-schedule-add-\(template.id)")
+        }
+    }
+
+    /// An already-tracked recommendation row — a green check with the current due/overdue state.
+    private func scheduleHaveRow(_ item: PetScheduleItem) -> some View {
+        let overdue = item.existingTask?.isOverdue() ?? false
+        return HStack(spacing: 10) {
+            Image(systemName: overdue ? "exclamationmark.circle.fill" : "checkmark.circle.fill")
+                .font(.subheadline)
+                .foregroundStyle(overdue ? Color.terracotta : Color.bacanGreen)
+            Text(item.template.title).font(.caption).foregroundStyle(Color.ink)
+            Spacer(minLength: 0)
+            if overdue, let d = item.existingTask?.daysUntilDue() {
+                Text("overdue \(-d)d").font(.caption2.weight(.semibold)).foregroundStyle(Color.terracotta)
+            } else {
+                Text(item.template.frequencyLabel).font(.caption2).foregroundStyle(Color.inkSoft)
             }
         }
     }
@@ -2898,6 +3028,7 @@ private struct PetsDetailView: View {
                     .foregroundStyle(Color.ink)
                 careLine(s)
                 docChip(s)
+                scheduleNudge(s.pet)
             }
             Spacer(minLength: 0)
         }
@@ -2932,6 +3063,18 @@ private struct PetsDetailView: View {
             }
         } else {
             packStatusLabel("All caught up", .inkSoft, "checkmark.circle", bold: false)
+        }
+    }
+
+    /// P31 — a quiet "set up their schedule" nudge on the pack overview: how many recommended
+    /// (``PetCareKB``) care tasks the pet is still missing. Points to the pet's detail to set them up.
+    /// Hidden once the whole recommended schedule is tracked.
+    @ViewBuilder
+    private func scheduleNudge(_ pet: CareItem) -> some View {
+        let missing = PetCareKB.schedule(for: pet).missing.count
+        if missing > 0 {
+            packStatusLabel("\(missing) to set up in care schedule", .sky, "checklist", bold: false)
+                .accessibilityIdentifier("pack-schedule-nudge-\(pet.id)")
         }
     }
 
