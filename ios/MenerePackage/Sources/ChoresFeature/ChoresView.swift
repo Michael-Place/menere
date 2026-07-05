@@ -441,30 +441,26 @@ public struct ChoresView: View {
 
     private func plantThumb(_ plant: CareItem) -> some View {
         let thirsty = (plant.soonestDueTask()?.daysUntilDue() ?? 1) <= 0
-        return ZStack(alignment: .topTrailing) {
-            Group {
-                if let path = plant.photoPath, let data = store.carePhotos[path], let img = UIImage(data: data) {
-                    Image(uiImage: img).resizable().scaledToFill()
-                } else {
-                    ZStack {
-                        Color.bacanGreen.opacity(0.15)
-                        Image(systemName: "leaf.fill").foregroundStyle(Color.bacanGreen)
-                    }
+        return ScrapbookThumb(seed: plant.photoPath ?? plant.id, side: 44) {
+            if let path = plant.photoPath, let data = store.carePhotos[path], let img = UIImage(data: data) {
+                Image(uiImage: img).resizable().scaledToFill()
+            } else {
+                ZStack {
+                    Color.bacanGreen.opacity(0.15)
+                    Image(systemName: "leaf.fill").foregroundStyle(Color.bacanGreen)
                 }
             }
-            .frame(width: 44, height: 44)
-            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-
+        }
+        .overlay(alignment: .topTrailing) {
             if thirsty {
                 Image(systemName: "drop.fill")
                     .font(.system(size: 9, weight: .bold))
                     .foregroundStyle(.white)
                     .padding(3)
                     .background(Circle().fill(Color.sky))
-                    .offset(x: 4, y: -4)
+                    .offset(x: 1, y: -1)
             }
         }
-        .frame(width: 44, height: 44)
     }
 
     // MARK: - Yard preview (next seasonal zone task)
@@ -498,8 +494,8 @@ public struct ChoresView: View {
     }
 
     private func petAvatar(_ pet: CareItem) -> some View {
-        VStack(spacing: 3) {
-            Group {
+        VStack(spacing: 4) {
+            ScrapbookThumb(seed: pet.photoPath ?? pet.id, side: 44, clip: .roundedRect(8)) {
                 if let path = pet.photoPath, let data = store.carePhotos[path], let img = UIImage(data: data) {
                     Image(uiImage: img).resizable().scaledToFill()
                 } else {
@@ -509,8 +505,6 @@ public struct ChoresView: View {
                     }
                 }
             }
-            .frame(width: 44, height: 44)
-            .clipShape(Circle())
             Text(firstName(pet.name))
                 .font(.caption2)
                 .foregroundStyle(Color.inkSoft)
@@ -1405,13 +1399,25 @@ private struct PlantDetailView: View {
     @ViewBuilder
     private func hero(_ plant: CareItem) -> some View {
         VStack(spacing: 12) {
-            heroPhoto(plant)
-                .frame(height: 200)
-                .frame(maxWidth: .infinity)
-                .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+            ScrapbookPhoto(
+                image: plantImage(plant),
+                seed: plant.photoPath ?? plant.id,
+                caption: plant.name,
+                date: plant.createdAt,
+                aspect: 1.3
+            ) {
+                LinearGradient(
+                    colors: [Color.bacanGreen.opacity(0.35), Color.bacanGreen.opacity(0.12)],
+                    startPoint: .topLeading, endPoint: .bottomTrailing
+                )
+                .overlay {
+                    Image(systemName: "leaf.fill")
+                        .font(.system(size: 60))
+                        .foregroundStyle(Color.bacanGreen.opacity(0.6))
+                }
+            }
+            .frame(maxWidth: .infinity)
             VStack(spacing: 6) {
-                Text(plant.name)
-                    .familyTitle(.title2)
                 if let species = heroSpecies(plant) {
                     Text(species).italic()
                         .font(.system(.subheadline, design: .rounded))
@@ -1424,21 +1430,10 @@ private struct PlantDetailView: View {
         }
     }
 
-    @ViewBuilder
-    private func heroPhoto(_ plant: CareItem) -> some View {
-        if let path = plant.photoPath, let data = store.carePhotos[path], let img = UIImage(data: data) {
-            Image(uiImage: img).resizable().scaledToFill()
-        } else {
-            LinearGradient(
-                colors: [Color.bacanGreen.opacity(0.35), Color.bacanGreen.opacity(0.12)],
-                startPoint: .topLeading, endPoint: .bottomTrailing
-            )
-            .overlay {
-                Image(systemName: "leaf.fill")
-                    .font(.system(size: 60))
-                    .foregroundStyle(Color.bacanGreen.opacity(0.6))
-            }
-        }
+    /// Decoded cached photo for the plant, or `nil` (→ the scrapbook leaf fallback).
+    private func plantImage(_ plant: CareItem) -> UIImage? {
+        guard let path = plant.photoPath, let data = store.carePhotos[path] else { return nil }
+        return UIImage(data: data)
     }
 
     /// The botanical name (rendered italic) when set, else the common name.
@@ -2042,12 +2037,25 @@ private struct PetDetailView: View {
     @ViewBuilder
     private func hero(_ pet: CareItem) -> some View {
         VStack(spacing: 12) {
-            heroPhoto(pet)
-                .frame(height: 200)
-                .frame(maxWidth: .infinity)
-                .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+            ScrapbookPhoto(
+                image: petImage(pet),
+                seed: pet.photoPath ?? pet.id,
+                caption: pet.name,
+                date: breedAgeLine(pet) == nil ? pet.createdAt : nil,
+                aspect: 1.2
+            ) {
+                LinearGradient(
+                    colors: [Color.sky.opacity(0.35), Color.sky.opacity(0.12)],
+                    startPoint: .topLeading, endPoint: .bottomTrailing
+                )
+                .overlay {
+                    Image(systemName: pet.iconSymbol.isEmpty ? "pawprint.fill" : pet.iconSymbol)
+                        .font(.system(size: 60))
+                        .foregroundStyle(Color.sky.opacity(0.6))
+                }
+            }
+            .frame(maxWidth: .infinity)
             VStack(spacing: 6) {
-                Text(pet.name).familyTitle(.title2)
                 if let sub = breedAgeLine(pet) {
                     Text(sub)
                         .font(.system(.subheadline, design: .rounded))
@@ -2060,21 +2068,10 @@ private struct PetDetailView: View {
         }
     }
 
-    @ViewBuilder
-    private func heroPhoto(_ pet: CareItem) -> some View {
-        if let path = pet.photoPath, let data = store.carePhotos[path], let img = UIImage(data: data) {
-            Image(uiImage: img).resizable().scaledToFill()
-        } else {
-            LinearGradient(
-                colors: [Color.sky.opacity(0.35), Color.sky.opacity(0.12)],
-                startPoint: .topLeading, endPoint: .bottomTrailing
-            )
-            .overlay {
-                Image(systemName: pet.iconSymbol.isEmpty ? "pawprint.fill" : pet.iconSymbol)
-                    .font(.system(size: 60))
-                    .foregroundStyle(Color.sky.opacity(0.6))
-            }
-        }
+    /// Decoded cached photo for the pet, or `nil` (→ the scrapbook pawprint/cat fallback).
+    private func petImage(_ pet: CareItem) -> UIImage? {
+        guard let path = pet.photoPath, let data = store.carePhotos[path] else { return nil }
+        return UIImage(data: data)
     }
 
     /// "Dalmatian · 6 years" — breed and age, whichever are set (age computed from `birthday`).
