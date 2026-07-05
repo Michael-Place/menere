@@ -42,12 +42,12 @@ public struct DocsLibraryView: View {
                 // P24 — lens picker: the flat list vs the clustered "Collections" view.
                 if !store.collections.isEmpty {
                     Section {
-                        Picker("View", selection: $store.showCollections) {
-                            Text("All").tag(false)
-                            Text("Collections").tag(true)
-                        }
-                        .pickerStyle(.segmented)
+                        FamilySegmentedControl(
+                            selection: $store.showCollections,
+                            options: [(false, "All"), (true, "Collections")]
+                        )
                         .accessibilityIdentifier("docs-lens-picker")
+                        .listRowInsets(EdgeInsets(top: 4, leading: 0, bottom: 4, trailing: 0))
                     }
                     .listRowBackground(Color.clear)
                 }

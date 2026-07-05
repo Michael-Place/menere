@@ -133,10 +133,13 @@ public struct CalendarView: View {
                         Button { store.send(.editTapped(item.event)) } label: {
                             agendaRow(item)
                         }
+                        .buttonStyle(.plain)
+                        .listRowBackground(Color.familyCanvas)
                     }
                 }
                 .listStyle(.plain)
                 .scrollContentBackground(.hidden)
+                .background(Color.familyCanvas)
             }
         }
     }
