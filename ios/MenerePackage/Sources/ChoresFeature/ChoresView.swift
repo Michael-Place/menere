@@ -1604,6 +1604,7 @@ private struct PlantDetailView: View {
         let hasAny = (plant.location?.isEmpty == false)
             || (plant.careContext?.isEmpty == false)
             || (plant.careNotes?.isEmpty == false)
+            || (plant.familyNotes?.isEmpty == false)
             || (waterTask?.lastDoneAt != nil)
         card {
             Text("Details").familyTitle(.headline)
@@ -1619,6 +1620,19 @@ private struct PlantDetailView: View {
                 }
                 if let notes = plant.careNotes, !notes.isEmpty {
                     detailRow("Care notes", notes, symbol: "note.text")
+                }
+                if let familyNotes = plant.familyNotes, !familyNotes.isEmpty {
+                    // Rich-Text C2 — render the family's own markdown note formatted.
+                    HStack(alignment: .top, spacing: 12) {
+                        Image(systemName: "heart.text.square")
+                            .font(.subheadline).foregroundStyle(Color.bacanGreen)
+                            .frame(width: 22)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Your notes")
+                                .font(.caption).foregroundStyle(Color.inkSoft)
+                            RichNoteText(markdown: familyNotes)
+                        }
+                    }
                 }
                 if let water = waterTask, let last = water.lastDoneAt {
                     detailRow("Last watered", lastDonePhrase(water, last: last), symbol: "drop.fill")

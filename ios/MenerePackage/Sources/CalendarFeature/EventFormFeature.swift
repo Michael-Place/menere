@@ -179,10 +179,21 @@ public struct EventFormView: View {
                         get: { store.event.location ?? "" },
                         set: { store.event.location = $0.isEmpty ? nil : $0 }
                     ))
-                    TextField("Notes", text: Binding(
-                        get: { store.event.notes ?? "" },
-                        set: { store.event.notes = $0.isEmpty ? nil : $0 }
-                    ), axis: .vertical)
+                }
+
+                // Rich-Text C2 — the family's own event notes, bound to `familyNotes` (NOT `notes`,
+                // which CalendarSyncEngine mirrors to/from Apple Calendar). Persists via the existing
+                // event save.
+                Section("Notes") {
+                    RichNoteEditor(
+                        markdown: Binding(
+                            get: { store.event.familyNotes ?? "" },
+                            set: { store.event.familyNotes = $0.isEmpty ? nil : $0 }
+                        ),
+                        placeholder: "Add a note about this event…"
+                    )
+                    .listRowInsets(EdgeInsets())
+                    .listRowBackground(Color.clear)
                 }
 
                 if store.isEditing {

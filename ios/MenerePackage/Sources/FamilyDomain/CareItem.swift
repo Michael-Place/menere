@@ -248,6 +248,12 @@ public struct CareItem: Codable, Equatable, Identifiable, Sendable {
     /// `careNotes` (generic care advice): this is the context the AI troubleshooter uses to adapt its
     /// diagnosis + watering cadence. Decode-safe additive field (older plants nil).
     public var careContext: String?
+    /// The family's OWN freeform notes about this item (Rich-Text C2), stored as a portable
+    /// **Markdown `String`** (see `RichNoteEditor`/`RichNoteMarkdown`). Distinct from `careNotes`
+    /// (AI-authored care advice) and `careContext` (the plain-text situation fed to the troubleshoot
+    /// AI): `familyNotes` is people-to-people and is NEVER sent to any AI. Decode-safe additive field
+    /// (older items nil ⇒ no family note); plain-string legacy values render as unformatted.
+    public var familyNotes: String?
     /// Plant-only (P9.1): the light level the plant lives in — one of the capture wizard's choices
     /// ("Low" / "Medium" / "Bright indirect" / "Direct sun"). Free-form `String?` so future choices
     /// stay additive. Decode-safe additive field; rendered ink-soft on the plant row/detail.
@@ -279,6 +285,7 @@ public struct CareItem: Codable, Equatable, Identifiable, Sendable {
         speciesLatin: String? = nil,
         careNotes: String? = nil,
         careContext: String? = nil,
+        familyNotes: String? = nil,
         lightLevel: String? = nil,
         breed: String? = nil,
         birthday: Date? = nil,
@@ -299,6 +306,7 @@ public struct CareItem: Codable, Equatable, Identifiable, Sendable {
         self.speciesLatin = speciesLatin
         self.careNotes = careNotes
         self.careContext = careContext
+        self.familyNotes = familyNotes
         self.lightLevel = lightLevel
         self.breed = breed
         self.birthday = birthday
@@ -322,6 +330,7 @@ public struct CareItem: Codable, Equatable, Identifiable, Sendable {
         speciesLatin = try c.decodeIfPresent(String.self, forKey: .speciesLatin)
         careNotes = try c.decodeIfPresent(String.self, forKey: .careNotes)
         careContext = try c.decodeIfPresent(String.self, forKey: .careContext)
+        familyNotes = try c.decodeIfPresent(String.self, forKey: .familyNotes)
         lightLevel = try c.decodeIfPresent(String.self, forKey: .lightLevel)
         breed = try c.decodeIfPresent(String.self, forKey: .breed)
         birthday = try c.decodeIfPresent(Date.self, forKey: .birthday)

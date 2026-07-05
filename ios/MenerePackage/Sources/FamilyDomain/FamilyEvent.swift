@@ -51,7 +51,16 @@ public struct FamilyEvent: Codable, Equatable, Identifiable, Sendable {
     public var endDate: Date?
     public var isAllDay: Bool
     public var location: String?
+    /// The Apple-Calendar-mirrored notes for imported events. **Managed exclusively by
+    /// `CalendarSyncEngine`** (pulled from / diffed against EventKit) — do NOT surface this as a
+    /// user-editable field or the two-way sync will churn. The family's own event notes live in
+    /// ``familyNotes`` instead.
     public var notes: String?
+    /// The family's OWN freeform notes on this event (Rich-Text C2), stored as a portable
+    /// **Markdown `String`** (see `RichNoteEditor`). Kept separate from ``notes`` on purpose so rich
+    /// markdown never leaks into the EventKit sync mirror. Decode-safe additive field (older events
+    /// nil ⇒ no family note); plain-string legacy values render as unformatted.
+    public var familyNotes: String?
     public var recurrence: RecurrenceOption
     /// `HouseholdMember.id`s (uids) this event involves.
     public var assigneeIDs: [String]
@@ -82,6 +91,7 @@ public struct FamilyEvent: Codable, Equatable, Identifiable, Sendable {
         isAllDay: Bool = false,
         location: String? = nil,
         notes: String? = nil,
+        familyNotes: String? = nil,
         recurrence: RecurrenceOption = .none,
         assigneeIDs: [String] = [],
         createdAt: Date = Date(),
@@ -96,6 +106,7 @@ public struct FamilyEvent: Codable, Equatable, Identifiable, Sendable {
         self.isAllDay = isAllDay
         self.location = location
         self.notes = notes
+        self.familyNotes = familyNotes
         self.recurrence = recurrence
         self.assigneeIDs = assigneeIDs
         self.createdAt = createdAt
@@ -113,6 +124,7 @@ public struct FamilyEvent: Codable, Equatable, Identifiable, Sendable {
         isAllDay = try c.decodeIfPresent(Bool.self, forKey: .isAllDay) ?? false
         location = try c.decodeIfPresent(String.self, forKey: .location)
         notes = try c.decodeIfPresent(String.self, forKey: .notes)
+        familyNotes = try c.decodeIfPresent(String.self, forKey: .familyNotes)
         recurrence = try c.decodeIfPresent(RecurrenceOption.self, forKey: .recurrence) ?? .none
         assigneeIDs = try c.decodeIfPresent([String].self, forKey: .assigneeIDs) ?? []
         createdAt = try c.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()

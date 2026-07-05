@@ -222,7 +222,8 @@ public struct TastingDetailView: View {
     private var noteSection: some View {
         if let note = store.tasting.note, !note.isEmpty {
             Section("Note") {
-                Text(note)
+                // Rich-Text C2 — the note persists as Markdown; render it formatted.
+                RichNoteText(markdown: note)
             }
         }
     }

@@ -430,6 +430,7 @@ public struct CareItemFormReducer {
                 item.species = item.species?.blankToNil
                 item.careNotes = item.careNotes?.blankToNil
                 item.careContext = item.careContext?.blankToNil
+                item.familyNotes = item.familyNotes?.blankToNil
                 item.breed = item.breed?.blankToNil
                 item.vetName = item.vetName?.blankToNil
                 item.vetPhone = item.vetPhone?.blankToNil
@@ -780,12 +781,13 @@ public struct CareItemFormView: View {
             }
             .accessibilityIdentifier("plant-light-picker")
         }
-        Section("Notes") {
+        Section("Care notes") {
             TextField("Care notes (light, watering quirks…)", text: Binding(
                 get: { store.item.careNotes ?? "" },
                 set: { store.item.careNotes = $0 }
             ), axis: .vertical)
             .lineLimit(1...4)
+            .writingToolsBehavior(.complete)
             .accessibilityIdentifier("plant-notes-field")
 
             if store.showAISuggestion {
@@ -796,18 +798,34 @@ public struct CareItemFormView: View {
             }
         }
         // P19-C3 — the plant's SITUATION: context the AI troubleshooter uses to adapt its diagnosis
-        // and watering cadence. Distinct from care notes (generic advice).
+        // and watering cadence. Distinct from care notes (generic advice). Kept PLAIN on purpose —
+        // it's fed verbatim to the `troubleshootPlant` AI, so no markdown belongs here (Rich-Text C2).
         Section {
             TextField("Pot type, indoor/outdoor, light, drafts…", text: Binding(
                 get: { store.item.careContext ?? "" },
                 set: { store.item.careContext = $0 }
             ), axis: .vertical)
             .lineLimit(1...4)
+            .writingToolsBehavior(.complete)
             .accessibilityIdentifier("plant-context-field")
         } header: {
             Text("Its situation")
         } footer: {
             Text("Pot & soil, indoor/outdoor, light — helps Bacán tune its care")
+        }
+        // Rich-Text C2 — the family's OWN freeform notes (people-to-people, never sent to AI).
+        Section {
+            RichNoteEditor(
+                markdown: Binding(
+                    get: { store.item.familyNotes ?? "" },
+                    set: { store.item.familyNotes = $0.isEmpty ? nil : $0 }
+                ),
+                placeholder: "Anything you want to remember about this plant…"
+            )
+            .listRowInsets(EdgeInsets())
+            .listRowBackground(Color.clear)
+        } header: {
+            Text("Your notes")
         }
     }
 

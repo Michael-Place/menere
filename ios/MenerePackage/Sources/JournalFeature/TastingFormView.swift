@@ -263,23 +263,34 @@ public struct TastingFormView: View {
             }
 
             Section("Note") {
-                TextField("Tasting note", text: $store.note, axis: .vertical)
-                    .lineLimit(2...6)
-                    .accessibilityIdentifier("note-field")
+                // Rich-Text C2 — the free-form tasting note is now rich (bold/italic + Writing Tools).
+                // Persists as a portable Markdown string in `Tasting.note`. Wine keeps its parchment
+                // identity via `.wineChrome()`; the editor accepts the default family styling.
+                RichNoteEditor(
+                    markdown: $store.note,
+                    placeholder: "Tasting note — what did you smell, taste, love?"
+                )
+                .listRowInsets(EdgeInsets())
+                .listRowBackground(Color.clear)
+                .accessibilityIdentifier("note-field")
             }
 
             Section {
                 TextField("Appearance", text: $store.appearance, axis: .vertical)
                     .lineLimit(1...4)
+                    .writingToolsBehavior(.complete)
                     .accessibilityIdentifier("appearance-field")
                 TextField("Nose", text: $store.nose, axis: .vertical)
                     .lineLimit(1...4)
+                    .writingToolsBehavior(.complete)
                     .accessibilityIdentifier("nose-field")
                 TextField("Palate", text: $store.palate, axis: .vertical)
                     .lineLimit(1...4)
+                    .writingToolsBehavior(.complete)
                     .accessibilityIdentifier("palate-field")
                 TextField("Conclusions", text: $store.conclusions, axis: .vertical)
                     .lineLimit(1...4)
+                    .writingToolsBehavior(.complete)
                     .accessibilityIdentifier("conclusions-field")
             } header: {
                 Text("Structured note")
