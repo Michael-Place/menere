@@ -10,3 +10,6 @@ ios/.dd-*/
 *.p8
 ServiceAccountKey*.json
 .claude/
+
+# build artifacts anywhere
+.dd-*/
