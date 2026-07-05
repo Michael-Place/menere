@@ -275,8 +275,15 @@ doesn't work on tvOS (no reCAPTCHA/push) → use **Sign in with Apple** (already
 Cloud Function). Device-pairing = nicer family UX (link the TV once). Apple TV screensaver
 already reads shared Photos albums (a zero-code fallback path exists).
 **Tiers (cheap→grand):**
-- **T0** app auto-curates a shared "Bacán" Photos album → Apple TV screensaver (≈no code,
-  unbranded).
+- **T0 — the ONLY way to be the true system screensaver.** tvOS has NO custom-screensaver
+  API for 3rd-party apps (unlike macOS); the sole path to "our content as the idle
+  screensaver" is **Photos**: Apple TV screensaver → a Photos album/shared album/Memories.
+  So the app's job = **curate** the best shots (subject-lifted pets, plant milestones, kid
+  moments) into an album, then a **one-time** user step points the TV's screensaver at it.
+  CONSTRAINT (confirmed): PhotoKit freely creates regular albums + adds assets, but iCloud
+  **Shared Albums have limited programmatic write** — full hands-off publishing isn't
+  guaranteed. → **Prototype needed** to confirm exactly how automatic new-photo flow can be
+  (regular-album-curated + user-shares-once vs. ongoing auto-sync). Low code either way.
 - **T1 (recommended first)** in-app **"Play on TV"** ambient slideshow of the P26 scrapbook
   photos (auto-advancing, Ken-Burns-y) → AirPlay. Contained; rides on the scrapbook work;
   proves the magic. Reuses `ScrapbookPhoto`/`ScrapbookCollage`.
