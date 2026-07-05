@@ -132,6 +132,8 @@ let package = Package(
                 "PersistenceClient",
                 "AnalyticsClient",
                 "HouseholdClient",
+                "StorageClient",
+                "PhotoCurationClient",
                 "HueClient",
                 "LutronClient",
                 "NestClient",

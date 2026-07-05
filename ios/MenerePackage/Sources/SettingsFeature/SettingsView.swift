@@ -37,6 +37,8 @@ public struct SettingsReducer {
         @Presents var wishlist: WishlistReducer.State?
         /// P25-C2 — "How we're using Bacán" AI usage-review sheet (closing the signal loop).
         @Presents var usageReview: UsageReviewReducer.State?
+        /// P27-T0 — "Apple TV screensaver" setup + photo-sync sheet.
+        @Presents var appleTVScreensaver: AppleTVScreensaverReducer.State?
 
         // MARK: Smart home (Hue, P12-C3 — multi-bridge)
         /// The household's Hue config, or nil when never paired (→ the "Set up" row).
@@ -149,6 +151,9 @@ public struct SettingsReducer {
         // P25-C2 — How we're using Bacán (usage review)
         case usageReviewTapped
         case usageReview(PresentationAction<UsageReviewReducer.Action>)
+        // P27-T0 — Apple TV screensaver
+        case appleTVScreensaverTapped
+        case appleTVScreensaver(PresentationAction<AppleTVScreensaverReducer.Action>)
         case binding(BindingAction<State>)
 
         // Smart home (Hue, multi-bridge)
@@ -243,6 +248,13 @@ public struct SettingsReducer {
                 analytics.log("usage_review_opened")
                 return .none
             case .usageReview:
+                return .none
+            case .appleTVScreensaverTapped:
+                state.appleTVScreensaver = AppleTVScreensaverReducer.State()
+                @Dependency(\.analytics) var analytics
+                analytics.log("tv_screensaver_opened")
+                return .none
+            case .appleTVScreensaver:
                 return .none
             default:
                 return .none
@@ -837,6 +849,9 @@ public struct SettingsReducer {
         .ifLet(\.$usageReview, action: \.usageReview) {
             UsageReviewReducer()
         }
+        .ifLet(\.$appleTVScreensaver, action: \.appleTVScreensaver) {
+            AppleTVScreensaverReducer()
+        }
         .ifLet(\.$huePairing, action: \.huePairing) {
             HuePairingReducer()
         }
@@ -1011,6 +1026,26 @@ public struct SettingsView: View {
                 .accessibilityIdentifier("usage-review-row")
             }
 
+            // P27-T0 — Apple TV screensaver: curate pet/plant photos into the TV album.
+            Section {
+                Button {
+                    store.send(.appleTVScreensaverTapped)
+                } label: {
+                    HStack(spacing: 12) {
+                        Image(systemName: "tv.fill")
+                            .foregroundStyle(Color.sky)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Apple TV screensaver").foregroundStyle(Color.ink)
+                            Text("Put the family on the big screen.")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Image(systemName: "chevron.right").font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+                .accessibilityIdentifier("apple-tv-screensaver-row")
+            }
+
             Section {
                 Button(role: .destructive) {
                     store.send(.signOutTapped)
@@ -1043,6 +1078,9 @@ public struct SettingsView: View {
         }
         .sheet(item: $store.scope(state: \.usageReview, action: \.usageReview)) { usageStore in
             UsageReviewView(store: usageStore)
+        }
+        .sheet(item: $store.scope(state: \.appleTVScreensaver, action: \.appleTVScreensaver)) { tvStore in
+            AppleTVScreensaverView(store: tvStore)
         }
         .sheet(item: $store.scope(state: \.huePairing, action: \.huePairing)) { pairingStore in
             HuePairingView(store: pairingStore)
