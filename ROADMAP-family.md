@@ -347,6 +347,32 @@ tasting notes, event/list notes. Keep short fields (names/titles) plain.
 Suggested chunks: C1 RichNoteEditor + Brain/recipe notes + blanket Writing Tools on existing
 fields; C2 extend to plant/event/tasting notes; C3 memory-log built rich-native.
 
+### P28 — Tab restructure + the family JOURNAL (Memories) — decided 2026-07-05
+Michael: collapse Calendar into Today (removes the Today/Calendar "what's happening"
+redundancy) → frees a tab for a **dedicated Journal/Memories tab** (the rich journaling
+experience where scrapbook + rich text finally converge). New tab bar:
+**`Today · Memories · Lists · Home · Kitchen`** (Memories in the old Calendar slot, next to Today).
+- **C1 (nav foundation):** MainTabView/tab enum — remove Calendar tab, add **Memories** tab
+  (new `MemoriesFeature` module — NOTE the existing `JournalFeature` is the WINE tasting
+  journal, so the new module must be named differently, e.g. MemoriesFeature). Today absorbs
+  the calendar: a **week strip** (7-day glance, event dots, tap day → agenda), a prominent
+  **"+ Add event"** (reuse EventFormFeature), and **"Open full calendar"** → push the existing
+  `CalendarFeature` (month grid + agenda + recurrence + two-way Apple sync, unchanged, now a
+  drill-in). ⚠️ KEEP Apple Calendar two-way sync running (on app-foreground/Today appear,
+  guarded by the P2.2 trust logic) so burying the calendar screen doesn't stale the sync.
+  C1 ships MemoriesFeature as a SHELL (reducer + warm placeholder view + disabled "Capture a
+  moment") wired into the tab, so MainTabView is touched ONCE here; C2+ fill the module in.
+- **C2 (the journal):** build MemoriesFeature — memory model (`households/{hid}/memories`:
+  richText markdown, photoPaths[], stickerPaths[], kidMemberIds[], date, milestoneTag?,
+  createdBy), create/edit a **scrapbook-page** entry (RichNoteEditor + the IMG-C2 capture/
+  subject-lift stickers + ScrapbookCollage + milestone + kid tagging), and a scrollable
+  **timeline** of scrapbook pages. A "Capture a moment" quick-action ALSO on Today.
+- **C3:** per-kid timelines (tap Oliver/Francis → their memories), "this time last year"
+  resurfacing, AI month-summaries, and wire kids' photos into the Apple TV "Kids' moments"
+  screensaver toggle (currently "coming soon").
+Tab label: "Memories" (warm) — Michael said "journal"; trivial to relabel. Tradeoff accepted:
+full month calendar is now a one-tap drill-in from Today, not a tab.
+
 ### BUGS — from live build-25 testing (Michael, 2026-07-05)
 - **BUG-pet-photo-camera-only:** Pet detail → Edit → "select photo" ALWAYS opens the
   camera; no way to pick from the photo library. → Being fixed by **P26-IMG-C2** (adds a
