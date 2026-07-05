@@ -35,6 +35,8 @@ public struct SettingsReducer {
         @Presents var profileEdit: ProfileEditReducer.State?
         /// P25 — "Ideas for Bacán" wishlist capture sheet.
         @Presents var wishlist: WishlistReducer.State?
+        /// P25-C2 — "How we're using Bacán" AI usage-review sheet (closing the signal loop).
+        @Presents var usageReview: UsageReviewReducer.State?
 
         // MARK: Smart home (Hue, P12-C3 — multi-bridge)
         /// The household's Hue config, or nil when never paired (→ the "Set up" row).
@@ -144,6 +146,9 @@ public struct SettingsReducer {
         // P25 — Ideas for Bacán wishlist
         case ideasTapped
         case wishlist(PresentationAction<WishlistReducer.Action>)
+        // P25-C2 — How we're using Bacán (usage review)
+        case usageReviewTapped
+        case usageReview(PresentationAction<UsageReviewReducer.Action>)
         case binding(BindingAction<State>)
 
         // Smart home (Hue, multi-bridge)
@@ -231,6 +236,13 @@ public struct SettingsReducer {
                 state.wishlist = WishlistReducer.State()
                 return .none
             case .wishlist:
+                return .none
+            case .usageReviewTapped:
+                state.usageReview = UsageReviewReducer.State()
+                @Dependency(\.analytics) var analytics
+                analytics.log("usage_review_opened")
+                return .none
+            case .usageReview:
                 return .none
             default:
                 return .none
@@ -822,6 +834,9 @@ public struct SettingsReducer {
         .ifLet(\.$wishlist, action: \.wishlist) {
             WishlistReducer()
         }
+        .ifLet(\.$usageReview, action: \.usageReview) {
+            UsageReviewReducer()
+        }
         .ifLet(\.$huePairing, action: \.huePairing) {
             HuePairingReducer()
         }
@@ -976,6 +991,26 @@ public struct SettingsView: View {
                 .accessibilityIdentifier("ideas-for-bacan-row")
             }
 
+            // P25-C2 — How we're using Bacán: the AI usage review (closing the signal loop).
+            Section {
+                Button {
+                    store.send(.usageReviewTapped)
+                } label: {
+                    HStack(spacing: 12) {
+                        Image(systemName: "chart.bar.doc.horizontal.fill")
+                            .foregroundStyle(Color.bacanGreen)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("How we're using Bacán").foregroundStyle(Color.ink)
+                            Text("A warm read on what's used and what's not.")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Image(systemName: "chevron.right").font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+                .accessibilityIdentifier("usage-review-row")
+            }
+
             Section {
                 Button(role: .destructive) {
                     store.send(.signOutTapped)
@@ -1005,6 +1040,9 @@ public struct SettingsView: View {
         }
         .sheet(item: $store.scope(state: \.wishlist, action: \.wishlist)) { wishlistStore in
             WishlistView(store: wishlistStore)
+        }
+        .sheet(item: $store.scope(state: \.usageReview, action: \.usageReview)) { usageStore in
+            UsageReviewView(store: usageStore)
         }
         .sheet(item: $store.scope(state: \.huePairing, action: \.huePairing)) { pairingStore in
             HuePairingView(store: pairingStore)

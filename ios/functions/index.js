@@ -25,6 +25,7 @@ const { troubleshootPlant } = require("./plantTroubleshoot");
 const { runAgentTurn } = require("./agentTurn");
 const { planMealWeek } = require("./mealPlanWeek");
 const { summarizeSpending } = require("./spendingSummarize");
+const { reviewUsage } = require("./usageReview");
 const { notifyHousehold, memberName } = require("./notifications");
 const { awardChoreXP, reverseChoreXP } = require("./choreXP");
 
@@ -491,6 +492,44 @@ exports.summarizeSpending = onCall(
       });
     } catch (err) {
       throw new HttpsError("internal", `Spending summary failed: ${err.message}`);
+    }
+  }
+);
+
+/**
+ * `reviewUsage` is a v2 HTTPS callable (us-central1) — the P25-C2 weekly usage review that closes
+ * the signal loop. P25-C1 logs light behavioral events to `households/{hid}/analytics`; this reads
+ * the last N days (default 7), aggregates COUNTS server-side (never ships raw rows to the model),
+ * and asks `claude-sonnet-5` (forced tool-use) for a plain-language UX review →
+ * `{ summary, topFeatures, underusedFeatures, frictionSignals, suggestions:[{title,why}],
+ *    windowDays, eventCount, isSparse }`. The household is derived from the CALLER
+ * (`users/{uid}.householdId`) — a client-passed hid is never trusted. Input `{ windowDays? }`.
+ * Sparse data (the telemetry is only days old) is handled honestly, not fabricated. Auth-required;
+ * reuses the existing `ANTHROPIC_API_KEY`; logs only counts. No rate limiting (private app).
+ */
+exports.reviewUsage = onCall(
+  { timeoutSeconds: 60, memory: "512MiB", secrets: [ANTHROPIC_API_KEY] },
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError("unauthenticated", "You must be signed in.");
+    }
+    const uid = request.auth.uid;
+    const windowDays = Number(request.data?.windowDays);
+
+    const userSnap = await db().collection("users").doc(uid).get();
+    const hid = userSnap.exists ? userSnap.data().householdId : null;
+    if (!hid) {
+      throw new HttpsError("failed-precondition", "No household for this user.");
+    }
+    try {
+      return await reviewUsage({
+        db: db(),
+        hid,
+        apiKey: ANTHROPIC_API_KEY.value(),
+        windowDays: Number.isFinite(windowDays) ? windowDays : undefined,
+      });
+    } catch (err) {
+      throw new HttpsError("internal", `Usage review failed: ${err.message}`);
     }
   }
 );
