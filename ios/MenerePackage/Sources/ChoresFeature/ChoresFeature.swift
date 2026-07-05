@@ -21,6 +21,10 @@ public struct ChoresReducer {
         // P8 — House care: recurring upkeep, no XP, tracked by who-did-it-last. P9 adds plant
         // `CareItem`s (kind == .plant) into the same array — the view splits them into sections.
         var careItems: [CareItem] = []
+        /// P29 — the household's home-maintenance profile (`config/homeProfile`), or nil until the
+        /// user sets it up. Gates the House-care "home maintenance" entry (setup vs. suggested list)
+        /// and feeds the readiness score.
+        var homeProfile: HomeProfile?
         /// Plant photo bytes, keyed by Storage `photoPath` (light in-memory cache; mirrors the docs
         /// page cache). Loaded after `careItems` land so plant rows render a real thumbnail.
         var carePhotos: [String: Data] = [:]
@@ -57,6 +61,8 @@ public struct ChoresReducer {
         var isLoading = false
         @Presents var form: ChoreFormReducer.State?
         @Presents var careForm: CareItemFormReducer.State?
+        /// P29 — the Home-maintenance sheet (setup form + season-suggested library → materialize).
+        @Presents var homeMaintenance: HomeMaintenanceReducer.State?
         /// P9.1 — the Planta-inspired add-a-plant capture wizard. ADD routes here; EDIT stays on
         /// ``careForm``.
         @Presents var plantCapture: PlantCaptureReducer.State?
@@ -98,6 +104,10 @@ public struct ChoresReducer {
         case redeem(Reward, byMemberID: String)
         // P8 — House care
         case addCareItemTapped
+        // P29 — Home maintenance
+        case homeProfileLoaded(HomeProfile?)
+        case homeMaintenanceTapped
+        case homeMaintenance(PresentationAction<HomeMaintenanceReducer.Action>)
         case editCareItemTapped(CareItem)
         case markCareTaskDone(itemID: String, taskID: String)
         /// P28 — restore the last one-tap care completion to its prior done-stamp (the overview's Undo).
@@ -174,6 +184,11 @@ public struct ChoresReducer {
                             careItems: (try? await careItems) ?? [],
                             documents: (try? await documents) ?? []
                         ))
+                    },
+                    // P29 — the home-maintenance profile (cheap gate; independent of the rest).
+                    .run { send in
+                        @Dependency(\.persistence) var persistence
+                        await send(.homeProfileLoaded((try? await persistence.homeProfile(hid)) ?? nil))
                     },
                     // Leaderboard updates live as the server-side XP trigger writes stats.
                     .run { send in
@@ -329,6 +344,22 @@ public struct ChoresReducer {
                     isEditing: false
                 )
                 return .none
+
+            case let .homeProfileLoaded(profile):
+                state.homeProfile = profile
+                return .none
+
+            case .homeMaintenanceTapped:
+                state.homeMaintenance = HomeMaintenanceReducer.State(
+                    profile: state.homeProfile,
+                    careItems: state.careItems
+                )
+                return .none
+
+            case .homeMaintenance(.presented(.delegate(.didChange))):
+                // A profile save or a materialize wrote to Firestore — reload care + profile so the
+                // House-care banner, score, and rows reflect it.
+                return .send(.task)
 
             case .addPlantTapped:
                 analytics.log("plant_capture_started")
@@ -537,7 +568,7 @@ public struct ChoresReducer {
             case .plantCapture(.presented(.delegate(.didFinish))):
                 return .send(.task)
 
-            case .form, .careForm, .plantCapture, .troubleshoot, .houseCard, .binding:
+            case .form, .careForm, .plantCapture, .troubleshoot, .houseCard, .homeMaintenance, .binding:
                 return .none
             }
         }
@@ -546,6 +577,9 @@ public struct ChoresReducer {
         }
         .ifLet(\.$careForm, action: \.careForm) {
             CareItemFormReducer()
+        }
+        .ifLet(\.$homeMaintenance, action: \.homeMaintenance) {
+            HomeMaintenanceReducer()
         }
         .ifLet(\.$plantCapture, action: \.plantCapture) {
             PlantCaptureReducer()

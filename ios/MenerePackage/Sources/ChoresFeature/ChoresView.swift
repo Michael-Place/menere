@@ -375,9 +375,17 @@ public struct ChoresView: View {
     @ViewBuilder
     private var houseCarePreview: some View {
         let items = houseCareItems
-        if !items.isEmpty {
+        if !items.isEmpty || store.homeProfile != nil {
             VStack(alignment: .leading, spacing: 8) {
-                HouseHealthBanner(health: CareItem.houseHealth(for: items))
+                if !items.isEmpty {
+                    HouseHealthBanner(health: CareItem.houseHealth(for: items))
+                }
+                // P29 — the maintenance readiness score, when a home profile has been set up.
+                if let profile = store.homeProfile {
+                    HomeHealthScoreCard(
+                        score: HomeHealthCalculator.calculate(careItems: store.careItems, profile: profile)
+                    )
+                }
                 ForEach(items.prefix(2)) { miniCareRow($0) }
             }
         }
@@ -802,6 +810,7 @@ private struct HouseCareDetailView: View {
 
     var body: some View {
         List {
+            homeMaintenanceSection
             Section("House care") {
                 if !store.careItems.isEmpty {
                     HouseHealthBanner(health: CareItem.houseHealth(for: store.careItems))
@@ -841,6 +850,52 @@ private struct HouseCareDetailView: View {
         .background(Color.familyCanvas)
         .navigationTitle("House care")
         .navigationBarTitleDisplayMode(.inline)
+        .sheet(item: $store.scope(state: \.homeMaintenance, action: \.homeMaintenance)) { maintStore in
+            HomeMaintenanceView(store: maintStore)
+        }
+    }
+
+    // MARK: Home maintenance (P29)
+
+    /// The seeded-maintenance entry: a "Set up home maintenance" call-to-action before a profile
+    /// exists, or the live readiness score + "Suggested maintenance" opener once it does.
+    @ViewBuilder
+    private var homeMaintenanceSection: some View {
+        Section("Home maintenance") {
+            if let profile = store.homeProfile {
+                HomeHealthScoreCard(
+                    score: HomeHealthCalculator.calculate(careItems: store.careItems, profile: profile)
+                )
+                .listRowInsets(EdgeInsets())
+                .listRowBackground(Color.clear)
+                Button {
+                    store.send(.homeMaintenanceTapped)
+                } label: {
+                    Label("Suggested maintenance", systemImage: "wrench.and.screwdriver.fill")
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.pressable)
+                .accessibilityIdentifier("suggested-maintenance-button")
+                .listRowBackground(Color.familySurface)
+            } else {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Never wonder what the house needs. Set up a quick home profile and we'll suggest the seasonal upkeep that applies.")
+                        .font(.subheadline).foregroundStyle(Color.inkSoft)
+                    Button {
+                        store.send(.homeMaintenanceTapped)
+                    } label: {
+                        Label("Set up home maintenance", systemImage: "house.and.flag.fill")
+                            .fontWeight(.semibold)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.bacanGreen)
+                    .accessibilityIdentifier("setup-home-maintenance-button")
+                }
+                .padding(.vertical, 4)
+                .listRowBackground(Color.familySurface)
+            }
+        }
     }
 
     private var careSuggestionsCard: some View {

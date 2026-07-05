@@ -56,6 +56,10 @@ public struct CareTask: Codable, Equatable, Identifiable, Sendable {
     /// the first completion stamps `lastDoneAt`. `nil` = fall back to "due today". Decode-safe
     /// additive field (P9); P9-C3 sets it for seasonal windows.
     public var firstDueAt: Date?
+    /// Back-reference to the ``MaintenanceTemplate`` this task was materialized from (P29). `nil` for
+    /// hand-added tasks. Lets ``HomeHealthCalculator`` recognize a materialized maintenance task,
+    /// find its category + interval, and score it in its frequency window. Decode-safe additive field.
+    public var maintenanceTemplateID: String?
 
     public init(
         id: String = UUID().uuidString,
@@ -63,7 +67,8 @@ public struct CareTask: Codable, Equatable, Identifiable, Sendable {
         intervalDays: Int? = 30,
         lastDoneAt: Date? = nil,
         lastDoneBy: String? = nil,
-        firstDueAt: Date? = nil
+        firstDueAt: Date? = nil,
+        maintenanceTemplateID: String? = nil
     ) {
         self.id = id
         self.title = title
@@ -71,6 +76,7 @@ public struct CareTask: Codable, Equatable, Identifiable, Sendable {
         self.lastDoneAt = lastDoneAt
         self.lastDoneBy = lastDoneBy
         self.firstDueAt = firstDueAt
+        self.maintenanceTemplateID = maintenanceTemplateID
     }
 
     public init(from decoder: Decoder) throws {
@@ -81,6 +87,7 @@ public struct CareTask: Codable, Equatable, Identifiable, Sendable {
         lastDoneAt = try c.decodeIfPresent(Date.self, forKey: .lastDoneAt)
         lastDoneBy = try c.decodeIfPresent(String.self, forKey: .lastDoneBy)
         firstDueAt = try c.decodeIfPresent(Date.self, forKey: .firstDueAt)
+        maintenanceTemplateID = try c.decodeIfPresent(String.self, forKey: .maintenanceTemplateID)
     }
 
     /// `true` when there's no cadence — seasonal / manual.

@@ -226,6 +226,15 @@ public struct PersistenceClient: Sendable {
     public var calendarSyncPrefs: @Sendable (_ uid: String) async throws -> CalendarSyncPrefs?
     /// Full-document write of the sync prefs (merge: false so cleared fields actually clear).
     public var saveCalendarSyncPrefs: @Sendable (_ uid: String, _ prefs: CalendarSyncPrefs) async throws -> Void
+
+    // MARK: Home maintenance profile (P29)
+    /// The household's home profile at `households/{hid}/config/homeProfile`, or nil when maintenance
+    /// hasn't been set up. Decode-safe (a partial/hand-written doc still resolves). Reading it is the
+    /// cheap gate for the House-care "home maintenance" surface — no doc, show the setup entry.
+    public var homeProfile: @Sendable (_ hid: String) async throws -> HomeProfile?
+    /// Full-document write of the home profile (merge: false, mirroring `saveHueConfig` et al., so a
+    /// cleared flag actually clears).
+    public var saveHomeProfile: @Sendable (_ hid: String, _ profile: HomeProfile) async throws -> Void
 }
 
 extension PersistenceClient: DependencyKey {
@@ -653,6 +662,17 @@ extension PersistenceClient: DependencyKey {
                     .collection("settings").document("calendarSync").setData(
                         Firestore.Encoder().encode(prefs)
                     )
+            },
+            homeProfile: { hid in
+                let s = try await households().document(hid).collection("config").document("homeProfile").getDocument()
+                guard let d = s.data() else { return nil }
+                return try Firestore.Decoder().decode(HomeProfile.self, from: d)
+            },
+            saveHomeProfile: { hid, profile in
+                // Full-doc replace (merge: false) — same rationale as saveHueConfig et al.
+                try await households().document(hid).collection("config").document("homeProfile").setData(
+                    Firestore.Encoder().encode(profile)
+                )
             }
         )
     }()
