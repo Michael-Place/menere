@@ -19,6 +19,7 @@ private enum BrowserFilter: Equatable {
     case all
     case favorites
     case recents
+    case person(FaceTag)      // FL4 — "Photos of {name}" (a device-local face tag)
     case month(Date)          // first-of-month anchor
     case album(PhotoAlbum)
 
@@ -27,6 +28,7 @@ private enum BrowserFilter: Equatable {
         case .all: return "All"
         case .favorites: return "Favorites"
         case .recents: return "Recents"
+        case let .person(tag): return tag.memberName.split(separator: " ").first.map(String.init) ?? tag.memberName
         case let .month(date): return BrowserFilter.monthFormatter.string(from: date)
         case let .album(album): return album.title
         }
@@ -44,18 +46,27 @@ private enum BrowserFilter: Equatable {
 public struct PhotoLibraryBrowser: View {
     /// Called with the selected asset ids when the family taps "Add N to memory".
     private let onAdd: ([String]) -> Void
+    /// FL4 — called with a `HouseholdMember.id` when the family taps a "People" (Photos of {name}) chip,
+    /// so the presenting feature can log `photos_of_person_viewed` (MenereUI has no analytics of its own).
+    private let onPersonViewed: ((String) -> Void)?
 
-    public init(onAdd: @escaping ([String]) -> Void) {
+    public init(
+        onPersonViewed: ((String) -> Void)? = nil,
+        onAdd: @escaping ([String]) -> Void
+    ) {
+        self.onPersonViewed = onPersonViewed
         self.onAdd = onAdd
     }
 
     @Dependency(\.photoLibrary) private var photoLibrary
+    @Dependency(\.faceTagStore) private var faceTagStore
     @Environment(\.dismiss) private var dismiss
 
     @State private var status: PHAuthorizationStatus = .notDetermined
     @State private var assets: [PhotoAsset] = []
     @State private var albums: [PhotoAlbum] = []
     @State private var months: [Date] = []
+    @State private var people: [FaceTag] = []
     @State private var selection: Set<String> = []
     @State private var filter: BrowserFilter = .all
     @State private var isLoading = false
@@ -105,6 +116,8 @@ public struct PhotoLibraryBrowser: View {
                 chip(.all)
                 chip(.favorites)
                 chip(.recents)
+                // FL4 — "Photos of {name}" chips for each device-local face tag, leading the row.
+                ForEach(people) { personChip($0) }
                 ForEach(months, id: \.self) { chip(.month($0)) }
                 ForEach(albums) { chip(.album($0)) }
             }
@@ -132,6 +145,41 @@ public struct PhotoLibraryBrowser: View {
         }
         .buttonStyle(.pressable)
         .accessibilityIdentifier("photo-filter-\(f.chipTitle)")
+    }
+
+    /// FL4 — a "Photos of {name}" chip: a tiny face thumbnail + the person's first name.
+    private func personChip(_ tag: FaceTag) -> some View {
+        let f = BrowserFilter.person(tag)
+        let selected = filter == f
+        return Button {
+            guard filter != f else { return }
+            filter = f
+            onPersonViewed?(tag.memberID)
+            Task { await reloadAssets() }
+        } label: {
+            HStack(spacing: 6) {
+                if let data = tag.sampleThumbnail, let ui = UIImage(data: data) {
+                    Image(uiImage: ui)
+                        .resizable().scaledToFill()
+                        .frame(width: 22, height: 22)
+                        .clipShape(Circle())
+                        .overlay(Circle().strokeBorder(.white.opacity(0.8), lineWidth: 1))
+                } else {
+                    Image(systemName: "person.crop.circle.fill")
+                        .foregroundStyle(selected ? .white : Color.bacanGreen)
+                }
+                Text(f.chipTitle)
+                    .font(.system(.subheadline, design: .rounded).weight(.semibold))
+                    .foregroundStyle(selected ? .white : Color.bacanGreen)
+            }
+            .padding(.horizontal, 12).padding(.vertical, 6)
+            .background(
+                Capsule(style: .continuous)
+                    .fill(selected ? Color.bacanGreen : Color.bacanGreen.opacity(0.14))
+            )
+        }
+        .buttonStyle(.pressable)
+        .accessibilityIdentifier("photo-person-\(tag.memberID)")
     }
 
     @ViewBuilder
@@ -312,9 +360,10 @@ public struct PhotoLibraryBrowser: View {
         }
     }
 
-    /// Initial load: albums, the month buckets, and the current filter's assets.
+    /// Initial load: albums, the month buckets, the FL4 face tags, and the current filter's assets.
     private func loadEverything() async {
         isLoading = true
+        people = faceTagStore.all()
         async let albumsTask = photoLibrary.fetchAlbums()
         let all = await photoLibrary.fetchAssets(PhotoAssetFilter(limit: 2000))
         albums = await albumsTask
@@ -325,7 +374,12 @@ public struct PhotoLibraryBrowser: View {
 
     private func reloadAssets() async {
         isLoading = true
-        assets = applyClientCap(await photoLibrary.fetchAssets(filterQuery()))
+        // FL4 — a person filter replays the tag's stored asset ids (order preserved) rather than a query.
+        if case let .person(tag) = filter {
+            assets = applyClientCap(await photoLibrary.assetsByIDs(tag.assetIDs))
+        } else {
+            assets = applyClientCap(await photoLibrary.fetchAssets(filterQuery()))
+        }
         isLoading = false
     }
 
@@ -338,6 +392,9 @@ public struct PhotoLibraryBrowser: View {
         case .recents:
             let since = Calendar.current.date(byAdding: .day, value: -30, to: Date()) ?? Date()
             return PhotoAssetFilter(dateRange: since...Date(), limit: 2000)
+        case .person:
+            // Handled specially in `reloadAssets` (stored asset ids); this branch is never reached.
+            return PhotoAssetFilter(limit: 2000)
         case let .month(anchor):
             let cal = Calendar.current
             let start = cal.date(from: cal.dateComponents([.year, .month], from: anchor)) ?? anchor

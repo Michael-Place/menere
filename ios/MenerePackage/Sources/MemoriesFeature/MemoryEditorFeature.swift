@@ -115,6 +115,8 @@ public struct MemoryEditorReducer {
         case libraryBrowseTapped
         case libraryAssetsPicked([String])
         case libraryLoadFinishedOne
+        /// FL4 — the family tapped a "Photos of {name}" chip in the browser (analytics only).
+        case personPhotosViewed(memberID: String)
         case removeSlot(id: String)
         case makeStickerTapped(id: String)
         case stickerLifted(id: String, Data?)
@@ -222,6 +224,10 @@ public struct MemoryEditorReducer {
 
             case .libraryLoadFinishedOne:
                 state.loadingLibraryCount = max(0, state.loadingLibraryCount - 1)
+                return .none
+
+            case .personPhotosViewed:
+                analytics.log("photos_of_person_viewed")
                 return .none
 
             case let .removeSlot(id):

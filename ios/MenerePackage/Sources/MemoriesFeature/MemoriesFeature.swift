@@ -85,6 +85,8 @@ public struct MemoriesReducer {
         /// FL3 — thumbnail bytes for the on-this-day photo strip, keyed by asset id.
         public var onThisDayThumbs: [String: Data] = [:]
         @Presents public var editor: MemoryEditorReducer.State?
+        /// FL4 — the "People" (tag-a-face) sheet.
+        @Presents public var faceTagging: FaceTaggingReducer.State?
 
         public init() {}
 
@@ -113,6 +115,9 @@ public struct MemoriesReducer {
         /// The Memories-tab button AND the Today quick-action both send this to open a fresh page.
         case captureMomentTapped
         case memoryTapped(Memory)
+        /// FL4 — the "People" toolbar button opens the tag-a-face sheet.
+        case peopleTapped
+        case faceTagging(PresentationAction<FaceTaggingReducer.Action>)
         /// A filter chip was tapped (`nil` = "All").
         case kidFilterSelected(String?)
         /// "Recap this month ✨" tapped on a month header (keyed by month bucket "yyyy-M").
@@ -302,6 +307,14 @@ public struct MemoriesReducer {
                 state.editor = MemoryEditorReducer.State(memory: memory, isEditing: true, members: state.members)
                 return .none
 
+            case .peopleTapped:
+                analytics.log("people_opened")
+                state.faceTagging = FaceTaggingReducer.State(members: state.members)
+                return .none
+
+            case .faceTagging:
+                return .none
+
             case let .kidFilterSelected(id):
                 state.selectedKidId = id
                 analytics.log("memory_filter_applied", ["filter": id == nil ? "all" : "kid"])
@@ -358,6 +371,9 @@ public struct MemoriesReducer {
         }
         .ifLet(\.$editor, action: \.editor) {
             MemoryEditorReducer()
+        }
+        .ifLet(\.$faceTagging, action: \.faceTagging) {
+            FaceTaggingReducer()
         }
     }
 }

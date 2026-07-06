@@ -47,9 +47,10 @@ public struct MemoryEditorView: View {
             }
             .task { store.send(.task) }
             .sheet(isPresented: $store.showLibraryBrowser) {
-                PhotoLibraryBrowser { assetIDs in
-                    store.send(.libraryAssetsPicked(assetIDs))
-                }
+                PhotoLibraryBrowser(
+                    onPersonViewed: { store.send(.personPhotosViewed(memberID: $0)) },
+                    onAdd: { store.send(.libraryAssetsPicked($0)) }
+                )
             }
         }
     }

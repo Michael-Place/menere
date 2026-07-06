@@ -30,6 +30,15 @@ public struct MemoriesView: View {
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button {
+                    store.send(.peopleTapped)
+                } label: {
+                    Image(systemName: "person.crop.rectangle.stack")
+                }
+                .accessibilityLabel("Find people in your photos")
+                .accessibilityIdentifier("memories-people-toolbar")
+            }
+            ToolbarItem(placement: .topBarTrailing) {
+                Button {
                     store.send(.captureMomentTapped)
                 } label: {
                     Image(systemName: "plus.circle.fill")
@@ -40,6 +49,9 @@ public struct MemoriesView: View {
         }
         .sheet(item: $store.scope(state: \.editor, action: \.editor)) { editorStore in
             MemoryEditorView(store: editorStore)
+        }
+        .sheet(item: $store.scope(state: \.faceTagging, action: \.faceTagging)) { faceStore in
+            FaceTaggingView(store: faceStore)
         }
         .task { store.send(.task) }
     }

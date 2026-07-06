@@ -152,6 +152,18 @@ public struct PhotoLibraryClient: Sendable {
 
     /// Assets added to the library since `date`, newest first (FL2/FL3). Empty when unauthorized.
     public var recentlyAdded: @Sendable (_ since: Date) async -> [PhotoAsset] = { _ in [] }
+
+    /// Lightweight refs for a specific set of asset `localIdentifier`s, in the given order (missing ids
+    /// dropped). FL4 uses this to resolve a tagged person's stored asset ids back into browsable assets.
+    public var assetsByIDs: @Sendable (_ ids: [String]) async -> [PhotoAsset] = { _ in [] }
+
+    /// FL4 — the on-device face-grouping pass. Over a BOUNDED candidate set (favorites + recents, capped
+    /// at `limit`), detects faces (`VNDetectFaceRectanglesRequest`), feature-prints each face crop
+    /// (`VNGenerateImageFeaturePrint`), and greedily clusters the prints by distance into
+    /// ``FaceCluster``s (largest first). Entirely on-device, cancellable, and off the main actor.
+    /// **Approximate by design** — a generic image feature print is not a purpose-built face embedding.
+    /// Empty when unauthorized or when no faces are found.
+    public var scanFaces: @Sendable (_ limit: Int) async -> [FaceCluster] = { _ in [] }
 }
 
 // MARK: - Live
@@ -186,6 +198,12 @@ extension PhotoLibraryClient: DependencyKey {
         recentlyAdded: { since in
             let range = since...Date.distantFuture
             return PhotoLibraryEngine.fetchAssets(PhotoAssetFilter(dateRange: range, mediaType: nil))
+        },
+        assetsByIDs: { ids in
+            PhotoLibraryEngine.assetsByIDs(ids)
+        },
+        scanFaces: { limit in
+            await FaceScanEngine.scan(limit: limit)
         }
     )
 
@@ -197,7 +215,9 @@ extension PhotoLibraryClient: DependencyKey {
         loadThumbnail: { _, _ in nil },
         loadFullImage: { _ in nil },
         observeLibraryChanges: { AsyncStream { $0.finish() } },
-        recentlyAdded: { _ in [] }
+        recentlyAdded: { _ in [] },
+        assetsByIDs: { _ in [] },
+        scanFaces: { _ in [] }
     )
 
     /// The unimplemented `testValue` comes from `@DependencyClient`'s defaults (each closure above has
@@ -254,6 +274,16 @@ enum PhotoLibraryEngine {
         assets.reserveCapacity(result.count)
         result.enumerateObjects { asset, _, _ in assets.append(PhotoAsset(asset)) }
         return assets
+    }
+
+    /// Resolve specific `localIdentifier`s to lightweight refs, preserving the requested order and
+    /// dropping any that no longer exist. FL4's "Photos of {name}" replays a person's stored asset ids.
+    static func assetsByIDs(_ ids: [String]) -> [PhotoAsset] {
+        guard !ids.isEmpty else { return [] }
+        let result = PHAsset.fetchAssets(withLocalIdentifiers: ids, options: nil)
+        var byID: [String: PhotoAsset] = [:]
+        result.enumerateObjects { asset, _, _ in byID[asset.localIdentifier] = PhotoAsset(asset) }
+        return ids.compactMap { byID[$0] }
     }
 
     static func fetchAlbums() -> [PhotoAlbum] {
