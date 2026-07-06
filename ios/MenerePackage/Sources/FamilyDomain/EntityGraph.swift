@@ -21,6 +21,58 @@ public enum EntityGraph {
         vendorKey(tag)
     }
 
+    // MARK: Link suggestions (Act V V1-A — receipt↔entity)
+
+    /// A category of family entity a document can be linked to. Drives the vendor-based one-tap
+    /// suggestions in the "Link to…" flow (garden→plants, vet→pets, deck/contractor→project).
+    public enum LinkTarget: String, Sendable, Equatable, CaseIterable {
+        case plants
+        case pets
+        case project
+    }
+
+    /// Vendor keyword → entity category rules. Ordered so the first match wins for the primary
+    /// suggestion, but `suggestedLinkTargets` returns every category that matches (a vendor could
+    /// plausibly touch two). Matched as lowercased substrings against the folded vendor key.
+    private static let plantVendorKeywords = [
+        "garden", "nursery", "thumb", "landscap", "greenhouse", "botanic", "florist",
+        "flower", "plant", "arborist", "soil", "mulch",
+    ]
+    private static let petVendorKeywords = [
+        "vet", "veterinar", "animal", "petco", "petsmart", "kennel", "groom",
+        "paw", "canine", "kitty", "puppy", "bark",
+    ]
+    private static let projectVendorKeywords = [
+        "deck", "daddy", "contractor", "construction", "builder", "remodel", "renovat",
+        "roofing", "roofer", "septic", "fence", "concrete", "plumb", "electric", "hvac",
+    ]
+
+    /// The entity categories a receipt's vendor most likely relates to — the basis for the
+    /// "Link to…" flow's one-tap SUGGESTIONS. Green Thumb Nursery → `[.plants]`, a vet bill →
+    /// `[.pets]`, Deck Daddy's → `[.project]`. Pure + deterministic; returns `[]` when the vendor
+    /// gives no confident signal. Order: plants, pets, project (stable for the UI).
+    public static func suggestedLinkTargets(forVendor vendor: String?) -> [LinkTarget] {
+        guard let key = vendorKey(vendor) else { return [] }
+        var targets: [LinkTarget] = []
+        if plantVendorKeywords.contains(where: key.contains) { targets.append(.plants) }
+        if petVendorKeywords.contains(where: key.contains) { targets.append(.pets) }
+        if projectVendorKeywords.contains(where: key.contains) { targets.append(.project) }
+        return targets
+    }
+
+    /// Keywords to match a `.project`-list item's title (or its list's title) against, so the
+    /// "Link to…" flow can pre-suggest the *right* project for a contractor receipt (Deck Daddy's →
+    /// the "Deck" project). Combines the vendor's own significant words with the matched
+    /// project-keyword vocabulary. Lowercased; short/noise words dropped.
+    public static func projectMatchKeywords(forVendor vendor: String?) -> [String] {
+        guard let key = vendorKey(vendor) else { return [] }
+        var keywords = Set(projectVendorKeywords.filter(key.contains))
+        for word in key.split(whereSeparator: { $0 == " " }) where word.count >= 4 {
+            keywords.insert(String(word))
+        }
+        return Array(keywords)
+    }
+
     // MARK: Related items (per-document)
 
     /// A cluster of documents sharing one tag — the app's lightweight notion of a "project"

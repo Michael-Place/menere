@@ -66,6 +66,15 @@ public struct Document: Codable, Equatable, Identifiable, Sendable {
     public var linkedMemberIds: [String]
     /// Linked pet ids — pets arrive in P10; field kept now so C2's schema is stable.
     public var linkedPetIds: [String]
+    /// Linked plant / care-item ids (`CareItem.id`, typically `kind == .plant`) this document relates
+    /// to — the Green Thumb receipt → the plants it bought (Act V V1-A, receipt↔entity). Decode-safe
+    /// optional (older docs → nil); the AI pipeline never writes it, so it survives re-processing.
+    /// Pets keep their own `linkedPetIds`; this is the plant/garden half of the same idea.
+    public var linkedCareItemIds: [String]?
+    /// Linked project-list item ids (`ListItem.id` inside a `.project` FamilyList) — the Deck Daddy's
+    /// invoice → the deck project item (Act V V1-A). Decode-safe optional (older docs → nil); the AI
+    /// pipeline never writes it, so it survives re-processing.
+    public var linkedProjectItemIds: [String]?
     /// The date printed on the document itself (invoice date, visit date), if detected.
     public var docDate: Date?
     /// An actionable due date (a bill due, a form deadline) → can suggest a calendar event.
@@ -102,6 +111,8 @@ public struct Document: Codable, Equatable, Identifiable, Sendable {
         tags: [String] = [],
         linkedMemberIds: [String] = [],
         linkedPetIds: [String] = [],
+        linkedCareItemIds: [String]? = nil,
+        linkedProjectItemIds: [String]? = nil,
         docDate: Date? = nil,
         dueDate: Date? = nil,
         expiryDate: Date? = nil,
@@ -122,6 +133,8 @@ public struct Document: Codable, Equatable, Identifiable, Sendable {
         self.tags = tags
         self.linkedMemberIds = linkedMemberIds
         self.linkedPetIds = linkedPetIds
+        self.linkedCareItemIds = linkedCareItemIds
+        self.linkedProjectItemIds = linkedProjectItemIds
         self.docDate = docDate
         self.dueDate = dueDate
         self.expiryDate = expiryDate
@@ -164,6 +177,8 @@ public struct Document: Codable, Equatable, Identifiable, Sendable {
         tags = try c.decodeIfPresent([String].self, forKey: .tags) ?? []
         linkedMemberIds = try c.decodeIfPresent([String].self, forKey: .linkedMemberIds) ?? []
         linkedPetIds = try c.decodeIfPresent([String].self, forKey: .linkedPetIds) ?? []
+        linkedCareItemIds = try c.decodeIfPresent([String].self, forKey: .linkedCareItemIds)
+        linkedProjectItemIds = try c.decodeIfPresent([String].self, forKey: .linkedProjectItemIds)
         docDate = try c.decodeIfPresent(Date.self, forKey: .docDate)
         dueDate = try c.decodeIfPresent(Date.self, forKey: .dueDate)
         expiryDate = try c.decodeIfPresent(Date.self, forKey: .expiryDate)
