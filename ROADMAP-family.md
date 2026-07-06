@@ -514,6 +514,14 @@ notifications). Michael queued #2, #3, smart notifications, Money.
   Shortcuts over the existing verb registry — most-felt, least-effort, glanceable family hub.
   (Now folds into V5.3 + V5.6 — the ingestion pipeline subsumes it.)
 
+# Motion & Delight (2026-07-06, Michael requested)
+- **Tab load-in animations:** each tab plays a signature staggered entrance on cold launch + on
+  tab-switch — "surprise & delight as I navigate." Shared `TabEntrance` reveal (spring stagger,
+  index delay, Reduce-Motion fallback) in MenereUI + per-tab signatures: Today cascade+grid-pop,
+  Memories scrapbook tumble (rotation settle), Lists checklist edge-slide, Home care-card bloom
+  (scale/grow), Kitchen plating rise. Triggered off `MainTabReducer.selectedTab` in AppCore.
+  Fast/springy (~0.4–0.6s), fits the `.stickerSlap`/`ConfettiBurst` playful-motion language.
+
 # Hardening & Performance (2026-07-06, Michael requested — "make it snappy")
 Audit findings (2026-07-06): NOT using Nuke; images via `AsyncImage` (6 sites) + custom
 `StorageClient.downloadData(path)` (plants/pets/memories/care) with NO durable cache → photos
