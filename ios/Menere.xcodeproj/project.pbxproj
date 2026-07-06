@@ -33,6 +33,7 @@
 		8B5983A7C53688C8142D4B90 /* Expense.swift in Sources */ = {isa = PBXBuildFile; fileRef = C558772F68276B6C1023D04D /* Expense.swift */; };
 		8EBA5033EF9B3BC1F2AE952C /* SonosConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = E714E577085262D09AC5902B /* SonosConfig.swift */; };
 		8F32233B05205413D8FE7C8C /* FirebaseFirestore in Frameworks */ = {isa = PBXBuildFile; productRef = 2EC83C04476003B3D236444F /* FirebaseFirestore */; };
+		948A18AFB934C7562390CE62 /* ScrapbookModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE603AB6159CFD1A772999AF /* ScrapbookModel.swift */; };
 		A2F561060373BD62A5286909 /* PetCareKB.swift in Sources */ = {isa = PBXBuildFile; fileRef = 57916759B4EA1587C7404406 /* PetCareKB.swift */; };
 		A5AD6D47683CD03037F4F5F1 /* PairingModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2EF2CFACD02341431996F7D2 /* PairingModel.swift */; };
 		AAFC2791683ED6C9039999A7 /* ProjectStatus.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6DE766E6C2FDC7DA1174037C /* ProjectStatus.swift */; };
@@ -40,6 +41,7 @@
 		B1219F3E745CD74AB628792D /* FirebaseAuth in Frameworks */ = {isa = PBXBuildFile; productRef = D461E863DC40D0B3F29AF895 /* FirebaseAuth */; };
 		B183246534F3FEC58B573B07 /* PackingTemplate.swift in Sources */ = {isa = PBXBuildFile; fileRef = FB220CDC37FA24455C19B864 /* PackingTemplate.swift */; };
 		B58EB23EE800218F2B85EAC0 /* CareItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8ADC640F89A0B5EBE6FF1853 /* CareItem.swift */; };
+		B8C06A33F89C25D303527248 /* SlideshowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1C48D4656BE53CF3C6515603 /* SlideshowView.swift */; };
 		C865BDC48CE60ED95C1F1C5F /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 41055B2C0C280352A5BA0E26 /* RootView.swift */; };
 		CA8A07DBF98E4F679CB92FAB /* MaintenanceKnowledgeBase.swift in Sources */ = {isa = PBXBuildFile; fileRef = 437B8BDC48401261A9D61B3D /* MaintenanceKnowledgeBase.swift */; };
 		CA9C8AE4E3E9C87EF9860EFD /* WishlistIdea.swift in Sources */ = {isa = PBXBuildFile; fileRef = C43C2065489A7E12F0415208 /* WishlistIdea.swift */; };
@@ -66,6 +68,7 @@
 		10637CAB4F7D384F2C095E15 /* Document.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Document.swift; sourceTree = "<group>"; };
 		1214F0961F23D14C880CE37E /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		1C2F6A8682CB53C5580F79D7 /* Menere.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = Menere.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		1C48D4656BE53CF3C6515603 /* SlideshowView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SlideshowView.swift; sourceTree = "<group>"; };
 		1D9312CCDBB55C7CC370B379 /* Recipe.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Recipe.swift; sourceTree = "<group>"; };
 		28C45C435BA3CED43344CDCF /* CalendarSyncPrefs.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarSyncPrefs.swift; sourceTree = "<group>"; };
 		2EF2CFACD02341431996F7D2 /* PairingModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairingModel.swift; sourceTree = "<group>"; };
@@ -100,6 +103,7 @@
 		C8DC446C29A064C8D1FA088E /* FamilyChore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FamilyChore.swift; sourceTree = "<group>"; };
 		CCD8B40524BF4D7A71F554B4 /* ChildCareKB.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChildCareKB.swift; sourceTree = "<group>"; };
 		CD4DDDEEABEB97183E417753 /* GroceryItemDB.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroceryItemDB.swift; sourceTree = "<group>"; };
+		CE603AB6159CFD1A772999AF /* ScrapbookModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScrapbookModel.swift; sourceTree = "<group>"; };
 		D088E8D29C70A2AE7708A589 /* NestConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NestConfig.swift; sourceTree = "<group>"; };
 		D48BCE09A1E02940BDAC566C /* WishlistPriority.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WishlistPriority.swift; sourceTree = "<group>"; };
 		D8082FA48B10881E53F1A32C /* GoogleService-Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = "GoogleService-Info.plist"; sourceTree = "<group>"; };
@@ -157,6 +161,8 @@
 				AE647A48F30BEEF1FDD3BE02 /* Info.plist */,
 				2EF2CFACD02341431996F7D2 /* PairingModel.swift */,
 				41055B2C0C280352A5BA0E26 /* RootView.swift */,
+				CE603AB6159CFD1A772999AF /* ScrapbookModel.swift */,
+				1C48D4656BE53CF3C6515603 /* SlideshowView.swift */,
 			);
 			path = AppTV;
 			sourceTree = "<group>";
@@ -429,6 +435,8 @@
 				AAFC2791683ED6C9039999A7 /* ProjectStatus.swift in Sources */,
 				73A60D73A8F48B3ED3E6367A /* Recipe.swift in Sources */,
 				C865BDC48CE60ED95C1F1C5F /* RootView.swift in Sources */,
+				948A18AFB934C7562390CE62 /* ScrapbookModel.swift in Sources */,
+				B8C06A33F89C25D303527248 /* SlideshowView.swift in Sources */,
 				8EBA5033EF9B3BC1F2AE952C /* SonosConfig.swift in Sources */,
 				50A325F691AF4CCAF39F05F8 /* SpendingInsights.swift in Sources */,
 				CA9C8AE4E3E9C87EF9860EFD /* WishlistIdea.swift in Sources */,

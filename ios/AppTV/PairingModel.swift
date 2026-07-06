@@ -20,6 +20,7 @@ final class PairingModel {
     }
 
     struct HouseholdSummary: Equatable {
+        var hid: String
         var familyName: String
         var plants: Int
         var pets: Int
@@ -123,6 +124,7 @@ final class PairingModel {
             let familyName = (hDoc.data()?["name"] as? String)?.trimmingCharacters(in: .whitespaces)
 
             phase = .connected(HouseholdSummary(
+                hid: hid,
                 familyName: (familyName?.isEmpty == false ? familyName! : "your family"),
                 plants: plants,
                 pets: pets,

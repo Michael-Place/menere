@@ -103,28 +103,36 @@ struct PairingCodeScreen: View {
 
 // MARK: - Connected
 
+/// Once linked, the resting experience is the ambient family-scrapbook screensaver. A short welcome
+/// banner greets the room, then fades to let the photos take over the whole screen.
 struct ConnectedScreen: View {
     let summary: PairingModel.HouseholdSummary
 
-    var body: some View {
-        VStack(spacing: 56) {
-            VStack(spacing: 14) {
-                Text("You're connected! 🎉")
-                    .font(.system(size: 60, weight: .heavy, design: .rounded))
-                    .foregroundStyle(bacanGreen)
-                Text("Welcome to \(summary.familyName)'s living room")
-                    .font(.system(.title2, design: .rounded))
-                    .foregroundStyle(.secondary)
-            }
+    @State private var showWelcome = true
 
-            HStack(spacing: 28) {
-                CountTile(value: summary.plants, label: "plants", emoji: "🪴")
-                CountTile(value: summary.pets, label: "pets", emoji: "🐾")
-                CountTile(value: summary.documents, label: "docs", emoji: "📄")
-                CountTile(value: summary.events, label: "events", emoji: "📅")
+    var body: some View {
+        ZStack {
+            SlideshowView(hid: summary.hid)
+
+            if showWelcome {
+                ZStack {
+                    Color.black.opacity(0.45).ignoresSafeArea()
+                    VStack(spacing: 14) {
+                        Text("You're connected! 🎉")
+                            .font(.system(size: 60, weight: .heavy, design: .rounded))
+                            .foregroundStyle(.white)
+                        Text("Welcome to \(summary.familyName)'s living room")
+                            .font(.system(.title2, design: .rounded))
+                            .foregroundStyle(.white.opacity(0.85))
+                    }
+                }
+                .transition(.opacity)
             }
         }
-        .padding(80)
+        .task {
+            try? await Task.sleep(nanoseconds: 3_200_000_000)
+            withAnimation(.easeInOut(duration: 1.0)) { showWelcome = false }
+        }
     }
 }
 
