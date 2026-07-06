@@ -1029,6 +1029,167 @@ const TOOLS = [
 const TOOL_MAP = Object.fromEntries(TOOLS.map((t) => [t.name, t]));
 
 // -----------------------------------------------------------------------------
+// Resources — read-only family snapshots with stable `bacan://` URIs. Each has a
+// `read(db, hid)` that returns the current JSON (reusing the read-tool aggregators,
+// so a resource and its sibling tool never drift). `resources/read` serializes it
+// as `application/json`. All are scoped to the authed household.
+// -----------------------------------------------------------------------------
+
+/**
+ * The "family overview" resource — one compact live snapshot: what needs attention (overdue care +
+ * expired records), this-month spend, the next event, and counts across plants/pets/events/lists.
+ * Aggregates the existing read tools (fanned out in parallel) so it stays in lock-step with them.
+ */
+async function buildOverview(db, hid) {
+  const [nameMap, care, money, plants, pets, events, lists] = await Promise.all([
+    loadMemberNames(db, hid),
+    TOOL_MAP.get_care_due.run(db, hid, {}),
+    TOOL_MAP.get_money_summary.run(db, hid, {}),
+    TOOL_MAP.get_plants.run(db, hid, { limit: 200 }),
+    TOOL_MAP.get_pets.run(db, hid, {}),
+    TOOL_MAP.get_events.run(db, hid, { daysAhead: 7, limit: 100 }),
+    TOOL_MAP.get_lists.run(db, hid, { includeCompleted: true }),
+  ]);
+  const overdueCare = care.careDue
+    .filter((c) => c.overdue)
+    .map((c) => ({ item: c.item, kind: c.kind, task: c.task, daysOverdue: -c.daysUntilDue }));
+  const expiredRecords = care.expiringRecords
+    .filter((r) => r.expired)
+    .map((r) => ({ title: r.title, type: r.type, daysExpired: -r.daysUntilExpiry }));
+  const openListItems = lists.lists.reduce((n, l) => n + (l.itemCount - l.completedCount), 0);
+  const nextEvent = events.events[0]
+    ? { title: events.events[0].title, when: events.events[0].when } : null;
+  return {
+    household: hid,
+    generatedAt: new Date().toISOString(),
+    familyMembers: Object.values(nameMap),
+    needsAttention: {
+      overdueCareCount: overdueCare.length,
+      dueSoonCareCount: care.dueCount,
+      expiredRecordsCount: expiredRecords.length,
+      expiringRecordsCount: care.expiringRecordsCount,
+      overdueCare: overdueCare.slice(0, 10),
+      expiredRecords: expiredRecords.slice(0, 10),
+    },
+    thisMonthSpend: {
+      month: money.month,
+      currency: money.currency,
+      total: money.total,
+      transactionCount: money.transactionCount,
+      topCategory: money.byCategory[0] ? money.byCategory[0].category : null,
+    },
+    counts: {
+      plants: plants.totalPlants,
+      thirstyPlants: plants.thirstyCount,
+      pets: pets.totalPets,
+      petsWithExpiredRecords: pets.pets.filter((p) => p.hasExpiredRecord).length,
+      upcomingEvents7d: events.totalUpcoming,
+      lists: lists.totalLists,
+      openListItems,
+    },
+    nextEvent,
+  };
+}
+
+const RESOURCES = [
+  {
+    uri: "bacan://family/overview",
+    name: "Family overview",
+    description:
+      "A compact live snapshot of the ¡Bacán! family hub: what needs attention (overdue care, " +
+      "expired records), this-month spend, the next event, and counts across plants, pets, events, " +
+      "and lists. Start here for 'how are things?'.",
+    mimeType: "application/json",
+    read: (db, hid) => buildOverview(db, hid),
+  },
+  {
+    uri: "bacan://care/due",
+    name: "Care due & overdue",
+    description:
+      "Everything due or overdue right now across house, plant, and pet care, plus expiring/expired " +
+      "Family-Brain records (vaccines, warranties). Overdue first.",
+    mimeType: "application/json",
+    read: (db, hid) => TOOL_MAP.get_care_due.run(db, hid, {}),
+  },
+  {
+    uri: "bacan://money/summary",
+    name: "This month's spending",
+    description:
+      "The current month's spending summary: total, by-category vs budgets, and top/recurring vendors.",
+    mimeType: "application/json",
+    read: (db, hid) => TOOL_MAP.get_money_summary.run(db, hid, {}),
+  },
+  {
+    uri: "bacan://memories/recent",
+    name: "Recent family memories",
+    description:
+      "The latest entries from the family memory scrapbook: title, date, which kid(s), milestone, and " +
+      "a short excerpt.",
+    mimeType: "application/json",
+    read: (db, hid) => TOOL_MAP.get_memories.run(db, hid, { limit: 10 }),
+  },
+];
+
+const RESOURCE_MAP = Object.fromEntries(RESOURCES.map((r) => [r.uri, r]));
+
+// -----------------------------------------------------------------------------
+// Prompts — a few canned, family-voiced starting points an MCP client can surface.
+// Each `build(args)` returns the user-message text; some reference the tools/resources
+// by name so the model knows where to look. `gift_ideas_for` takes a `person` argument.
+// -----------------------------------------------------------------------------
+
+const PROMPTS = [
+  {
+    name: "morning_briefing",
+    description: "What needs my family's attention today — a warm, first-name summary across care, calendar, and the Family Brain.",
+    arguments: [],
+    build: () =>
+      "It's morning at the ¡Bacán! house. Using the family tools and the bacan://family/overview and " +
+      "bacan://care/due resources, tell me what needs our attention today: anything overdue or due " +
+      "soon (plants, pets, house), what's on today's and this week's calendar, and any expiring " +
+      "records. Keep it warm and brief, use first names, and end with the single most important thing " +
+      "to do first.",
+  },
+  {
+    name: "plan_week_dinners",
+    description: "Draft a week of family dinners and the grocery items we'd need.",
+    arguments: [],
+    build: () =>
+      "Help me plan dinners for the coming week for the ¡Bacán! family. Check the calendar " +
+      "(get_events) for busy nights, keep it kid-friendly for Oliver and Famfis, suggest 5–7 dinners, " +
+      "and list the grocery items we'd need. Ask before adding anything to a list with add_to_list.",
+  },
+  {
+    name: "whats_overdue",
+    description: "Just the fires — care tasks and records that are actually overdue right now.",
+    arguments: [],
+    build: () =>
+      "Read bacan://care/due (or call get_care_due) and tell me ONLY what is actually overdue right " +
+      "now — overdue care tasks and expired records — worst-first, with who last did each. No upcoming " +
+      "items, just the fires.",
+  },
+  {
+    name: "gift_ideas_for",
+    description: "Thoughtful gift ideas for a family member, grounded in what the hub knows about them.",
+    arguments: [
+      { name: "person", description: "Who the gift is for (a first name, e.g. Valentina or Oliver).", required: true },
+    ],
+    build: (args) => {
+      const who = args && typeof args.person === "string" && args.person.trim()
+        ? args.person.trim() : "a family member";
+      return (
+        `Brainstorm a handful of thoughtful gift ideas for ${who}. Ground them in what the family hub ` +
+        `knows — recent memories (get_memories), any wishlist/gift lists (get_lists), and upcoming ` +
+        `occasions on the calendar (get_events). Mix a couple of budget-friendly ideas with one ` +
+        `splurge, and say in one line why each fits ${who}.`
+      );
+    },
+  },
+];
+
+const PROMPT_MAP = Object.fromEntries(PROMPTS.map((p) => [p.name, p]));
+
+// -----------------------------------------------------------------------------
 // JSON-RPC / MCP dispatch
 // -----------------------------------------------------------------------------
 
@@ -1049,15 +1210,22 @@ async function handleMessage(msg, ctx) {
         params && typeof params.protocolVersion === "string" ? params.protocolVersion : DEFAULT_PROTOCOL;
       return rpcResult(id, {
         protocolVersion,
-        capabilities: { tools: { listChanged: false } },
+        capabilities: {
+          tools: { listChanged: false },
+          resources: { subscribe: false, listChanged: false },
+          prompts: { listChanged: false },
+        },
         serverInfo: { name: SERVER_NAME, version: SERVER_VERSION },
         instructions:
           "Access to the ¡Bacán! family hub (household " + ctx.hid + "). READ tools answer questions " +
           "about the family's plants, pets, calendar, documents (Family Brain), money, care schedule, " +
           "memories, and lists. WRITE tools (marked ⚠️ MODIFIES DATA — mark_care_done, complete_chore, " +
           "add_event, add_to_list, check_off_list_item, log_expense, create_memory) change data; they " +
-          "act as the household owner unless a memberId is given. Smart-home / lock / garage control is " +
-          "NOT available here — that stays in the app (the LAN lives on the phone).",
+          "act as the household owner unless a memberId is given. RESOURCES expose read-only snapshots " +
+          "at stable bacan:// URIs (family/overview, care/due, money/summary, memories/recent) — read " +
+          "bacan://family/overview first for a whole-hub glance. PROMPTS offer canned family starting " +
+          "points (morning_briefing, plan_week_dinners, whats_overdue, gift_ideas_for). Smart-home / " +
+          "lock / garage control is NOT available here — that stays in the app (the LAN lives on the phone).",
       });
     }
     case "ping":
@@ -1069,6 +1237,39 @@ async function handleMessage(msg, ctx) {
       return rpcResult(id, {
         tools: TOOLS.map((t) => ({ name: t.name, description: t.description, inputSchema: t.inputSchema })),
       });
+    case "resources/list":
+      return rpcResult(id, {
+        resources: RESOURCES.map((r) => ({
+          uri: r.uri, name: r.name, description: r.description, mimeType: r.mimeType,
+        })),
+      });
+    case "resources/read": {
+      const uri = params && params.uri;
+      const resource = RESOURCE_MAP[uri];
+      if (!resource) return rpcError(id, -32602, `Unknown resource: ${uri}`);
+      try {
+        const data = await resource.read(ctx.db, ctx.hid);
+        return rpcResult(id, {
+          contents: [{ uri, mimeType: resource.mimeType, text: JSON.stringify(data, null, 2) }],
+        });
+      } catch (err) {
+        return rpcError(id, -32603, `Resource "${uri}" failed: ${err.message}`);
+      }
+    }
+    case "prompts/list":
+      return rpcResult(id, {
+        prompts: PROMPTS.map((p) => ({ name: p.name, description: p.description, arguments: p.arguments })),
+      });
+    case "prompts/get": {
+      const name = params && params.name;
+      const prompt = PROMPT_MAP[name];
+      if (!prompt) return rpcError(id, -32602, `Unknown prompt: ${name}`);
+      const args = (params && params.arguments) || {};
+      return rpcResult(id, {
+        description: prompt.description,
+        messages: [{ role: "user", content: { type: "text", text: prompt.build(args) } }],
+      });
+    }
     case "tools/call": {
       const name = params && params.name;
       const tool = TOOL_MAP[name];
@@ -1146,4 +1347,4 @@ async function serve(req, res) {
   }
 }
 
-module.exports = { serve, mintToken, authenticate, TOOLS };
+module.exports = { serve, mintToken, authenticate, TOOLS, RESOURCES, PROMPTS };
