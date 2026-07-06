@@ -483,8 +483,36 @@ notifications). Michael queued #2, #3, smart notifications, Money.
 - **V4 — Money:** per-category budgets + alerts + savings goals + actionable bill forecast;
   Plaid bank-sync (LIVE needs Michael's Plaid account — build the client/flow + test against
   sandbox; production creds are a Michael task).
+- **V5 — the INGESTION PIPELINE ("the open front door") [Michael requested 2026-07-06]:**
+  goal = *incredibly natural to get important items into Bacán from ANYWHERE*. Architecture:
+  every input vector converges on ONE routing core — the V2-D smart-capture classifier
+  (photo/text/url/file/email → Brain / plant / pet / memory / list / event / money, with a
+  confirm step where interactive). Build the vectors ON TOP of V2-D's router. Vectors:
+  1. **Share Extension (system share sheet)** — THE flagship. Share from Safari / Photos / Mail /
+     Files / any app → "Bacán" → router files it (receipt/PDF→Brain, product page→wishlist/gift,
+     article→Brain, photo→memory or plant-ID, event page→calendar). New Share Extension app
+     target (project.yml + app-group for shared auth/Firestore access from the extension).
+  2. **Email forwarding** — EXTEND the existing `receiveEmail` Postmark webhook (today: email→
+     calendar events only) into FULL routing: a per-household forwarding alias (e.g.
+     hub+{code}@…); attachments (receipts/PDFs)→Brain, school newsletters→events+docs, shipping/
+     order confirmations→tracking, general→AI-routed. Reuse `eventExtract.js` + `docProcess.js`.
+  3. **Siri / App Intents / Shortcuts** — "Add to Bacán", "Add milk to groceries", "Log a
+     memory", "What's due?" — App Intents over the verb registry (same as the ambient-reach
+     Siri rec). Voice + Shortcuts automations + Spotlight donation.
+  4. **Document scanner** — VisionKit `VNDocumentCameraViewController` multi-page scan → Brain
+     (proper receipts/records vs a single snapshot).
+  5. **URL / link import** — paste or share a URL → GENERALIZE `extractRecipe`: recipe→Kitchen,
+     product→wishlist/gift, event→calendar, article/PDF→Brain.
+  6. **Interactive widgets** — Home/Lock-Screen quick-add (add-to-list, quick-capture) + glance
+     (overlaps the ambient-reach widgets below — do together).
+  7. **Nice-to-haves:** clipboard-paste detection, drag-&-drop (iPad), AirDrop-in (via the share
+     ext), barcode/QR (product→list/wishlist; wine already scans labels).
+  Ordering: V2-D lands the router first; V5 adds external vectors that reuse it. Share Extension +
+  widgets need new app-extension targets + an app group; email is functions-only; Siri is App
+  Intents in-app. Sequence into waves by target-type to keep parallel worktrees clean.
 - **Ambient reach (my #1, NOT yet queued — recommend soon):** Home/Lock-Screen WIDGETS + Siri/
   Shortcuts over the existing verb registry — most-felt, least-effort, glanceable family hub.
+  (Now folds into V5.3 + V5.6 — the ingestion pipeline subsumes it.)
 
 # Act IV — The intelligence era (2026-07-04)
 
