@@ -71,22 +71,31 @@ public struct ChoresView: View {
                         })
                         smartHomePreview(config)
                     }
+                    // Motion & Delight — Home's signature: care cards BLOOM in (scale 0.9→1 with a
+                    // gentle overshoot), a plant-growth feel. Replays on every (re)selection.
+                    .tabEntrance(.bloom, index: 0)
                 }
 
                 hubCard(.choresRewards, icon: "checklist", tint: .bacanGreen,
                         title: "Chores & rewards", status: choresStatus, id: "chores-rewards") { choresPreview }
+                    .tabEntrance(.bloom, index: 1)
                 hubCard(.houseCare, icon: "checkmark.seal.fill", tint: .marigold,
                         title: "House care", status: houseCareStatus, id: "house-care") { houseCarePreview }
+                    .tabEntrance(.bloom, index: 2)
                 hubCard(.plants, icon: "leaf.fill", tint: .bacanGreen,
                         title: "Plants", status: plantsStatus, id: "plants") { plantsPreview }
+                    .tabEntrance(.bloom, index: 3)
                 hubCard(.yard, icon: "tree.fill", tint: .marigold,
                         title: "Yard & garden", status: yardStatus, id: "yard") { yardPreview }
+                    .tabEntrance(.bloom, index: 4)
                 hubCard(.pets, icon: "pawprint.fill", tint: .sky,
                         title: "Pets", status: petsStatus, id: "pets") { petsPreview }
+                    .tabEntrance(.bloom, index: 5)
 
                 if !store.activity.isEmpty {
                     hubCard(.activity, icon: "clock.arrow.circlepath", tint: .sky,
                             title: "Recent activity", status: activityStatus, id: "activity") { activityPreview }
+                        .tabEntrance(.bloom, index: 6)
                 }
             }
             .padding(.horizontal)

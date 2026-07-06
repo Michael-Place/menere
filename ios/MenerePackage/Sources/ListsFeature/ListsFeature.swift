@@ -232,6 +232,9 @@ public struct ListsView: View {
                     }
                 }
                 .accessibilityIdentifier("cellar-row")
+                // Motion & Delight — Lists' signature: rows SLIDE in from the leading edge, staggered,
+                // like a checklist writing itself. Replays on every (re)selection.
+                .tabEntrance(.slideLeading, index: 0)
 
                 // Sibling pinned row: the Family Brain document vault.
                 Button {
@@ -255,6 +258,7 @@ public struct ListsView: View {
                     }
                 }
                 .accessibilityIdentifier("docs-row")
+                .tabEntrance(.slideLeading, index: 1)
 
                 // Sibling pinned row: Money — expenses & budgets.
                 Button {
@@ -278,6 +282,7 @@ public struct ListsView: View {
                     }
                 }
                 .accessibilityIdentifier("money-row")
+                .tabEntrance(.slideLeading, index: 2)
             }
             .listRowBackground(Color.familySurface)
 
@@ -290,7 +295,7 @@ public struct ListsView: View {
                             .foregroundStyle(.secondary)
                     }
                 } else {
-                    ForEach(store.lists) { list in
+                    ForEach(Array(store.lists.enumerated()), id: \.element.id) { index, list in
                         Button {
                             store.send(.listTapped(list))
                         } label: {
@@ -302,6 +307,7 @@ public struct ListsView: View {
                                     .foregroundStyle(Color(red: rgb.red, green: rgb.green, blue: rgb.blue))
                             }
                         }
+                        .tabEntrance(.slideLeading, index: 3 + index)
                     }
                     .onDelete { store.send(.deleteLists($0)) }
                 }

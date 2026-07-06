@@ -169,9 +169,16 @@ public enum TabItem: Int, CaseIterable, Equatable {
 public struct MainTabView: View {
     @Bindable var store: StoreOf<MainTabReducer>
 
+    /// Motion & Delight — a monotonic entrance token per tab. It advances each time a tab becomes
+    /// selected (and `.tabEntrance` fires once on cold-launch via its `initial:` reveal), so every
+    /// tab replays its signature staggered load-in when navigated to. See ``TabEntrance``.
+    @State private var entranceTokens: [TabItem: Int] = [:]
+
     public init(store: StoreOf<MainTabReducer>) {
         self.store = store
     }
+
+    private func entranceToken(_ tab: TabItem) -> Int { entranceTokens[tab, default: 0] }
 
     public var body: some View {
         TabView(selection: $store.selectedTab.sending(\.tabSelected)) {
@@ -195,6 +202,7 @@ public struct MainTabView: View {
                             }
                         }
                 }
+                .tabEntranceTrigger(entranceToken(.today))
             }
 
             Tab(TabItem.memories.title, systemImage: TabItem.memories.systemImage, value: TabItem.memories) {
@@ -202,6 +210,7 @@ public struct MainTabView: View {
                     MemoriesView(store: store.scope(state: \.memories, action: \.memories))
                         .toolbar { familyToolbar }
                 }
+                .tabEntranceTrigger(entranceToken(.memories))
             }
 
             Tab(TabItem.lists.title, systemImage: TabItem.lists.systemImage, value: TabItem.lists) {
@@ -209,6 +218,7 @@ public struct MainTabView: View {
                     ListsView(store: store.scope(state: \.lists, action: \.lists))
                         .toolbar { familyToolbar }
                 }
+                .tabEntranceTrigger(entranceToken(.lists))
             }
 
             Tab(TabItem.chores.title, systemImage: TabItem.chores.systemImage, value: TabItem.chores) {
@@ -216,6 +226,7 @@ public struct MainTabView: View {
                     ChoresView(store: store.scope(state: \.chores, action: \.chores))
                         .toolbar { familyToolbar }
                 }
+                .tabEntranceTrigger(entranceToken(.chores))
             }
 
             Tab(TabItem.recipes.title, systemImage: TabItem.recipes.systemImage, value: TabItem.recipes) {
@@ -223,7 +234,13 @@ public struct MainTabView: View {
                     RecipesView(store: store.scope(state: \.recipes, action: \.recipes))
                         .toolbar { familyToolbar }
                 }
+                .tabEntranceTrigger(entranceToken(.recipes))
             }
+        }
+        // Motion & Delight — replay the newly-selected tab's signature entrance on each switch.
+        // (Cold launch is covered by `.tabEntrance`'s own `initial:` reveal for the default tab.)
+        .onChange(of: store.selectedTab) { _, tab in
+            entranceTokens[tab, default: 0] += 1
         }
         .tint(.bacanGreen)
         .selectionHaptic(store.selectedTab)

@@ -21,23 +21,25 @@ public struct TodayView: View {
     public var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
-                greeting
+                // Motion & Delight — Today's signature: sections CASCADE top→bottom, and the
+                // family grid POPS in with a sticker-slap overshoot. Replays on every (re)selection.
+                greeting.tabEntrance(.cascade, index: 0)
 
-                briefingCard
+                briefingCard.tabEntrance(.cascade, index: 1)
 
-                captureAnythingButton
+                captureAnythingButton.tabEntrance(.cascade, index: 2)
 
-                weekStrip
-                scheduleCard
-                dinnerCard
-                quickActions
-                captureMomentButton
+                weekStrip.tabEntrance(.cascade, index: 3)
+                scheduleCard.tabEntrance(.cascade, index: 4)
+                dinnerCard.tabEntrance(.cascade, index: 5)
+                quickActions.tabEntrance(.cascade, index: 6)
+                captureMomentButton.tabEntrance(.cascade, index: 7)
 
-                choresCard
-                homeCareCard
-                houseCard
-                familyRadarCard
-                familyCard
+                choresCard.tabEntrance(.cascade, index: 8)
+                homeCareCard.tabEntrance(.cascade, index: 9)
+                houseCard.tabEntrance(.cascade, index: 10)
+                familyRadarCard.tabEntrance(.cascade, index: 11)
+                familyCard.tabEntrance(.pop, index: 12)
             }
             .padding(.horizontal)
             .padding(.vertical, 12)

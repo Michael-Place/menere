@@ -75,7 +75,9 @@ public struct RecipesView: View {
                 )
             } else {
                 List {
-                    ForEach(store.recipes) { recipe in
+                    // Motion & Delight — Kitchen's signature: recipe cards RISE + settle (slide-up +
+                    // fade), a "plating" feel. Replays on every (re)selection.
+                    ForEach(Array(store.recipes.enumerated()), id: \.element.id) { index, recipe in
                         Button { store.send(.editTapped(recipe)) } label: {
                             HStack(spacing: 12) {
                                 RecipeThumbnail(imageURL: recipe.imageURL)
@@ -97,6 +99,7 @@ public struct RecipesView: View {
                         }
                         .buttonStyle(.plain)
                         .listRowBackground(Color.familyCanvas)
+                        .tabEntrance(.rise, index: index)
                     }
                 }
                 .listStyle(.plain)
@@ -146,11 +149,12 @@ public struct RecipesView: View {
             .accessibilityIdentifier("plan-my-week-button")
 
             List {
-                ForEach(weekDays, id: \.self) { day in
+                ForEach(Array(weekDays.enumerated()), id: \.element) { index, day in
                     dayRow(day)
                         .listRowBackground(
                             cal.isDateInToday(day) ? Color.bacanGreen.opacity(0.10) : Color.familyCanvas
                         )
+                        .tabEntrance(.rise, index: index)
                 }
             }
             .listStyle(.plain)

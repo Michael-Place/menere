@@ -61,11 +61,15 @@ public struct MemoriesView: View {
                 if monthGroups.isEmpty {
                     filteredEmptyState
                 } else {
-                    ForEach(monthGroups, id: \.key) { group in
+                    ForEach(Array(monthGroups.enumerated()), id: \.element.key) { groupIndex, group in
                         Section {
                             recapCard(for: group.key)
-                            ForEach(group.memories) { memory in
+                            // Motion & Delight — Memories' signature: scrapbook pages TUMBLE in with a
+                            // slight rotation settle, like photos landing on a page. Index continues
+                            // across months so the stagger reads as one falling stack.
+                            ForEach(Array(group.memories.enumerated()), id: \.element.id) { pageIndex, memory in
                                 pageButton(memory)
+                                    .tabEntrance(.tumble, index: groupIndex + pageIndex)
                             }
                         } header: {
                             monthHeader(group)
@@ -331,6 +335,7 @@ public struct MemoriesView: View {
                     .foregroundStyle(Color.bacanGreen)
                     .padding(24)
                     .background(Circle().fill(Color.bacanGreen.opacity(0.12)))
+                    .tabEntrance(.tumble, index: 0)
 
                 VStack(spacing: 10) {
                     Text("Your family's memories\nlive here 📖")
@@ -345,6 +350,7 @@ public struct MemoriesView: View {
                         .fixedSize(horizontal: false, vertical: true)
                         .padding(.horizontal, 24)
                 }
+                .tabEntrance(.tumble, index: 1)
 
                 Button {
                     store.send(.captureMomentTapped)
@@ -359,6 +365,7 @@ public struct MemoriesView: View {
                 .buttonStyle(.pressable)
                 .padding(.horizontal, 32)
                 .accessibilityIdentifier("memories-capture-moment")
+                .tabEntrance(.tumble, index: 2)
 
                 Spacer(minLength: 40)
             }
