@@ -22,6 +22,7 @@ struct SpendingInsightsView: View {
                         emptyState
                     } else {
                         breakdownCard
+                        if !budgetLines.isEmpty { budgetCard }
                         if !report.recurring.isEmpty { recurringCard }
                         if let hint = report.seasonalHint { seasonalCard(hint) }
                         if report.oneTimeTotal > 0 { oneTimeCard }
@@ -167,6 +168,39 @@ struct SpendingInsightsView: View {
         }
     }
 
+    // MARK: Budget vs actual (V4)
+
+    /// This month's category lines that carry a budget — the fuel for the budget-vs-actual card.
+    private var budgetLines: [MoneyRollup.CategoryLine] {
+        store.summary.lines.filter { $0.limit != nil }
+    }
+
+    private var budgetCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Label("Budgets", systemImage: "gauge.with.dots.needle.33percent")
+                    .font(.system(.subheadline, design: .rounded).weight(.semibold))
+                    .foregroundStyle(Color.ink)
+                Spacer()
+                if store.hasBudgetAlerts {
+                    Text("\(store.budgetAlerts.count) need\(store.budgetAlerts.count == 1 ? "s" : "") attention")
+                        .font(.caption2.weight(.semibold))
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(Color.terracotta.opacity(0.15), in: Capsule())
+                        .foregroundStyle(Color.terracotta)
+                }
+            }
+            Text("How each budgeted category is tracking this month.")
+                .font(.caption)
+                .foregroundStyle(Color.inkSoft)
+            ForEach(budgetLines) { line in
+                BudgetProgressBar(line: line, monthProgress: store.monthProgress)
+            }
+        }
+        .cardChrome()
+    }
+
     // MARK: Recurring
 
     private var recurringCard: some View {
@@ -284,6 +318,7 @@ struct SpendingInsightsView: View {
                 .font(.caption)
                 .foregroundStyle(Color.inkSoft)
             ForEach(store.forecast) { item in
+                let logged = store.loggedForecastIds.contains(item.id)
                 HStack(spacing: 10) {
                     Image(systemName: item.category.symbolName)
                         .foregroundStyle(item.category.tint)
@@ -297,17 +332,28 @@ struct SpendingInsightsView: View {
                             .foregroundStyle(Color.inkSoft)
                     }
                     Spacer()
-                    Text(Self.forecastMonth(item.nextDate))
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(item.category.tint)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(item.category.tint.opacity(0.14), in: Capsule())
+                    Button { store.send(.logForecastTapped(item)) } label: {
+                        if logged {
+                            Label("Logged", systemImage: "checkmark.circle.fill")
+                                .font(.caption2.weight(.semibold))
+                                .foregroundStyle(Color.bacanGreen)
+                        } else {
+                            Text("Log it")
+                                .font(.caption2.weight(.bold))
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 5)
+                                .background(item.category.tint.opacity(0.16), in: Capsule())
+                                .foregroundStyle(item.category.tint)
+                        }
+                    }
+                    .buttonStyle(.pressable)
+                    .disabled(logged)
+                    .accessibilityIdentifier("forecast-log-\(item.id)")
                 }
                 .padding(.vertical, 2)
                 .accessibilityIdentifier("forecast-\(item.id)")
             }
-            Text("Estimated from past timing — not exact due dates.")
+            Text("Tap “Log it” to confirm a bill as a real expense. Estimated from past timing — not exact due dates.")
                 .font(.caption2)
                 .foregroundStyle(Color.inkSoft)
         }
@@ -424,6 +470,76 @@ private struct PlannedRow: View {
         }
         .padding(.vertical, 2)
         .accessibilityIdentifier("planned-\(label)")
+    }
+}
+
+// MARK: - Budget-vs-actual bar (V4)
+
+private struct BudgetProgressBar: View {
+    let line: MoneyRollup.CategoryLine
+    var monthProgress: Double = 1
+
+    private var status: BudgetStatus {
+        guard let limit = line.limit else { return .under }
+        return BudgetAlerts.status(spent: line.spent, limit: limit, monthProgress: monthProgress)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                Image(systemName: line.category.symbolName)
+                    .foregroundStyle(line.category.tint)
+                    .frame(width: 22)
+                Text(line.category.displayName)
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(Color.ink)
+                Spacer()
+                Text("\(MoneyView.currency(line.spent)) / \(MoneyView.currency(line.limit ?? 0))")
+                    .font(.caption.weight(.semibold).monospacedDigit())
+                    .foregroundStyle(Color.ink)
+            }
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    Capsule().fill(Color.inkSoft.opacity(0.12))
+                    Capsule()
+                        .fill(fill)
+                        .frame(width: max(4, geo.size.width * line.fillFraction(neutralMax: line.limit ?? 0)))
+                }
+            }
+            .frame(height: 8)
+            Text(caption)
+                .font(.caption2)
+                .foregroundStyle(captionColor)
+        }
+        .padding(.vertical, 3)
+        .accessibilityIdentifier("budget-progress-\(line.category.rawValue)")
+    }
+
+    private var fill: Color {
+        switch status {
+        case .over: return .terracotta
+        case .trendingOver: return .marigold
+        case .under: return .bacanGreen
+        }
+    }
+
+    private var captionColor: Color {
+        switch status {
+        case .over: return .terracotta
+        case .trendingOver: return .marigold
+        case .under: return .inkSoft
+        }
+    }
+
+    private var caption: String {
+        let limit = line.limit ?? 0
+        switch status {
+        case .over: return "Over by \(MoneyView.currency(line.overBy))"
+        case .trendingOver:
+            let projected = BudgetAlerts.projected(spent: line.spent, monthProgress: monthProgress)
+            return "On pace for ~\(MoneyView.currency(projected)) — trending over"
+        case .under: return "\(MoneyView.currency(limit - line.spent)) left"
+        }
     }
 }
 

@@ -15,10 +15,13 @@ public struct MoneyView: View {
     public var body: some View {
         List {
             monthHeaderSection
+            if !store.budgetAlerts.isEmpty { budgetAlertsSection }
             insightsSection
             if !store.inboxDocuments.isEmpty { inboxSection }
             categoryBarsSection
+            goalsSection
             ledgerSection
+            bankSyncSection
         }
         .scrollContentBackground(.hidden)
         .background(Color.familyCanvas)
@@ -54,6 +57,9 @@ public struct MoneyView: View {
         }
         .sheet(item: $store.scope(state: \.budgetEditor, action: \.budgetEditor)) { editorStore in
             BudgetEditorView(store: editorStore)
+        }
+        .sheet(item: $store.scope(state: \.goalEditor, action: \.goalEditor)) { editorStore in
+            GoalEditorView(store: editorStore)
         }
         .sheet(isPresented: $store.showInsights) {
             SpendingInsightsView(store: store)
@@ -181,10 +187,114 @@ public struct MoneyView: View {
                     .foregroundStyle(Color.inkSoft)
             } else {
                 let neutralMax = store.summary.maxSpend
+                let progress = store.monthProgress
                 ForEach(store.summary.lines) { line in
-                    CategoryBarRow(line: line, neutralMax: neutralMax)
+                    CategoryBarRow(line: line, neutralMax: neutralMax, monthProgress: progress)
                 }
             }
+        }
+        .listRowBackground(Color.familySurface)
+    }
+
+    // MARK: Budget alerts
+
+    private var budgetAlertsSection: some View {
+        Section {
+            ForEach(store.budgetAlerts) { alert in
+                BudgetAlertRow(alert: alert)
+            }
+        } header: {
+            Label("Heads up", systemImage: "exclamationmark.triangle.fill")
+                .foregroundStyle(Color.terracotta)
+        } footer: {
+            Text("A gentle nudge — a category is over, or on pace to be. Tap the sliders to adjust a budget.")
+                .font(.caption)
+                .foregroundStyle(Color.inkSoft)
+        }
+        .listRowBackground(Color.familySurface)
+    }
+
+    // MARK: Savings goals
+
+    private var goalsSection: some View {
+        Section {
+            if store.sortedGoals.isEmpty {
+                Button { store.send(.addGoalTapped) } label: {
+                    HStack(spacing: 12) {
+                        Image(systemName: "target")
+                            .font(.title3)
+                            .foregroundStyle(Color.bacanGreen)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Start a savings goal")
+                                .font(.system(.subheadline, design: .rounded).weight(.semibold))
+                                .foregroundStyle(Color.ink)
+                            Text("A vacation, a rainy-day jar, the next big thing.")
+                                .font(.caption)
+                                .foregroundStyle(Color.inkSoft)
+                        }
+                        Spacer()
+                        Image(systemName: "plus.circle.fill")
+                            .foregroundStyle(Color.bacanGreen)
+                    }
+                }
+                .buttonStyle(.pressable)
+                .accessibilityIdentifier("add-goal-empty-button")
+            } else {
+                ForEach(store.sortedGoals) { goal in
+                    Button { store.send(.goalTapped(goal)) } label: {
+                        GoalRow(goal: goal, now: store.referenceDate)
+                    }
+                    .buttonStyle(.pressable)
+                    .accessibilityIdentifier("goal-row-\(goal.id)")
+                }
+                .onDelete { store.send(.deleteGoals($0)) }
+            }
+        } header: {
+            HStack {
+                Text("Savings goals").foregroundStyle(Color.inkSoft)
+                Spacer()
+                if !store.sortedGoals.isEmpty {
+                    Button { store.send(.addGoalTapped) } label: {
+                        Image(systemName: "plus")
+                            .font(.footnote.weight(.bold))
+                            .foregroundStyle(Color.bacanGreen)
+                    }
+                    .buttonStyle(.pressable)
+                    .accessibilityIdentifier("add-goal-button")
+                }
+            }
+        }
+        .listRowBackground(Color.familySurface)
+    }
+
+    // MARK: Bank sync (Plaid — coming soon)
+
+    private var bankSyncSection: some View {
+        Section {
+            HStack(spacing: 12) {
+                Image(systemName: "building.columns.fill")
+                    .font(.title3)
+                    .foregroundStyle(Color.sky)
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 6) {
+                        Text("Connect a bank")
+                            .font(.system(.subheadline, design: .rounded).weight(.semibold))
+                            .foregroundStyle(Color.ink)
+                        Text("Coming soon")
+                            .font(.caption2.weight(.semibold))
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 2)
+                            .background(Color.marigold.opacity(0.18), in: Capsule())
+                            .foregroundStyle(Color.marigold)
+                    }
+                    Text("Once set up, transactions import themselves — no more jotting each spend. Needs a quick one-time Plaid connection.")
+                        .font(.caption)
+                        .foregroundStyle(Color.inkSoft)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .padding(.vertical, 2)
+            .accessibilityIdentifier("connect-bank-row")
         }
         .listRowBackground(Color.familySurface)
     }
@@ -293,6 +403,13 @@ private struct BrainInboxRow: View {
 private struct CategoryBarRow: View {
     let line: MoneyRollup.CategoryLine
     let neutralMax: Double
+    /// 0…1 of the month elapsed — powers the "trending over" projection when a budget is set.
+    var monthProgress: Double = 1
+
+    private var status: BudgetStatus {
+        guard let limit = line.limit else { return .under }
+        return BudgetAlerts.status(spent: line.spent, limit: limit, monthProgress: monthProgress)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -320,9 +437,14 @@ private struct CategoryBarRow: View {
             .frame(height: 9)
 
             if let limit = line.limit {
-                Text(caption(limit: limit))
-                    .font(.caption)
-                    .foregroundStyle(line.isOverBudget ? Color.terracotta : Color.inkSoft)
+                HStack(spacing: 5) {
+                    if status == .trendingOver {
+                        Image(systemName: "exclamationmark.triangle.fill").font(.caption2)
+                    }
+                    Text(caption(limit: limit))
+                }
+                .font(.caption)
+                .foregroundStyle(captionColor)
             }
         }
         .padding(.vertical, 4)
@@ -330,16 +452,147 @@ private struct CategoryBarRow: View {
     }
 
     private var fillColor: Color {
-        if line.limit == nil { return .sage }
-        return line.isOverBudget ? .terracotta : .bacanGreen
+        switch status {
+        case .over: return .terracotta
+        case .trendingOver: return .marigold
+        case .under: return line.limit == nil ? .sage : .bacanGreen
+        }
+    }
+
+    private var captionColor: Color {
+        switch status {
+        case .over: return .terracotta
+        case .trendingOver: return .marigold
+        case .under: return .inkSoft
+        }
     }
 
     private func caption(limit: Double) -> String {
-        if line.isOverBudget {
+        switch status {
+        case .over:
             return "over by \(MoneyView.currency(line.overBy)) · budget \(MoneyView.currency(limit))"
+        case .trendingOver:
+            let projected = BudgetAlerts.projected(spent: line.spent, monthProgress: monthProgress)
+            return "on pace for ~\(MoneyView.currency(projected)) · budget \(MoneyView.currency(limit))"
+        case .under:
+            return "\(MoneyView.currency(limit - line.spent)) left of \(MoneyView.currency(limit))"
         }
-        return "\(MoneyView.currency(limit - line.spent)) left of \(MoneyView.currency(limit))"
     }
+}
+
+// MARK: - Budget alert row
+
+private struct BudgetAlertRow: View {
+    let alert: BudgetAlert
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: alert.category.symbolName)
+                .foregroundStyle(tint)
+                .frame(width: 26)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(alert.category.displayName)
+                    .font(.body.weight(.medium))
+                    .foregroundStyle(Color.ink)
+                Text(message)
+                    .font(.caption)
+                    .foregroundStyle(Color.inkSoft)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer()
+            Text(alert.status == .over ? "Over" : "Trending")
+                .font(.caption2.weight(.bold))
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(tint.opacity(0.16), in: Capsule())
+                .foregroundStyle(tint)
+        }
+        .padding(.vertical, 2)
+        .accessibilityIdentifier("budget-alert-\(alert.category.rawValue)")
+    }
+
+    private var tint: Color { alert.status == .over ? .terracotta : .marigold }
+
+    private var message: String {
+        if alert.status == .over {
+            return "\(MoneyView.currency(alert.spent)) spent · \(MoneyView.currency(alert.overBy)) over the \(MoneyView.currency(alert.limit)) budget."
+        }
+        return "\(MoneyView.currency(alert.spent)) so far, on pace for ~\(MoneyView.currency(alert.projected)) vs a \(MoneyView.currency(alert.limit)) budget."
+    }
+}
+
+// MARK: - Savings goal row
+
+private struct GoalRow: View {
+    let goal: SavingsGoal
+    let now: Date
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 12) {
+                Image(systemName: goal.symbol ?? "banknote.fill")
+                    .font(.title3)
+                    .foregroundStyle(goal.isComplete ? Color.bacanGreen : Color.marigold)
+                    .frame(width: 26)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(goal.name)
+                        .font(.body.weight(.medium))
+                        .foregroundStyle(Color.ink)
+                    Text(subtitle)
+                        .font(.caption)
+                        .foregroundStyle(subtitleColor)
+                }
+                Spacer()
+                Text("\(Int((goal.progress * 100).rounded()))%")
+                    .font(.subheadline.weight(.bold).monospacedDigit())
+                    .foregroundStyle(goal.isComplete ? Color.bacanGreen : Color.ink)
+            }
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    Capsule().fill(Color.inkSoft.opacity(0.12))
+                    Capsule()
+                        .fill(goal.isComplete ? Color.bacanGreen : Color.marigold)
+                        .frame(width: max(4, geo.size.width * goal.progress))
+                }
+            }
+            .frame(height: 9)
+            HStack {
+                Text("\(MoneyView.currency(goal.savedAmount)) of \(MoneyView.currency(goal.targetAmount))")
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(Color.inkSoft)
+                Spacer()
+                Text(trailingCaption)
+                    .font(.caption)
+                    .foregroundStyle(Color.inkSoft)
+            }
+        }
+        .padding(.vertical, 4)
+    }
+
+    private var subtitle: String {
+        if goal.isComplete { return "Funded — nice work!" }
+        return "\(MoneyView.currency(goal.remaining)) to go"
+    }
+
+    private var subtitleColor: Color { goal.isComplete ? .bacanGreen : .inkSoft }
+
+    private var trailingCaption: String {
+        if goal.isComplete { return "Done" }
+        if let eta = goal.etaDate(from: now) {
+            let behind = goal.isBehindPace(now: now)
+            return (behind ? "behind — " : "on pace · ") + "~\(Self.etaFormatter.string(from: eta))"
+        }
+        if let target = goal.targetDate {
+            return "by \(Self.etaFormatter.string(from: target))"
+        }
+        return "no deadline"
+    }
+
+    static let etaFormatter: DateFormatter = {
+        let df = DateFormatter()
+        df.dateFormat = "MMM yyyy"
+        return df
+    }()
 }
 
 private struct ExpenseRow: View {

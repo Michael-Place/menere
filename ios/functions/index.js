@@ -901,3 +901,60 @@ exports.dailyThreeThings = onSchedule(
     }
   }
 );
+
+// ── Plaid bank-sync scaffold (Act V V4 — Money) ────────────────────────────────────────────────
+// Structure only; LIVE needs Michael's Plaid account + the two secrets below (not set yet). One
+// callable routes the whole Link → exchange → sync lifecycle by `action`, so the diff to index.js is
+// a single export (see plaid.js for the SDK-lazy, credential-guarded implementation).
+const plaidScaffold = require("./plaid");
+const PLAID_CLIENT_ID = defineSecret("PLAID_CLIENT_ID");
+const PLAID_SECRET = defineSecret("PLAID_SECRET");
+
+/**
+ * `plaidBankSync` is a v2 HTTPS callable (us-central1) — the Plaid entry point. `action` picks the
+ * verb: "createLinkToken" | "exchange" | "sync". Until PLAID_CLIENT_ID/PLAID_SECRET are populated
+ * (and the `plaid` npm dep installed) every action returns a flagged `{ configured:false, … }`
+ * payload so the app shows "coming soon / needs setup" rather than erroring. Auth-required; the
+ * household is derived from the caller, never trusted from the client.
+ */
+exports.plaidBankSync = onCall(
+  { timeoutSeconds: 60, memory: "256MiB", secrets: [PLAID_CLIENT_ID, PLAID_SECRET] },
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError("unauthenticated", "You must be signed in.");
+    }
+    const uid = request.auth.uid;
+    const userSnap = await db().collection("users").doc(uid).get();
+    const hid = userSnap.exists ? userSnap.data().householdId : null;
+    if (!hid) {
+      throw new HttpsError("failed-precondition", "No household for this user.");
+    }
+
+    const data = request.data || {};
+    const action = typeof data.action === "string" ? data.action : "createLinkToken";
+    const env = typeof data.env === "string" ? data.env : "sandbox";
+    const clientId = PLAID_CLIENT_ID.value();
+    const secret = PLAID_SECRET.value();
+    const common = { clientId, secret, env };
+
+    try {
+      switch (action) {
+        case "createLinkToken":
+          return await plaidScaffold.createLinkToken(Object.assign({ userId: uid }, common));
+        case "exchange":
+          return await plaidScaffold.exchangePublicToken(
+            Object.assign({ publicToken: data.publicToken }, common)
+          );
+        case "sync":
+          return await plaidScaffold.syncTransactions(
+            Object.assign({ accessToken: data.accessToken, cursor: data.cursor }, common)
+          );
+        default:
+          throw new HttpsError("invalid-argument", `Unknown Plaid action: ${action}`);
+      }
+    } catch (err) {
+      if (err instanceof HttpsError) throw err;
+      throw new HttpsError("internal", `Plaid ${action} failed: ${err.message}`);
+    }
+  }
+);

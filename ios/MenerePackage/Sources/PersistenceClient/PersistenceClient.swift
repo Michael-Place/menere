@@ -206,6 +206,11 @@ public struct PersistenceClient: Sendable {
     /// Full-document write of the budget config. Not a merge — the whole `config/budgets` doc is
     /// replaced, mirroring `saveHueConfig` et al., so a cleared limit actually clears.
     public var saveBudgetConfig: @Sendable (_ hid: String, _ config: BudgetConfig) async throws -> Void
+    /// The family's savings goals at `households/{hid}/goals` (Act V V4). Decode-safe per-doc.
+    public var goals: @Sendable (_ hid: String) async throws -> [SavingsGoal]
+    /// Upsert one savings goal (merge write, so a contribution only touches `savedAmount`).
+    public var saveGoal: @Sendable (_ hid: String, _ goal: SavingsGoal) async throws -> Void
+    public var deleteGoal: @Sendable (_ hid: String, _ goalID: String) async throws -> Void
 
     // MARK: Proactive notifications (Act V V2-E)
     /// The household's notification prefs at `households/{hid}/config/notificationPrefs`, or nil when
@@ -639,6 +644,18 @@ extension PersistenceClient: DependencyKey {
                 try await households().document(hid).collection("config").document("budgets").setData(
                     Firestore.Encoder().encode(config)
                 )
+            },
+            goals: { hid in
+                let snapshot = try await households().document(hid).collection("goals").getDocuments()
+                return try snapshot.documents.map { try Firestore.Decoder().decode(SavingsGoal.self, from: $0.data()) }
+            },
+            saveGoal: { hid, goal in
+                try await households().document(hid).collection("goals").document(goal.id).setData(
+                    Firestore.Encoder().encode(goal), merge: true
+                )
+            },
+            deleteGoal: { hid, goalID in
+                try await households().document(hid).collection("goals").document(goalID).delete()
             },
             notificationPrefs: { hid in
                 let s = try await households().document(hid).collection("config").document("notificationPrefs").getDocument()

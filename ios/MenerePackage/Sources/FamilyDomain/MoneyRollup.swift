@@ -77,6 +77,18 @@ public enum MoneyRollup {
         return date >= start && date < end
     }
 
+    /// The 0…1 fraction of the month containing `anchor` that has elapsed as of `now`. 0 before the
+    /// month starts, 1 once it's fully past — so past months project cleanly (spent == projected) and
+    /// only the live month gets a real end-of-month extrapolation for budget "trending over" alerts.
+    public static func monthProgress(anchor: Date, now: Date, calendar: Calendar = .current) -> Double {
+        let (start, end) = monthRange(containing: anchor, calendar: calendar)
+        if now <= start { return 0 }
+        if now >= end { return 1 }
+        let total = end.timeIntervalSince(start)
+        guard total > 0 else { return 1 }
+        return min(max(now.timeIntervalSince(start) / total, 0), 1)
+    }
+
     /// Shift a month anchor by `months` (negative = back). Returns the first day of the target month.
     public static func shiftMonth(_ anchor: Date, by months: Int, calendar: Calendar = .current) -> Date {
         let (start, _) = monthRange(containing: anchor, calendar: calendar)

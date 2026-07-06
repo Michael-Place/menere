@@ -20,6 +20,10 @@ public struct MoneyReducer {
         var expenses: [Expense] = []
         var documents: [FamilyDomain.Document] = []
         var budgets: BudgetConfig = .init()
+        /// V4 — the family's savings goals (jars they fill by hand).
+        var goals: [SavingsGoal] = []
+        /// V4 — recurring-forecast rows already logged this session (flips the row's "Log it" → "Logged").
+        var loggedForecastIds: Set<String> = []
         /// First-of-month anchor the screen shows / navigates. Defaults to the current month.
         var monthAnchor: Date = Date()
         var isLoading = false
@@ -45,6 +49,7 @@ public struct MoneyReducer {
 
         @Presents var addExpense: ExpenseFormReducer.State?
         @Presents var budgetEditor: BudgetEditorReducer.State?
+        @Presents var goalEditor: GoalEditorReducer.State?
         /// The source Family-Brain document a promoted expense links back to (P24 backlink).
         @Presents var docDetail: DocumentDetailReducer.State?
 
@@ -57,6 +62,30 @@ public struct MoneyReducer {
         /// The rolled-up summary for the anchored month (spend + budgets by category).
         var summary: MoneyRollup.MonthSummary {
             MoneyRollup.summary(expenses: expenses, budgets: budgets, month: monthAnchor)
+        }
+
+        /// How much of the anchored month has elapsed as of `referenceDate` — powers the end-of-month
+        /// projection behind "trending over" (1 for any fully-past month, so those only flag "over").
+        var monthProgress: Double {
+            MoneyRollup.monthProgress(anchor: monthAnchor, now: referenceDate)
+        }
+
+        /// V4 — every budgeted category that's over or trending over this month, most-urgent first.
+        var budgetAlerts: [BudgetAlert] {
+            BudgetAlerts.alerts(summary: summary, monthProgress: monthProgress)
+        }
+
+        /// V4 — a single flag the Radar/Today could read to know Money wants attention (a category is
+        /// over or heading there). Deliberately UI-free so it can be lifted out of the view layer later.
+        var hasBudgetAlerts: Bool { !budgetAlerts.isEmpty }
+
+        /// V4 — savings goals, unmet first (nudgier), then by progress, then name — a stable order.
+        var sortedGoals: [SavingsGoal] {
+            goals.sorted { a, b in
+                if a.isComplete != b.isComplete { return !a.isComplete }
+                if a.progress != b.progress { return a.progress > b.progress }
+                return a.name.localizedCaseInsensitiveCompare(b.name) == .orderedAscending
+            }
         }
 
         /// This month's expenses, newest first — the deletable ledger below the bars.
@@ -102,6 +131,7 @@ public struct MoneyReducer {
         case expensesLoaded([Expense])
         case documentsLoaded([FamilyDomain.Document])
         case budgetsLoaded(BudgetConfig?)
+        case goalsLoaded([SavingsGoal])
         case plannedLoaded(PlannedSpending.Rollup)
         case groceriesPlannedLoaded(GroceryCostEstimator.Estimate)
         case previousMonthTapped
@@ -112,6 +142,13 @@ public struct MoneyReducer {
         case refreshSummaryTapped
         case addTapped
         case editBudgetsTapped
+        // V4 — savings goals
+        case addGoalTapped
+        case goalTapped(SavingsGoal)
+        case deleteGoals(IndexSet)
+        // V4 — actionable forecast: log a projected recurring charge as a real expense.
+        case logForecastTapped(SpendingForecast.Upcoming)
+        case goalEditor(PresentationAction<GoalEditorReducer.Action>)
         case fileFromBrainTapped(FamilyDomain.Document)
         case dismissBrainDocument(FamilyDomain.Document)
         case deleteExpenses(IndexSet)
@@ -161,9 +198,11 @@ public struct MoneyReducer {
                     async let expenses = persistence.expenses(hid)
                     async let documents = persistence.documents(hid)
                     async let budgets = persistence.budgetConfig(hid)
+                    async let goals = persistence.goals(hid)
                     await send(.expensesLoaded((try? await expenses) ?? []))
                     await send(.documentsLoaded((try? await documents) ?? []))
                     await send(.budgetsLoaded(try? await budgets))
+                    await send(.goalsLoaded((try? await goals) ?? []))
 
                     // Planned-spending rollup — read-only over the wishlist/gift/project lists.
                     let lists = ((try? await persistence.lists(hid)) ?? [])
@@ -197,6 +236,10 @@ public struct MoneyReducer {
 
             case let .budgetsLoaded(budgets):
                 if let budgets { state.budgets = budgets }
+                return .none
+
+            case let .goalsLoaded(goals):
+                state.goals = goals
                 return .none
 
             case let .plannedLoaded(planned):
@@ -255,6 +298,75 @@ public struct MoneyReducer {
 
             case .editBudgetsTapped:
                 state.budgetEditor = BudgetEditorReducer.State(config: state.budgets)
+                return .none
+
+            case .addGoalTapped:
+                analytics.log("goal_editor_opened", ["mode": "new"])
+                state.goalEditor = GoalEditorReducer.State(now: date.now)
+                return .none
+
+            case let .goalTapped(goal):
+                analytics.log("goal_editor_opened", ["mode": "edit"])
+                state.goalEditor = GoalEditorReducer.State(goal: goal, now: date.now)
+                return .none
+
+            case let .deleteGoals(offsets):
+                guard let hid = hid() else { return .none }
+                let sorted = state.sortedGoals
+                let toDelete = offsets.map { sorted[$0] }
+                let deleteIDs = Set(toDelete.map(\.id))
+                state.goals.removeAll { deleteIDs.contains($0.id) }
+                return .run { _ in
+                    for goal in toDelete { try await persistence.deleteGoal(hid, goal.id) }
+                }
+
+            case let .logForecastTapped(item):
+                guard let hid = hid(), !state.loggedForecastIds.contains(item.id) else { return .none }
+                analytics.log("expense_logged", ["source": "forecast"])
+                state.loggedForecastIds.insert(item.id)
+                let expense = Expense(
+                    id: uuid().uuidString,
+                    amount: item.typicalAmount,
+                    vendor: item.name,
+                    category: item.category,
+                    date: item.nextDate,
+                    memberId: state.currentUid,
+                    source: .manual,
+                    documentId: nil,
+                    notes: "Confirmed from the recurring forecast",
+                    createdAt: date.now
+                )
+                state.expenses.append(expense)
+                return .run { _ in
+                    try await persistence.saveExpense(hid, expense)
+                }
+
+            case let .goalEditor(.presented(.delegate(.save(goal)))):
+                guard let hid = hid() else { state.goalEditor = nil; return .none }
+                analytics.log("goal_saved")
+                state.goalEditor = nil
+                if let idx = state.goals.firstIndex(where: { $0.id == goal.id }) {
+                    state.goals[idx] = goal
+                } else {
+                    state.goals.append(goal)
+                }
+                return .run { _ in
+                    try await persistence.saveGoal(hid, goal)
+                }
+
+            case let .goalEditor(.presented(.delegate(.delete(goalID)))):
+                guard let hid = hid() else { state.goalEditor = nil; return .none }
+                state.goalEditor = nil
+                state.goals.removeAll { $0.id == goalID }
+                return .run { _ in
+                    try await persistence.deleteGoal(hid, goalID)
+                }
+
+            case .goalEditor(.presented(.delegate(.cancel))):
+                state.goalEditor = nil
+                return .none
+
+            case .goalEditor:
                 return .none
 
             case let .fileFromBrainTapped(doc):
@@ -335,6 +447,9 @@ public struct MoneyReducer {
         }
         .ifLet(\.$budgetEditor, action: \.budgetEditor) {
             BudgetEditorReducer()
+        }
+        .ifLet(\.$goalEditor, action: \.goalEditor) {
+            GoalEditorReducer()
         }
         .ifLet(\.$docDetail, action: \.docDetail) {
             DocumentDetailReducer()
