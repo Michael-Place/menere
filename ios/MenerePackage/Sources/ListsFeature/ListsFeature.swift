@@ -3,6 +3,7 @@ import CellarFeature
 import ComposableArchitecture
 import DocsFeature
 import FamilyDomain
+import LocalCache
 import MenereUI
 import MoneyFeature
 import PersistenceClient
@@ -42,7 +43,10 @@ public struct ListsReducer {
 
     public enum Action: Equatable, BindableAction {
         case task
-        case listsLoaded([FamilyList])
+        /// `lists == nil` means the Firestore read FAILED (offline) — keep the cache-painted lists and
+        /// skip the write-through. A non-nil (even empty) result is authoritative.
+        case listsLoaded([FamilyList]?)
+        case listsCacheHydrated([FamilyList])   // H2-ext — instant/reactive paint from the SQLite mirror
         case membersLoaded([HouseholdMember])
         case addTapped
         case createList
@@ -63,6 +67,8 @@ public struct ListsReducer {
 
     public init() {}
 
+    private enum CancelID { case observeListsCache }
+
     private func hid() -> String? {
         @Shared(.user) var user
         return user?.householdId
@@ -76,18 +82,50 @@ public struct ListsReducer {
             case .task:
                 guard let hid = hid() else { return .none }
                 state.isLoading = true
-                return .run { send in
-                    @Dependency(\.persistence) var persistence
-                    async let lists = persistence.lists(hid)
-                    async let members = persistence.members(hid)
-                    await send(.listsLoaded((try? await lists) ?? []))
-                    await send(.membersLoaded((try? await members) ?? []))
+                // H2-ext — OFFLINE-FIRST INSTANT PAINT: seed the list rows from the SQLite mirror THIS
+                // FRAME (no await), keep them live via the observation stream, and refresh + write through
+                // from the one-shot Firestore read below. Guarded so fresh in-memory data isn't clobbered.
+                @Dependency(\.localCache) var localCache
+                localCache.bootstrap()
+                if state.lists.isEmpty {
+                    let cached = localCache.lists(hid)
+                    if !cached.isEmpty { state.lists = cached.sorted { $0.createdAt < $1.createdAt } }
                 }
+                return .merge(
+                    .run { send in
+                        @Dependency(\.localCache) var localCache
+                        for await lists in localCache.observeLists(hid) {
+                            await send(.listsCacheHydrated(lists))
+                        }
+                    }
+                    .cancellable(id: CancelID.observeListsCache, cancelInFlight: true),
+                    .run { send in
+                        @Dependency(\.persistence) var persistence
+                        // nil = the Firestore read FAILED (offline): keep the cache, skip write-through.
+                        async let lists = try? await persistence.lists(hid)
+                        async let members = persistence.members(hid)
+                        await send(.listsLoaded(await lists))
+                        await send(.membersLoaded((try? await members) ?? []))
+                    }
+                )
+
+            case let .listsCacheHydrated(lists):
+                // H2-ext — instant/reactive paint from the SQLite mirror (oldest-first, matching the
+                // screen's order). Idempotent after the Firestore write-through re-emits the same rows.
+                state.lists = lists.sorted { $0.createdAt < $1.createdAt }
+                return .none
 
             case let .listsLoaded(lists):
                 state.isLoading = false
+                // H2-ext — Firestore is authoritative only when it answered (lists != nil). When nil
+                // (offline) the observation stream keeps driving the cache-painted rows.
+                guard let lists else { return .none }
                 state.lists = lists.sorted { $0.createdAt < $1.createdAt }
-                return .none
+                guard let hid = hid() else { return .none }
+                return .run { [lists] _ in
+                    @Dependency(\.localCache) var localCache
+                    localCache.upsertLists(hid, lists)
+                }
 
             case let .membersLoaded(members):
                 state.members = members

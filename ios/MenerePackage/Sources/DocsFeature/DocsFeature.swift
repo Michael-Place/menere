@@ -2,6 +2,7 @@ import AnalyticsClient
 import ComposableArchitecture
 import FamilyDomain
 import Foundation
+import LocalCache
 import PersistenceClient
 import StorageClient
 import SwiftUI
@@ -18,6 +19,10 @@ public struct DocsReducer {
     public struct State: Equatable {
         var documents: [FamilyDomain.Document] = []
         var isLoading = false
+        // H2-ext — true once the Firestore listener has delivered the authoritative (full) set this
+        // session. Until then the SQLite mirror drives the instant first-page paint; after, the cache
+        // stream is ignored so it can't truncate the full set the listener holds for search/Collections.
+        var didLoadFromFirestore = false
 
         // H3 — display-window pagination for the flat "All" list. The live listener still streams the
         // *full* set (Collections clustering, cross-tab search consistency, and the pending→processed
@@ -82,6 +87,7 @@ public struct DocsReducer {
     public enum Action: Equatable, BindableAction {
         case task
         case documentsLoaded([FamilyDomain.Document])
+        case documentsCacheHydrated([FamilyDomain.Document])   // H2-ext — instant paint from SQLite
         case loadMore                      // H3 — reveal the next page of the flat list
         // Intake entry points
         case scanTapped
@@ -110,12 +116,13 @@ public struct DocsReducer {
 
     public init() {}
 
-    private enum CancelID { case observeDocuments }
+    private enum CancelID { case observeDocuments, observeDocsCache }
 
     @Dependency(\.persistence) var persistence
     @Dependency(\.storage) var storage
     @Dependency(\.docs) var docs
     @Dependency(\.analytics) var analytics
+    @Dependency(\.localCache) var localCache
     @Dependency(\.uuid) var uuid
     @Dependency(\.date) var date
 
@@ -136,21 +143,57 @@ public struct DocsReducer {
             case .task:
                 guard let hid = hid() else { return .none }
                 state.isLoading = true
-                // Live library: a Firestore snapshot listener (mirrors ChoresFeature's stats stream).
-                // Every snapshot — uploads, deletes, and the async `processDocument` write-back —
-                // pushes straight into `state.documents` with no navigation required.
-                return .run { send in
-                    for try await docs in persistence.observeDocuments(hid) {
-                        await send(.documentsLoaded(docs))
-                    }
-                } catch: { _, _ in
-                    // Listener error (e.g. sign-out): stop quietly; re-entry restarts the stream.
+                // H2-ext — OFFLINE-FIRST INSTANT PAINT: read the SQLite mirror synchronously and seed the
+                // first page THIS FRAME (no await, no network). On a warm cache the Brain paints instantly;
+                // the live Firestore listener below refreshes behind it and becomes source-of-truth (it
+                // holds the FULL set that search / Collections / pagination need). Guarded so a
+                // re-navigation with fresh in-memory docs isn't clobbered by the cache.
+                localCache.bootstrap()
+                if state.documents.isEmpty {
+                    let cached = localCache.documents(hid, State.pageSize)
+                    if !cached.isEmpty { state.documents = cached.sorted { $0.createdAt > $1.createdAt } }
                 }
-                .cancellable(id: CancelID.observeDocuments, cancelInFlight: true)
+                return .merge(
+                    // H2-ext — keep the fast-paint list live from SQLite until Firestore lands: emits the
+                    // current first-page snapshot immediately, then after each write-through.
+                    .run { send in
+                        for await docs in localCache.observeDocuments(hid, State.pageSize) {
+                            await send(.documentsCacheHydrated(docs))
+                        }
+                    }
+                    .cancellable(id: CancelID.observeDocsCache, cancelInFlight: true),
+                    // Live library: a Firestore snapshot listener (mirrors ChoresFeature's stats stream).
+                    // Every snapshot — uploads, deletes, and the async `processDocument` write-back —
+                    // pushes straight into `state.documents` with no navigation required.
+                    .run { send in
+                        for try await docs in persistence.observeDocuments(hid) {
+                            await send(.documentsLoaded(docs))
+                        }
+                    } catch: { _, _ in
+                        // Listener error (e.g. sign-out): stop quietly; re-entry restarts the stream.
+                    }
+                    .cancellable(id: CancelID.observeDocuments, cancelInFlight: true)
+                )
+
+            case let .documentsCacheHydrated(docs):
+                // H2-ext — instant paint from the SQLite mirror. Only claims the list until the Firestore
+                // listener has delivered this session; afterward the cache's limited (first-page) stream
+                // must not truncate the full set the listener holds for search / Collections / pagination.
+                guard !state.didLoadFromFirestore else { return .none }
+                state.documents = docs.sorted { $0.createdAt > $1.createdAt }
+                return .none
 
             case let .documentsLoaded(docs):
                 state.isLoading = false
+                state.didLoadFromFirestore = true
                 state.documents = docs.sorted { $0.createdAt > $1.createdAt }
+                // H2-ext — write the authoritative full set through to the mirror (upsert present, delete
+                // missing) so next cold-nav paints instantly and deletions propagate. The Firestore
+                // listener never emits while offline, so there's no "nil payload" to guard: no emit = no
+                // write-through = the cache is left intact offline.
+                let writeThrough: Effect<Action> = hid().map { hid in
+                    .run { [docs] _ in localCache.upsertDocuments(hid, docs) }
+                } ?? .none
                 // Keep a presented detail fresh off the same stream: a pending→processed flip fills
                 // its fields live; a doc deleted elsewhere dismisses the detail gracefully.
                 if let detailID = state.detail?.doc.id {
@@ -160,7 +203,7 @@ public struct DocsReducer {
                         state.detail = nil
                     }
                 }
-                return .none
+                return writeThrough
 
             case .loadMore:
                 // Grow the display window by one page. Guarded by `canLoadMore` at the call site, so

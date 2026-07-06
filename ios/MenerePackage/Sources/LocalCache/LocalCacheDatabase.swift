@@ -115,6 +115,62 @@ enum LocalCacheDatabase {
             )
             .execute(db)
         }
+        // H2-ext — documents (Family Brain) / memories / lists. Each is a whole-read/write Codable
+        // value stored as one JSON blob plus the columns the cache queries on (id pk, hid scope, and a
+        // sort-key epoch). Additive step: it never touches the shipped careItems table.
+        migrator.registerMigration("H2ext-create-docs-memories-lists") { db in
+            try #sql(
+                """
+                CREATE TABLE "documentRecords" (
+                    "id" TEXT NOT NULL PRIMARY KEY,
+                    "hid" TEXT NOT NULL,
+                    "createdAt" REAL NOT NULL,
+                    "json" TEXT NOT NULL
+                ) STRICT
+                """
+            )
+            .execute(db)
+            try #sql(
+                """
+                CREATE INDEX "documentRecords_hid" ON "documentRecords" ("hid")
+                """
+            )
+            .execute(db)
+            try #sql(
+                """
+                CREATE TABLE "memoryRecords" (
+                    "id" TEXT NOT NULL PRIMARY KEY,
+                    "hid" TEXT NOT NULL,
+                    "date" REAL NOT NULL,
+                    "json" TEXT NOT NULL
+                ) STRICT
+                """
+            )
+            .execute(db)
+            try #sql(
+                """
+                CREATE INDEX "memoryRecords_hid" ON "memoryRecords" ("hid")
+                """
+            )
+            .execute(db)
+            try #sql(
+                """
+                CREATE TABLE "listRecords" (
+                    "id" TEXT NOT NULL PRIMARY KEY,
+                    "hid" TEXT NOT NULL,
+                    "createdAt" REAL NOT NULL,
+                    "json" TEXT NOT NULL
+                ) STRICT
+                """
+            )
+            .execute(db)
+            try #sql(
+                """
+                CREATE INDEX "listRecords_hid" ON "listRecords" ("hid")
+                """
+            )
+            .execute(db)
+        }
         try migrator.migrate(writer)
     }
 }

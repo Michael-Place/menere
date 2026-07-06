@@ -3,6 +3,7 @@ import ComposableArchitecture
 import CoreGraphics
 import FamilyDomain
 import Foundation
+import LocalCache
 import MenereUI
 import PersistenceClient
 import Photos
@@ -100,7 +101,10 @@ public struct MemoriesReducer {
 
     public enum Action: Equatable {
         case task
-        case loaded(memories: [Memory], members: [HouseholdMember])
+        /// `memories == nil` means the Firestore read FAILED (offline) — keep the cache-painted timeline
+        /// and skip the write-through. A non-nil (even empty) result is authoritative.
+        case loaded(memories: [Memory]?, members: [HouseholdMember])
+        case memoriesCacheHydrated([Memory])   // H2-ext — instant/reactive paint from the SQLite mirror
         case photosLoaded([String: Data])
         /// FL3 — the current photo read-authorization was resolved (on load or after a prompt).
         case onThisDayAuthLoaded(PhotoAuthState)
@@ -129,12 +133,34 @@ public struct MemoriesReducer {
 
     public init() {}
 
+    private enum CancelID { case observeMemoriesCache }
+
     @Dependency(\.persistence) var persistence
     @Dependency(\.storage) var storage
     @Dependency(\.analytics) var analytics
     @Dependency(\.memoryRecap) var memoryRecap
+    @Dependency(\.localCache) var localCache
     @Dependency(\.date) var date
     @Dependency(\.photoLibrary) var photoLibrary
+
+    /// Best-effort load of every page's photos + stickers into the timeline cache (shared by the
+    /// Firestore `.loaded` path and the SQLite `.memoriesCacheHydrated` fast-paint path).
+    private func photosEffect(for memories: [Memory], have cache: [String: Data]) -> Effect<Action> {
+        let paths = memories.flatMap { $0.photoPaths + $0.stickerPaths }.filter { !$0.isEmpty }
+        let missing = paths.filter { cache[$0] == nil }
+        guard !missing.isEmpty else { return .none }
+        return .run { send in
+            var loaded: [String: Data] = [:]
+            for path in missing where loaded[path] == nil {
+                // H1: cached pipeline → the memory timeline stops re-downloading on every visit.
+                if let data = try? await ImagePipeline.shared.data(
+                    forStoragePath: path,
+                    loader: { try await storage.downloadData(path) }
+                ) { loaded[path] = data }
+            }
+            await send(.photosLoaded(loaded))
+        }
+    }
 
     /// FL3 — how many prior years back to look for "On this day" photos + memories.
     static let onThisDayYearSpan = 5
@@ -208,9 +234,27 @@ public struct MemoriesReducer {
                 }
                 guard let hid = hid() else { return onThisDay }
                 state.isLoading = true
+                // H2-ext — OFFLINE-FIRST INSTANT PAINT: seed the timeline from the SQLite mirror THIS FRAME
+                // (no await), then keep it live via the observation stream; the one-shot Firestore read
+                // below refreshes + writes through. Guarded so a re-navigation with fresh data isn't
+                // clobbered.
+                localCache.bootstrap()
+                if state.memories.isEmpty {
+                    let cached = localCache.memories(hid)
+                    if !cached.isEmpty { state.memories = cached }
+                }
                 return .merge(
+                    // H2-ext — reactive paint from the mirror: current snapshot immediately (incl. photos),
+                    // then a fresh array after each Firestore write-through.
                     .run { send in
-                        async let memories = (try? await persistence.memories(hid)) ?? []
+                        for await memories in localCache.observeMemories(hid) {
+                            await send(.memoriesCacheHydrated(memories))
+                        }
+                    }
+                    .cancellable(id: CancelID.observeMemoriesCache, cancelInFlight: true),
+                    .run { send in
+                        // nil = the Firestore read FAILED (offline): keep the cache, skip write-through.
+                        async let memories = try? await persistence.memories(hid)
                         async let members = (try? await persistence.members(hid)) ?? []
                         await send(.loaded(memories: await memories, members: await members))
                     },
@@ -220,23 +264,24 @@ public struct MemoriesReducer {
             case let .loaded(memories, members):
                 state.isLoading = false
                 state.hasLoaded = true
-                state.memories = memories
                 state.members = members
-                // Fetch every page's photos + stickers into the cache (best-effort).
-                let paths = memories.flatMap { $0.photoPaths + $0.stickerPaths }.filter { !$0.isEmpty }
-                let missing = paths.filter { state.photoCache[$0] == nil }
-                guard !missing.isEmpty else { return .none }
-                return .run { send in
-                    var loaded: [String: Data] = [:]
-                    for path in missing where loaded[path] == nil {
-                        // H1: cached pipeline → the memory timeline stops re-downloading on every visit.
-                        if let data = try? await ImagePipeline.shared.data(
-                            forStoragePath: path,
-                            loader: { try await storage.downloadData(path) }
-                        ) { loaded[path] = data }
-                    }
-                    await send(.photosLoaded(loaded))
-                }
+                // H2-ext — Firestore is authoritative only when it actually answered (memories != nil).
+                // When nil (offline) the observation stream keeps driving the cache-painted timeline.
+                guard let memories else { return .none }
+                state.memories = memories
+                // Write the fresh set through to the mirror (upsert present, delete missing) so next
+                // cold-nav paints instantly and deletions propagate.
+                let writeThrough: Effect<Action> = hid().map { hid in
+                    .run { [memories] _ in localCache.upsertMemories(hid, memories) }
+                } ?? .none
+                return .merge(writeThrough, photosEffect(for: memories, have: state.photoCache))
+
+            case let .memoriesCacheHydrated(memories):
+                // H2-ext — instant/reactive paint from the SQLite mirror (newest-first). Sets the timeline
+                // + loads its photos; after Firestore's write-through the cache re-emits the identical set,
+                // so this is idempotent (no churn).
+                state.memories = memories
+                return photosEffect(for: memories, have: state.photoCache)
 
             case let .photosLoaded(map):
                 state.photoCache.merge(map) { _, new in new }

@@ -215,6 +215,8 @@ let package = Package(
                 "StorageClient",
                 // FL1: the memory editor loads full images for browser-picked assets via this client.
                 "PhotoLibraryClient",
+                // H2-ext: offline-first local SQLite mirror for the instant timeline paint.
+                "LocalCache",
             ]
         ),
         .target(
@@ -231,6 +233,8 @@ let package = Package(
                 "WineDomain",
                 "DocsFeature",
                 "MoneyFeature",
+                // H2-ext: offline-first local SQLite mirror for the instant Lists paint.
+                "LocalCache",
             ]
         ),
         .target(
@@ -244,6 +248,8 @@ let package = Package(
                 "StorageClient",
                 "AnalyticsClient",
                 "UserDomain",
+                // H2-ext: offline-first local SQLite mirror for the instant Family Brain paint.
+                "LocalCache",
             ]
         ),
         .target(
