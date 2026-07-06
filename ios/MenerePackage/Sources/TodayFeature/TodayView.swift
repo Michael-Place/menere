@@ -470,9 +470,21 @@ public struct TodayView: View {
         } else if let entry = tonightsEntry, entry.isEatingOut {
             eatingOutContent(entry)
         } else if let title = tonightsDinnerTitle {
-            Text(title)
-                .familyTitle()
-                .foregroundStyle(Color.ink)
+            // Tap the dish → open that recipe in Kitchen (its detail), not a dead label.
+            Button { store.send(.dinnerRecipeTapped) } label: {
+                HStack(spacing: 8) {
+                    Text(title)
+                        .familyTitle()
+                        .foregroundStyle(Color.ink)
+                    Spacer(minLength: 0)
+                    Image(systemName: "chevron.right")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(Color.inkSoft.opacity(0.6))
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.pressable)
+            .accessibilityIdentifier("today-dinner-recipe")
         } else {
             VStack(alignment: .leading, spacing: 10) {
                 emptyLine("Nothing planned — cereal night?")
@@ -668,10 +680,18 @@ public struct TodayView: View {
                 VStack(spacing: 12) {
                     ForEach(shown) { chore in choreRow(chore) }
                     if overflow > 0 {
-                        Text("+\(overflow) more in Chores")
+                        Button { store.send(.openHomeTapped(card: "chores_more")) } label: {
+                            HStack(spacing: 6) {
+                                Text("+\(overflow) more in Home")
+                                Spacer()
+                                Image(systemName: "chevron.right").font(.caption2.weight(.semibold))
+                            }
                             .font(.system(.caption, design: .rounded).weight(.semibold))
-                            .foregroundStyle(Color.inkSoft)
-                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .foregroundStyle(Color.bacanGreen)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.pressable)
+                        .accessibilityIdentifier("today-chores-more")
                     }
                 }
             }
@@ -682,28 +702,41 @@ public struct TodayView: View {
         let assignee = store.members.first { $0.id == chore.assigneeID }
         let color = assignee.map(memberColor) ?? .bacanGreen
         return HStack(spacing: 12) {
+            // The checkbox still completes in place (server awards/reverses XP) — no navigation.
             Button { store.send(.toggleChore(chore)) } label: {
                 Image(systemName: chore.isCompleted ? "checkmark.circle.fill" : "circle")
                     .foregroundStyle(chore.isCompleted ? color : Color.inkSoft)
                     .stickerSlap(isOn: chore.isCompleted, color: color)
             }
             .buttonStyle(.pressable)
+            .accessibilityIdentifier("today-chore-toggle-\(chore.id)")
 
-            VStack(alignment: .leading, spacing: 2) {
-                Text(chore.title)
-                    .foregroundStyle(Color.ink)
-                if let assignee {
-                    HStack(spacing: 5) {
-                        Circle().fill(color).frame(width: 8, height: 8)
-                        Text(firstName(assignee.name))
-                            .font(.caption2).foregroundStyle(Color.inkSoft)
+            // The rest of the row is a tap target → the Home tab, where the chore can be managed.
+            Button { store.send(.openHomeTapped(card: "chores")) } label: {
+                HStack(spacing: 12) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(chore.title)
+                            .foregroundStyle(Color.ink)
+                        if let assignee {
+                            HStack(spacing: 5) {
+                                Circle().fill(color).frame(width: 8, height: 8)
+                                Text(firstName(assignee.name))
+                                    .font(.caption2).foregroundStyle(Color.inkSoft)
+                            }
+                        }
                     }
+                    Spacer()
+                    Text("\(chore.effectiveXP) XP")
+                        .font(.system(.caption, design: .rounded).weight(.semibold))
+                        .foregroundStyle(color)
+                    Image(systemName: "chevron.right")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(Color.inkSoft.opacity(0.5))
                 }
+                .contentShape(Rectangle())
             }
-            Spacer()
-            Text("\(chore.effectiveXP) XP")
-                .font(.system(.caption, design: .rounded).weight(.semibold))
-                .foregroundStyle(color)
+            .buttonStyle(.pressable)
+            .accessibilityIdentifier("today-chore-row-\(chore.id)")
         }
     }
 
@@ -737,6 +770,8 @@ public struct TodayView: View {
                     VStack(spacing: 12) {
                         ForEach(Array(due.prefix(3))) { item in
                             TodayCareRow(due: item) {
+                                store.send(.openHomeTapped(card: "care"))
+                            } onMarkDone: {
                                 store.send(.markCareTaskDone(itemID: item.item.id, taskID: item.task.id))
                             }
                         }
@@ -1092,21 +1127,33 @@ public struct TodayView: View {
 /// replays on each tap — same affordance as the Home tab's `CareRow`.
 private struct TodayCareRow: View {
     let due: CareItem.CareDue
+    /// Tap the row body → drill into the Home tab (where the plant/pet/upkeep item lives).
+    let onOpen: () -> Void
     let onMarkDone: () -> Void
 
     @State private var slapOn = false
 
     var body: some View {
         HStack(spacing: 12) {
-            Image(systemName: due.item.iconSymbol)
-                .font(.subheadline)
-                .foregroundStyle(due.isOverdue ? Color.terracotta : Color.bacanGreen)
-                .frame(width: 22)
-            Text(due.item.name)
-                .foregroundStyle(Color.ink)
-                .lineLimit(1)
-            Spacer()
-            dueChip
+            // The name + due chip are a tap target → the Home tab. The trailing droplet/check still
+            // waters / marks done in place.
+            Button {
+                onOpen()
+            } label: {
+                HStack(spacing: 12) {
+                    Image(systemName: due.item.iconSymbol)
+                        .font(.subheadline)
+                        .foregroundStyle(due.isOverdue ? Color.terracotta : Color.bacanGreen)
+                        .frame(width: 22)
+                    Text(due.item.name)
+                        .foregroundStyle(Color.ink)
+                        .lineLimit(1)
+                    Spacer()
+                    dueChip
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.pressable)
             Button {
                 onMarkDone()
                 slapOn = true

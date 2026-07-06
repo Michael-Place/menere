@@ -332,6 +332,12 @@ public struct TodayReducer {
         /// Reload just the events list after an edit/delete round-trips through the form.
         case reloadEvents
         case eventsReloaded([FamilyEvent])
+        /// P17-C2 — a chore/care row BODY (or "+N more") was tapped to drill into the Home tab where
+        /// it can be managed. The inline checkbox/mark-done still act in place; this is the row navigate.
+        /// `card` names the source (chores / chores_more / care) for the `today_card_tapped` event.
+        case openHomeTapped(card: String)
+        /// P17-C2 — tonight's home-cooked dinner name was tapped → open that recipe's detail in Kitchen.
+        case dinnerRecipeTapped
         /// A family member card was tapped → open their day sheet (logs `today_member_tapped`).
         case memberTapped(String)
         case memberDayDismissed
@@ -371,6 +377,11 @@ public struct TodayReducer {
         case openKitchen
         /// P28-C2 — jump to the Memories tab and open the "capture a moment" scrapbook editor.
         case openMemories
+        /// P17-C2 — switch to the Home tab (chores + house/plant/pet care live there). Used when a
+        /// chore row / care row / "+N more" body is tapped to drill into the feature where it's acted on.
+        case openHome
+        /// P17-C2 — switch to the Kitchen tab and open a specific recipe's detail (tonight's dinner).
+        case openRecipe(Recipe)
     }
 
     public init() {}
@@ -794,6 +805,24 @@ public struct TodayReducer {
                 @Dependency(\.analytics) var analytics
                 analytics.log("today_capture_moment")
                 return .send(.delegate(.openMemories))
+
+            case let .openHomeTapped(card):
+                // A chore/care row body (or "+N more") → the Home tab, where the item can be managed.
+                @Dependency(\.analytics) var analytics
+                analytics.log("today_card_tapped", ["card": card, "destination": "home"])
+                return .send(.delegate(.openHome))
+
+            case .dinnerRecipeTapped:
+                // Tonight's home-cooked dinner name → that recipe's detail in Kitchen. Falls back to the
+                // Kitchen meal-plan when the recipe can't be resolved (eating out / renamed / missing).
+                @Dependency(\.analytics) var analytics
+                guard let entry = state.tonightsEntry(), !entry.isEatingOut,
+                      let recipe = state.recipes.first(where: { $0.id == entry.recipeID }) else {
+                    analytics.log("today_card_tapped", ["card": "dinner", "destination": "kitchen"])
+                    return .send(.delegate(.openKitchen))
+                }
+                analytics.log("today_card_tapped", ["card": "dinner", "destination": "kitchen_recipe"])
+                return .send(.delegate(.openRecipe(recipe)))
 
             case .radarOpened:
                 @Dependency(\.analytics) var analytics

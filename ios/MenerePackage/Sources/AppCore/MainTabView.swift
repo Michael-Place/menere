@@ -113,6 +113,15 @@ public struct MainTabReducer {
             case .today(.delegate(.openMemories)):
                 state.selectedTab = .memories
                 return .send(.memories(.captureMomentTapped))
+            // P17-C2 — a Today chore/care row body → the Home tab (chores + house/plant/pet care).
+            case .today(.delegate(.openHome)):
+                state.selectedTab = .chores
+                return .none
+            // P17-C2 — tonight's dinner name → Kitchen, opening that recipe's detail (reuses the
+            // Recipes tab's own `editTapped` detail path; no new persistence).
+            case let .today(.delegate(.openRecipe(recipe))):
+                state.selectedTab = .recipes
+                return .send(.recipes(.editTapped(recipe)))
 
             // V5-Siri — route an open-app intent to its surface once the app is foregrounded.
             case .openIntentDestination(let destination):
