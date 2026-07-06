@@ -640,14 +640,14 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = App/Menere.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
-				CURRENT_PROJECT_VERSION = 41;
+				CURRENT_PROJECT_VERSION = 42;
 				DEVELOPMENT_TEAM = Z2FNFL3X73;
 				INFOPLIST_FILE = App/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.33.1;
+				MARKETING_VERSION = 1.34.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.copoche.menere;
 				SDKROOT = iphoneos;
 				SWIFT_VERSION = 5.0;
@@ -661,14 +661,14 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = App/Menere.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
-				CURRENT_PROJECT_VERSION = 41;
+				CURRENT_PROJECT_VERSION = 42;
 				DEVELOPMENT_TEAM = Z2FNFL3X73;
 				INFOPLIST_FILE = App/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.33.1;
+				MARKETING_VERSION = 1.34.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.copoche.menere;
 				SDKROOT = iphoneos;
 				SWIFT_VERSION = 5.0;
