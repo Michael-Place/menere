@@ -30,6 +30,7 @@
 		741317E5025655B7BAC7C704 /* FamilyChore.swift in Sources */ = {isa = PBXBuildFile; fileRef = C8DC446C29A064C8D1FA088E /* FamilyChore.swift */; };
 		77541D4DE642D04BF7C8CFC4 /* BacanTVApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = EE9319E7D05547D92067C9F4 /* BacanTVApp.swift */; };
 		7FEF216453F37B2B6733BD35 /* CareCompletion.swift in Sources */ = {isa = PBXBuildFile; fileRef = 451D12A073A1025B027A012A /* CareCompletion.swift */; };
+		850949D7257324BE8AC1F868 /* CommandCenterView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10C75C49A04F868236585DC6 /* CommandCenterView.swift */; };
 		8B5983A7C53688C8142D4B90 /* Expense.swift in Sources */ = {isa = PBXBuildFile; fileRef = C558772F68276B6C1023D04D /* Expense.swift */; };
 		8EBA5033EF9B3BC1F2AE952C /* SonosConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = E714E577085262D09AC5902B /* SonosConfig.swift */; };
 		8F32233B05205413D8FE7C8C /* FirebaseFirestore in Frameworks */ = {isa = PBXBuildFile; productRef = 2EC83C04476003B3D236444F /* FirebaseFirestore */; };
@@ -66,6 +67,7 @@
 		021B13671F3612A8DDCC1CB0 /* HomeHealthCalculator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeHealthCalculator.swift; sourceTree = "<group>"; };
 		08F285A502E1A20235564141 /* PlantCareKB.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlantCareKB.swift; sourceTree = "<group>"; };
 		10637CAB4F7D384F2C095E15 /* Document.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Document.swift; sourceTree = "<group>"; };
+		10C75C49A04F868236585DC6 /* CommandCenterView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommandCenterView.swift; sourceTree = "<group>"; };
 		1214F0961F23D14C880CE37E /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		1C2F6A8682CB53C5580F79D7 /* Menere.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = Menere.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		1C48D4656BE53CF3C6515603 /* SlideshowView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SlideshowView.swift; sourceTree = "<group>"; };
@@ -157,6 +159,7 @@
 			isa = PBXGroup;
 			children = (
 				EE9319E7D05547D92067C9F4 /* BacanTVApp.swift */,
+				10C75C49A04F868236585DC6 /* CommandCenterView.swift */,
 				D8082FA48B10881E53F1A32C /* GoogleService-Info.plist */,
 				AE647A48F30BEEF1FDD3BE02 /* Info.plist */,
 				2EF2CFACD02341431996F7D2 /* PairingModel.swift */,
@@ -405,6 +408,7 @@
 				B58EB23EE800218F2B85EAC0 /* CareItem.swift in Sources */,
 				E97A93784C11195AE13AF33E /* ChildCareKB.swift in Sources */,
 				E3099CA9B1854EF675E2B75D /* ChoreCompletion.swift in Sources */,
+				850949D7257324BE8AC1F868 /* CommandCenterView.swift in Sources */,
 				59A989753E33298A5CCAF988 /* Document.swift in Sources */,
 				3190C27AEFA82D6C5D888A69 /* EntityGraph.swift in Sources */,
 				8B5983A7C53688C8142D4B90 /* Expense.swift in Sources */,

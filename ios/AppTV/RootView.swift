@@ -103,14 +103,43 @@ struct PairingCodeScreen: View {
 
 // MARK: - Connected
 
-/// Once linked, the resting experience is the ambient family-scrapbook screensaver. A short welcome
-/// banner greets the room, then fades to let the photos take over the whole screen.
+/// Once linked, the TV has two modes: the **Ambient** family-scrapbook screensaver (the idle
+/// default) and the **Command Center** — the "what's going on today" board. The remote switches
+/// between them via the **Play/Pause** button (works from anywhere) or a focusable button that
+/// surfaces when the remote is touched. A short welcome banner greets the room on first connect.
 struct ConnectedScreen: View {
     let summary: PairingModel.HouseholdSummary
 
+    enum Mode { case ambient, command }
+
+    @State private var mode: Mode = .ambient
     @State private var showWelcome = true
+    @FocusState private var toggleFocused: Bool
 
     var body: some View {
+        ZStack {
+            switch mode {
+            case .ambient:
+                ambient
+            case .command:
+                CommandCenterView(summary: summary) {
+                    withAnimation(.easeInOut(duration: 0.4)) { mode = .ambient }
+                }
+                .transition(.opacity)
+            }
+        }
+        // The living-room idiom: Play/Pause on the Siri Remote flips between the screensaver and
+        // the command center, no matter where focus sits.
+        .onPlayPauseCommand {
+            withAnimation(.easeInOut(duration: 0.4)) {
+                mode = (mode == .ambient) ? .command : .ambient
+            }
+        }
+    }
+
+    // MARK: Ambient (screensaver) mode
+
+    private var ambient: some View {
         ZStack {
             SlideshowView(hid: summary.hid)
 
@@ -124,10 +153,32 @@ struct ConnectedScreen: View {
                         Text("Welcome to \(summary.familyName)'s living room")
                             .font(.system(.title2, design: .rounded))
                             .foregroundStyle(.white.opacity(0.85))
+                        Text("Press ▶︎❚❚ for the Command Center")
+                            .font(.system(.title3, design: .rounded))
+                            .foregroundStyle(.white.opacity(0.7))
+                            .padding(.top, 6)
                     }
                 }
                 .transition(.opacity)
             }
+
+            // Focusable reveal: dim hint at rest, brightens when the remote gives it focus.
+            VStack {
+                HStack {
+                    Spacer()
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.4)) { mode = .command }
+                    } label: {
+                        Label("Command Center", systemImage: "rectangle.3.group.fill")
+                            .font(.system(.title3, design: .rounded).weight(.semibold))
+                    }
+                    .focused($toggleFocused)
+                    .opacity(toggleFocused ? 1 : 0.35)
+                }
+                Spacer()
+            }
+            .padding(.top, 54)
+            .padding(.trailing, 70)
         }
         .task {
             try? await Task.sleep(nanoseconds: 3_200_000_000)
