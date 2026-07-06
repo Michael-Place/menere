@@ -21,6 +21,10 @@ public struct ChildHealthReducer {
         /// True while the birthday picker is expanded (auto-true when no birthday is set yet).
         var isEditingBirthday: Bool
         var isSaving = false
+        /// This household's memories (loaded on appear) — the source for deriving milestone achievement.
+        var memories: [Memory] = []
+        /// The achieved-milestone row currently expanded to reveal its memory (nil = all collapsed).
+        var expandedMemoryId: String?
 
         public init(member: HouseholdMember) {
             self.member = member
@@ -31,10 +35,51 @@ public struct ChildHealthReducer {
 
         /// The resolved child-health schedule, or nil until a birthday is set.
         var schedule: ChildSchedule? { ChildCareKB.schedule(for: member) }
+
+        /// One KB milestone this kid has **reached** — derived (no schema churn) by matching a memory's
+        /// `milestone` tag to a ``ChildCareKB`` milestone. Carries the memory for the date + deep-link.
+        public struct AchievedMilestone: Equatable, Identifiable, Sendable {
+            /// The KB prose that was matched ("First words (around 12 months — log it!)").
+            public let milestone: String
+            /// The memory that recorded it.
+            public let memory: Memory
+            public var id: String { memory.id + "|" + milestone }
+            public var date: Date { memory.date }
+        }
+
+        /// The milestones this kid has reached — derived by scanning their tagged memories for a
+        /// `milestone` that matches any ``ChildCareKB`` milestone. De-duplicated by milestone (the
+        /// **earliest** memory wins — the true first time), then shown most-recent-first.
+        var achievedMilestones: [AchievedMilestone] {
+            let kidMemories = memories
+                .filter { $0.kidMemberIds.contains(member.id) && !($0.milestone ?? "").isEmpty }
+                .sorted { $0.date < $1.date }
+            let pool = ChildCareKB.allMilestones
+            var seenTags = Set<String>()
+            var result: [AchievedMilestone] = []
+            for memory in kidMemories {
+                guard let ms = memory.milestone,
+                      let kb = pool.first(where: { ChildCareKB.milestonesMatch($0, ms) }) else { continue }
+                let tag = ChildCareKB.milestoneTag(for: kb).lowercased()
+                if seenTags.insert(tag).inserted {
+                    result.append(AchievedMilestone(milestone: kb, memory: memory))
+                }
+            }
+            return result.sorted { $0.date > $1.date }
+        }
+
+        /// The current age band's milestones this kid **hasn't** logged yet — the "still to watch" list.
+        var milestonesToWatch: [String] {
+            guard let toWatch = schedule?.milestonesToWatch else { return [] }
+            let achievedTags = Set(achievedMilestones.map { ChildCareKB.milestoneTag(for: $0.milestone).lowercased() })
+            return toWatch.filter { !achievedTags.contains(ChildCareKB.milestoneTag(for: $0).lowercased()) }
+        }
     }
 
     public enum Action: Equatable, BindableAction {
         case task
+        case memoriesLoaded([Memory])
+        case achievedMilestoneTapped(memoryId: String)
         case doneTapped
         case editBirthdayTapped
         case saveBirthdayTapped
@@ -61,6 +106,19 @@ public struct ChildHealthReducer {
             case .task:
                 @Dependency(\.analytics) var analytics
                 analytics.log("child_schedule_viewed")
+                guard let hid = hid() else { return .none }
+                return .run { send in
+                    @Dependency(\.persistence) var persistence
+                    let memories = (try? await persistence.memories(hid)) ?? []
+                    await send(.memoriesLoaded(memories))
+                }
+
+            case let .memoriesLoaded(memories):
+                state.memories = memories
+                return .none
+
+            case let .achievedMilestoneTapped(memoryId):
+                state.expandedMemoryId = state.expandedMemoryId == memoryId ? nil : memoryId
                 return .none
 
             case .doneTapped:
@@ -276,20 +334,40 @@ public struct ChildHealthView: View {
 
     @ViewBuilder
     private func milestonesCard(_ schedule: ChildSchedule) -> some View {
-        if !schedule.milestonesToWatch.isEmpty {
+        let achieved = store.achievedMilestones
+        let toWatch = store.milestonesToWatch
+        if !achieved.isEmpty || !toWatch.isEmpty {
             card {
-                VStack(alignment: .leading, spacing: 10) {
+                VStack(alignment: .leading, spacing: 14) {
                     sectionLabel(
-                        schedule.milestoneBandLabel.map { "Milestones to watch · \($0)" } ?? "Milestones to watch",
+                        schedule.milestoneBandLabel.map { "Milestones · \($0)" } ?? "Milestones",
                         systemImage: "sparkles"
                     )
-                    ForEach(schedule.milestonesToWatch, id: \.self) { milestone in
-                        HStack(alignment: .top, spacing: 10) {
-                            Image(systemName: "circle.fill").font(.system(size: 6)).foregroundStyle(tint)
-                                .padding(.top, 6)
-                            Text(milestone).font(.subheadline).foregroundStyle(Color.ink)
+
+                    if !achieved.isEmpty {
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text("Reached 🎉")
+                                .font(.subheadline.weight(.bold)).foregroundStyle(Color.bacanGreen)
+                            ForEach(achieved) { achievedRow($0) }
                         }
                     }
+
+                    if !toWatch.isEmpty {
+                        VStack(alignment: .leading, spacing: 10) {
+                            if !achieved.isEmpty {
+                                Text("Still to watch")
+                                    .font(.subheadline.weight(.bold)).foregroundStyle(Color.inkSoft)
+                            }
+                            ForEach(toWatch, id: \.self) { milestone in
+                                HStack(alignment: .top, spacing: 10) {
+                                    Image(systemName: "circle.fill").font(.system(size: 6)).foregroundStyle(tint)
+                                        .padding(.top, 6)
+                                    Text(milestone).font(.subheadline).foregroundStyle(Color.ink)
+                                }
+                            }
+                        }
+                    }
+
                     HStack(spacing: 8) {
                         Image(systemName: "heart.text.square.fill").foregroundStyle(Color.marigold)
                         Text("Catch one of these? Log it in Memories — future you will thank you.")
@@ -299,6 +377,64 @@ public struct ChildHealthView: View {
                 }
             }
         }
+    }
+
+    /// One reached milestone — a check, the milestone name, a warm "Famfis · Jul 5 🎉" line, and a
+    /// tap-to-reveal peek at the memory that recorded it (title + story + full date).
+    @ViewBuilder
+    private func achievedRow(_ item: ChildHealthReducer.State.AchievedMilestone) -> some View {
+        let expanded = store.expandedMemoryId == item.memory.id
+        VStack(alignment: .leading, spacing: 6) {
+            Button {
+                store.send(.achievedMilestoneTapped(memoryId: item.memory.id), animation: .snappy)
+            } label: {
+                HStack(alignment: .top, spacing: 10) {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 18)).foregroundStyle(Color.bacanGreen)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(ChildCareKB.milestoneTag(for: item.milestone))
+                            .font(.subheadline.weight(.semibold)).foregroundStyle(Color.ink)
+                        Text(achievedCaption(item))
+                            .font(.caption).foregroundStyle(Color.bacanGreen)
+                    }
+                    Spacer(minLength: 8)
+                    Image(systemName: "chevron.right")
+                        .font(.caption2.weight(.bold)).foregroundStyle(Color.inkSoft)
+                        .rotationEffect(.degrees(expanded ? 90 : 0))
+                        .padding(.top, 3)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("achieved-milestone-\(item.memory.id)")
+
+            if expanded {
+                VStack(alignment: .leading, spacing: 4) {
+                    if let title = item.memory.title, !title.isEmpty {
+                        Text(title).font(.footnote.weight(.semibold)).foregroundStyle(Color.ink)
+                    }
+                    if !item.memory.plainStory.isEmpty {
+                        Text(item.memory.plainStory)
+                            .font(.caption).foregroundStyle(Color.inkSoft).lineLimit(4)
+                    }
+                    Label(
+                        item.memory.date.formatted(.dateTime.weekday(.wide).month(.wide).day().year()),
+                        systemImage: "book.pages"
+                    )
+                    .font(.caption2).foregroundStyle(Color.inkSoft)
+                }
+                .padding(.leading, 28)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+        }
+    }
+
+    /// "Famfis · Jul 5 🎉" — the warm subtitle under a reached milestone.
+    private func achievedCaption(_ item: ChildHealthReducer.State.AchievedMilestone) -> String {
+        let name = member.name.split(separator: " ").first.map(String.init) ?? member.name
+        let day = item.memory.date.formatted(.dateTime.month(.abbreviated).day())
+        return "\(name) · \(day) 🎉"
     }
 
     private var disclaimer: some View {

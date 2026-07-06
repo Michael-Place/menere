@@ -76,6 +76,23 @@ public struct MemoryEditorReducer {
         /// The kids (Oliver / Famfis) + adults offered as tagging chips.
         var taggableMembers: [HouseholdMember] { members }
 
+        /// The age-appropriate developmental milestones (from ``ChildCareKB``) offered as picker chips —
+        /// derived from the currently-tagged kids' birthdates, de-duplicated across kids. Empty until a
+        /// kid with a known birthday is tagged (so the loop only surfaces when it's relevant). Closes the
+        /// MILESTONE↔JOURNAL loop: tapping one stamps a recognizable value onto `memory.milestone`.
+        var kbMilestoneSuggestions: [ChildCareKB.LoggableMilestone] {
+            let taggedKids = members.filter { memory.kidMemberIds.contains($0.id) }
+            var seen = Set<String>()
+            var result: [ChildCareKB.LoggableMilestone] = []
+            for kid in taggedKids {
+                guard let months = kid.ageInMonths() else { continue }
+                for m in ChildCareKB.loggableMilestones(ageInMonths: months) where seen.insert(m.tag.lowercased()).inserted {
+                    result.append(m)
+                }
+            }
+            return result
+        }
+
         /// Enough to save: a story, a title, or at least one photo.
         var canSave: Bool {
             !memory.plainStory.isEmpty
@@ -244,6 +261,9 @@ public struct MemoryEditorReducer {
                     toSave.stickerPaths = stickerPaths
                     try await persistence.saveMemory(hid, toSave)
                     analytics.log("memory_created", ["editing": isEditing ? "1" : "0"])
+                    if let milestone = toSave.milestone, !milestone.isEmpty {
+                        analytics.log("milestone_logged", ["kids": String(toSave.kidMemberIds.count)])
+                    }
                     await send(.delegate(.didSave))
                     await dismiss()
                 }

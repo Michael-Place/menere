@@ -244,6 +244,40 @@ public struct MemoryEditorView: View {
     private var milestoneSection: some View {
         VStack(alignment: .leading, spacing: 10) {
             sectionLabel("Milestone", symbol: "star.fill")
+
+            // Age-appropriate developmental milestones for the tagged kid(s) — the MILESTONE↔JOURNAL
+            // loop. Logging one here marks it "reached" on that kid's Health schedule.
+            if !store.kbMilestoneSuggestions.isEmpty {
+                VStack(alignment: .leading, spacing: 8) {
+                    Label(kbMilestoneHeadline, systemImage: "figure.and.child.holdinghands")
+                        .font(.system(.caption, design: .rounded).weight(.bold))
+                        .foregroundStyle(Color.bacanGreen)
+                    FlowChips(items: store.kbMilestoneSuggestions.map(\.tag)) { tag in
+                        if let m = store.kbMilestoneSuggestions.first(where: { $0.tag == tag }) {
+                            let selected = ChildCareKB.milestonesMatch(m.detail, store.memory.milestone ?? "")
+                            Button {
+                                store.send(.milestoneChipTapped(m.tag))
+                            } label: {
+                                HStack(spacing: 6) {
+                                    Image(systemName: Milestone.symbol(for: m.tag))
+                                    Text(m.tag)
+                                }
+                                .font(.system(.subheadline, design: .rounded).weight(.semibold))
+                                .foregroundStyle(selected ? .white : Color.bacanGreen)
+                                .padding(.horizontal, 13).padding(.vertical, 8)
+                                .background(
+                                    Capsule(style: .continuous)
+                                        .fill(selected ? Color.bacanGreen : Color.bacanGreen.opacity(0.14))
+                                )
+                            }
+                            .buttonStyle(.pressable)
+                            .accessibilityIdentifier("memory-kb-milestone-\(m.tag)")
+                        }
+                    }
+                }
+                .padding(.bottom, 2)
+            }
+
             FlowChips(items: Milestone.suggestions) { tag in
                 let selected = store.memory.milestone == tag
                 Button {
@@ -306,6 +340,20 @@ public struct MemoryEditorView: View {
 
     private func firstName(_ name: String) -> String {
         name.split(separator: " ").first.map(String.init) ?? name
+    }
+
+    /// "Oliver's milestones" / "Oliver & Famfis's milestones" — the KB-picker headline for the
+    /// currently-tagged kids (only kids with a birthday drive the suggestions).
+    private var kbMilestoneHeadline: String {
+        let names = store.taggableMembers
+            .filter { store.memory.kidMemberIds.contains($0.id) && $0.ageInMonths() != nil }
+            .map { firstName($0.name) }
+        switch names.count {
+        case 0: return "Milestones to watch"
+        case 1: return "\(names[0])'s milestones"
+        case 2: return "\(names[0]) & \(names[1])'s milestones"
+        default: return "\(names[0]) & co.'s milestones"
+        }
     }
 }
 

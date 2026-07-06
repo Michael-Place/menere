@@ -278,6 +278,67 @@ public enum ChildCareKB {
         milestoneBands.first { $0.contains(months) }
     }
 
+    // MARK: - The MILESTONE↔JOURNAL loop (Act V V1-B)
+
+    /// A developmental milestone a memory can be logged against — the Memory editor's picker source.
+    /// Carries the full KB `detail` prose (shown in lists) plus a short canonical `tag` — the recognizable
+    /// value stored on ``Memory/milestone`` so a logged memory can be matched back to the KB.
+    public struct LoggableMilestone: Equatable, Sendable, Identifiable {
+        /// The KB prose ("First words (around 12 months — log it!)").
+        public let detail: String
+        /// The short recognizable value stored on a memory ("First words").
+        public let tag: String
+        public var id: String { tag }
+
+        public init(detail: String) {
+            self.detail = detail
+            self.tag = ChildCareKB.milestoneTag(for: detail)
+        }
+    }
+
+    /// A short, recognizable tag for a KB milestone — the parenthetical coaching hint dropped, trimmed.
+    /// ("First words (around 12 months — log it!)" → "First words", "Running (mind the corners!)" →
+    /// "Running"). This is the value the picker writes onto a memory's `milestone`.
+    public static func milestoneTag(for milestone: String) -> String {
+        let base = milestone.split(separator: "(", maxSplits: 1).first.map(String.init) ?? milestone
+        return base.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// Whether two milestone strings refer to the same milestone — normalizing away the parenthetical
+    /// hint, case, and punctuation. Lets a memory's short `milestone` ("First words") match the KB prose
+    /// ("First words (around 12 months — log it!)") without an exact-string dependency.
+    public static func milestonesMatch(_ a: String, _ b: String) -> Bool {
+        func norm(_ s: String) -> String {
+            let tag = milestoneTag(for: s).lowercased()
+            let kept = tag.unicodeScalars.filter { CharacterSet.alphanumerics.contains($0) || $0 == " " }
+            return String(String.UnicodeScalarView(kept)).trimmingCharacters(in: .whitespaces)
+        }
+        let na = norm(a), nb = norm(b)
+        guard !na.isEmpty, !nb.isEmpty else { return false }
+        return na == nb
+    }
+
+    /// The age-appropriate developmental milestones offered in the Memory editor for a kid at
+    /// `ageInMonths` — the **current** band first, then the immediately-younger band (a moment you may
+    /// still be catching up on), de-duplicated by tag.
+    public static func loggableMilestones(ageInMonths months: Int) -> [LoggableMilestone] {
+        let clamped = max(0, months)
+        let current = milestoneBand(forMonths: clamped)
+        let previous = current.flatMap { cur in milestoneBands.last { $0.upperMonths <= cur.lowerMonths } }
+        let details = (current?.milestones ?? []) + (previous?.milestones ?? [])
+        var seen = Set<String>()
+        var result: [LoggableMilestone] = []
+        for detail in details {
+            let m = LoggableMilestone(detail: detail)
+            if seen.insert(m.tag.lowercased()).inserted { result.append(m) }
+        }
+        return result
+    }
+
+    /// Every modeled developmental milestone across all age bands — the pool an achieved memory is
+    /// matched against when deriving milestone achievement.
+    public static var allMilestones: [String] { milestoneBands.flatMap(\.milestones) }
+
     // MARK: - Resolver
 
     /// The default forward window (months) used to gather upcoming dated items.
