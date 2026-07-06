@@ -462,6 +462,30 @@ full month calendar is now a one-tap drill-in from Today, not a tab.
   file collision. Note: the same one-tap-care affordance likely reads the same way on the
   PLANTS overview / hub — audit for consistency while fixing.
 
+# Act V — The connective era (2026-07-06)
+Breadth (every module) + depth (each rich) done → frontier = **connective tissue + ambient
+reach** (modules talk to each other automatically; intelligence pushed to lock screen/Siri/TV/
+notifications). Michael queued #2, #3, smart notifications, Money.
+- **V1 — cross-module loops:** (a) **receipt↔entity** — Brain doc (receipt/invoice) → link to
+  the plant/pet/project it bought, suggested by vendor (Green Thumb→plants, vet→pets, Deck
+  Daddy's→deck project); show links both ways (P24 graph, activated). (b) **milestone↔journal**
+  — ChildCareKB developmental milestones → a milestone picker in the Memory editor → logging it
+  CHECKS OFF that milestone on the kid's health schedule (achieved + date + link to the memory).
+  (c) **meal→grocery→Money** — estimate grocery cost from the generated list → a food-budget
+  line / weekly grocery forecast in Money. (renewals→calendar mostly done via P20 add-to-cal +
+  renew-reminders; minor top-up only.)
+- **V2 — smart-capture inbox:** one capture (photo/voice/text) → AI-routes to Brain / plant /
+  memory / list (orchestrates processDocument / identifyPlant / memory-create / list-add). Kills
+  the "which screen do I go to" navigation tax.
+- **V3 — smart notifications + weekly family digest:** a tuned push ("your 3 things": overdue
+  care, upcoming checkup, birthday to shop for) + a weekly digest (scheduled fn across care/
+  schedules/renewals/birthdays/money). QUIET, not noisy.
+- **V4 — Money:** per-category budgets + alerts + savings goals + actionable bill forecast;
+  Plaid bank-sync (LIVE needs Michael's Plaid account — build the client/flow + test against
+  sandbox; production creds are a Michael task).
+- **Ambient reach (my #1, NOT yet queued — recommend soon):** Home/Lock-Screen WIDGETS + Siri/
+  Shortcuts over the existing verb registry — most-felt, least-effort, glanceable family hub.
+
 # Act IV — The intelligence era (2026-07-04)
 
 **Reframe (from a step-back review of the real data + integrations):** the app has
