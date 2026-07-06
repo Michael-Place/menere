@@ -4,6 +4,7 @@ import FirebaseAuth
 import Firebase
 import FirebaseFirestore
 import PushClient
+import SharedCapture
 import SwiftUI
 import UIKit
 
@@ -19,11 +20,51 @@ struct MenereApplication: App {
     var body: some Scene {
         WindowGroup {
             AppView(store: store)
-                .task { await store.send(.task).finish() }
+                .task {
+                    // V5 Share Extension: drain anything the share sheet parked while we were away,
+                    // BEFORE the tab shell first appears (so its onAppear consume finds `.capture`).
+                    ShareIngestion.drainPendingShares()
+                    await store.send(.task).finish()
+                }
                 .onChange(of: scenePhase) { _, scenePhase in
+                    // V5 — on every foreground, pick up newly shared items and open capture.
+                    if scenePhase == .active {
+                        ShareIngestion.drainPendingShares()
+                    }
                     store.send(.scenePhaseChanged(scenePhase))
                 }
         }
+    }
+}
+
+// MARK: - Share Extension pickup (V5 ingestion front door)
+
+/// Drains the app-group inbox the Share Extension writes to, then routes the newest shared item to
+/// the EXISTING smart-capture surface via `AppCore.IntentRouter` (`.capture`) — the same mechanism
+/// V5-Siri's "Quick Capture" intent uses, so no change to `AppCore`/`TodayFeature` is required.
+///
+/// Handoff contract: the routed `PendingShare` is parked in `CaptureHandoffStore` (app-group
+/// UserDefaults). The capture surface reads it via `CaptureHandoffStore.take()` to prefill the
+/// compose field / photo, then clears it. Here we only clear the inbox *descriptors* (per the
+/// pickup contract) and set the router destination.
+enum ShareIngestion {
+    static func drainPendingShares() {
+        let shares = PendingShareStore.pending()
+        guard let newest = shares.last else { return }
+
+        // Park the newest share for the capture surface to consume once it opens.
+        CaptureHandoffStore.stash(newest)
+
+        // Clear the inbox descriptors; keep only the newest share's attachment (the handoff needs it),
+        // pruning any orphaned attachment bytes from older/other shares.
+        for share in shares {
+            PendingShareStore.remove(share, keepAttachment: share.id == newest.id)
+        }
+        PendingShareStore.pruneAttachments(keeping: Set([newest.attachmentFilename].compactMap { $0 }))
+
+        // Open the capture surface. `IntentRouter` persists until MainTabView drains it on
+        // appear/foreground, so this survives a cold launch before the shell is on screen.
+        IntentRouter.shared.pending = .capture
     }
 }
 

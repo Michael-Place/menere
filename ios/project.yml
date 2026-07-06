@@ -43,6 +43,12 @@ targets:
         product: AuthenticationDomain
       - package: MenerePackage
         product: PushClient
+      # V5 — Foundation-only app-group bridge (reads the Share Extension inbox on foreground).
+      - package: MenerePackage
+        product: SharedCapture
+      # V5 — embed the Share Extension into the app bundle (PlugIns/).
+      - target: BacanShareExtension
+        embed: true
     postBuildScripts:
       - name: "Copy GoogleService-Info.plist"
         script: |
@@ -50,6 +56,32 @@ targets:
             cp "${PROJECT_DIR}/App/GoogleService-Info.plist" "${BUILT_PRODUCTS_DIR}/${PRODUCT_NAME}.app/GoogleService-Info.plist"
           fi
         basedOnDependencyAnalysis: false
+
+  # ---------------------------------------------------------------------------------------------
+  # BacanShareExtension — the V5 ingestion front door (system share sheet → "Bacán"). Accepts
+  # URLs / text / images / PDFs, writes a `PendingShare` into the app-group container. Lightweight:
+  # links ONLY the Foundation-only `SharedCapture` bridge (no Firebase / app UI).
+  # ---------------------------------------------------------------------------------------------
+  BacanShareExtension:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: ShareExtension
+    settings:
+      base:
+        INFOPLIST_FILE: ShareExtension/Info.plist
+        CODE_SIGN_ENTITLEMENTS: ShareExtension/ShareExtension.entitlements
+        PRODUCT_BUNDLE_IDENTIFIER: com.copoche.menere.share
+        PRODUCT_NAME: BacanShareExtension
+        PRODUCT_MODULE_NAME: BacanShareExtension
+        MARKETING_VERSION: "1.35.0"
+        CURRENT_PROJECT_VERSION: "43"
+        SWIFT_VERSION: "5.0"
+        TARGETED_DEVICE_FAMILY: "1,2"
+        DEVELOPMENT_TEAM: Z2FNFL3X73
+    dependencies:
+      - package: MenerePackage
+        product: SharedCapture
 
   # ---------------------------------------------------------------------------------------------
   # BacanTV — the living-room Apple TV app (P27-T2). Shares the Firebase backend + the pure

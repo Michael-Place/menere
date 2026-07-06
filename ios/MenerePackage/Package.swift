@@ -51,6 +51,8 @@ let package = Package(
         .library(name: "MoneyFeature", targets: ["MoneyFeature"]),
         .library(name: "AgentTools", targets: ["AgentTools"]),
         .library(name: "AssistantFeature", targets: ["AssistantFeature"]),
+        // V5 — Foundation-only bridge shared by the app + the Share Extension (app-group inbox).
+        .library(name: "SharedCapture", targets: ["SharedCapture"]),
     ],
     dependencies: [
         .package(url: "https://github.com/firebase/firebase-ios-sdk", .upToNextMajor(from: "11.13.0")),
@@ -570,6 +572,11 @@ let package = Package(
                 "PersistenceClient",
                 "UserDomain",
             ]
+        ),
+        // V5 — the Share Extension ingestion bridge. Foundation-only (no Firebase/UI) so the
+        // lightweight app-extension target can link it. Owns the app-group inbox + handoff store.
+        .target(
+            name: "SharedCapture"
         ),
         .testTarget(
             name: "AgentToolsTests",
