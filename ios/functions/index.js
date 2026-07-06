@@ -16,6 +16,7 @@ const admin = require("firebase-admin");
 const { lookupColaClassType } = require("./ttbLookup");
 const { identifyWineLabel } = require("./claudeVision");
 const { extractRecipe: runExtractRecipe } = require("./recipeExtract");
+const { extractURL: runExtractURL } = require("./urlExtract");
 const { extractEventsFromText } = require("./eventExtract");
 const { resolveHousehold: resolveInboundHousehold, routeEmail } = require("./emailRouter");
 const { generateDailyBriefing } = require("./briefingGenerate");
@@ -230,6 +231,31 @@ exports.extractRecipe = onCall(
       return await runExtractRecipe({ url, text, apiKey: ANTHROPIC_API_KEY.value() });
     } catch (err) {
       throw new HttpsError("internal", `Recipe extraction failed: ${err.message}`);
+    }
+  }
+);
+
+/**
+ * `extractURL` is a v2 HTTPS callable (us-central1) for Act V's "URL front door" (V5-URL). Input
+ * `{ url }`; it fetches the page, CLASSIFIES it (recipe / product / event / article) and returns a
+ * routed result the Smart-Capture sheet files with one tap: `{ destination, title, url, summary,
+ * imageURL, extractedText?, recipe?, product?, event? }`. Conservative — anything ambiguous or any
+ * failure degrades to a Family Brain doc so a link is never lost. Reuses `ANTHROPIC_API_KEY`.
+ */
+exports.extractURL = onCall(
+  { timeoutSeconds: 60, memory: "512MiB", secrets: [ANTHROPIC_API_KEY] },
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError("unauthenticated", "You must be signed in.");
+    }
+    const url = typeof request.data?.url === "string" ? request.data.url.trim() : "";
+    if (!/^https?:\/\//i.test(url)) {
+      throw new HttpsError("invalid-argument", "A valid http(s) url is required.");
+    }
+    try {
+      return await runExtractURL({ url, apiKey: ANTHROPIC_API_KEY.value(), timezone: "America/New_York" });
+    } catch (err) {
+      throw new HttpsError("internal", `URL import failed: ${err.message}`);
     }
   }
 );

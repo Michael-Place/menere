@@ -83,7 +83,7 @@ public struct CaptureView: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Capture anything")
                         .familyDisplay()
-                    Text("A photo, a note — Bacán figures out where it goes.")
+                    Text("A photo, a note, a link — Bacán figures out where it goes.")
                         .familyTitle(.subheadline)
                         .foregroundStyle(Color.inkSoft)
                 }
@@ -96,7 +96,7 @@ public struct CaptureView: View {
                         .foregroundStyle(Color.ink)
                     ZStack(alignment: .topLeading) {
                         if store.text.isEmpty {
-                            Text("“Buy batteries” · “Oliver walked today!” · “Dentist Tuesday at 3”")
+                            Text("“Buy batteries” · “Oliver walked today!” · paste a link")
                                 .foregroundStyle(Color.inkSoft.opacity(0.7))
                                 .padding(.top, 8)
                                 .padding(.leading, 5)
@@ -201,7 +201,7 @@ public struct CaptureView: View {
             Text("Figuring out where this goes…")
                 .familyTitle(.headline)
                 .foregroundStyle(Color.ink)
-            Text("Bacán is looking at your photo.")
+            Text(store.hasPhoto ? "Bacán is looking at your photo." : "Bacán is reading that link.")
                 .font(.subheadline)
                 .foregroundStyle(Color.inkSoft)
         }
@@ -216,7 +216,11 @@ public struct CaptureView: View {
                 Text("Where should this go?")
                     .familyDisplay()
 
-                capturePreview
+                if let imp = store.urlImport {
+                    urlImportCard(imp)
+                } else {
+                    capturePreview
+                }
 
                 if let hint = store.plantHint, hint.isConfident {
                     Label("Looks like \(hint.commonName) 🌿", systemImage: "leaf.fill")
@@ -306,6 +310,36 @@ public struct CaptureView: View {
         }
         .buttonStyle(.pressable)
         .accessibilityIdentifier("capture-dest-\(dest.rawValue)")
+    }
+
+    /// The resolved-link card shown at the top of confirm for a URL import: title + summary + host.
+    private func urlImportCard(_ imp: CaptureReducer.URLImport) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label(host(imp.url), systemImage: "link")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(Color.bacanGreen)
+            Text(imp.title)
+                .font(.system(.headline, design: .rounded).weight(.semibold))
+                .foregroundStyle(Color.ink)
+                .lineLimit(2)
+            if let summary = imp.summary, !summary.isEmpty {
+                Text(summary)
+                    .font(.subheadline)
+                    .foregroundStyle(Color.inkSoft)
+                    .lineLimit(3)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(14)
+        .background(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(Color.familySurface)
+        )
+        .accessibilityIdentifier("capture-url-card")
+    }
+
+    private func host(_ url: String) -> String {
+        URL(string: url)?.host()?.replacingOccurrences(of: "www.", with: "") ?? url
     }
 
     @ViewBuilder

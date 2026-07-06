@@ -27,6 +27,8 @@ public enum CaptureDestination: String, Equatable, Sendable, Identifiable, CaseI
     case memory       // a family scrapbook memory
     case list         // add to a shared list (groceries by default)
     case event        // a calendar reminder / event
+    case recipe       // a recipe → the family Kitchen (V5-URL, URL front door)
+    case wishlist     // a product → the family wishlist (V5-URL, URL front door)
 
     public var id: String { rawValue }
 
@@ -37,6 +39,8 @@ public enum CaptureDestination: String, Equatable, Sendable, Identifiable, CaseI
         case .memory: "A memory"
         case .list: "A list"
         case .event: "A reminder"
+        case .recipe: "Kitchen"
+        case .wishlist: "Wishlist"
         }
     }
 
@@ -47,6 +51,8 @@ public enum CaptureDestination: String, Equatable, Sendable, Identifiable, CaseI
         case .memory: "camera.fill"
         case .list: "checklist"
         case .event: "calendar.badge.plus"
+        case .recipe: "fork.knife"
+        case .wishlist: "star.fill"
         }
     }
 
@@ -57,6 +63,8 @@ public enum CaptureDestination: String, Equatable, Sendable, Identifiable, CaseI
         case .memory: "Save it to the family scrapbook"
         case .list: "Drop it on a shared list"
         case .event: "Put it on the family calendar"
+        case .recipe: "Save the recipe to your Kitchen"
+        case .wishlist: "Add it to the family wishlist"
         }
     }
 
@@ -67,6 +75,8 @@ public enum CaptureDestination: String, Equatable, Sendable, Identifiable, CaseI
         case .memory: .terracotta
         case .list: .bacanGreen
         case .event: .marigold
+        case .recipe: .marigold
+        case .wishlist: .terracotta
         }
     }
 }
@@ -89,10 +99,32 @@ public struct CaptureReducer {
         }
     }
 
+    /// A routed URL import from the `extractURL` callable — the "paste a link" front door (V5-URL).
+    /// Holds the classified destination plus the per-type payload the confirm/file path needs.
+    public struct URLImport: Equatable, Sendable {
+        var destination: CaptureDestination
+        var title: String
+        var url: String
+        var summary: String?
+        var imageURL: String?
+        var extractedText: String?
+        var recipe: Recipe?
+        var productPrice: Double?
+        var productStore: String?
+        var eventStart: Date?
+        var eventEnd: Date?
+        var eventLocation: String?
+        var eventIsAllDay: Bool = false
+    }
+
     @ObservableState
     public struct State: Equatable {
         public enum Stage: Equatable { case compose, classifying, confirm, filing, done }
         var stage: Stage = .compose
+
+        /// Set when the capture is a pasted/typed link routed through `extractURL`. Drives the URL
+        /// confirm card + the URL filing path (distinct from the photo/text filing).
+        var urlImport: URLImport?
 
         /// Typed OR voice-dictated note (the keyboard mic dictates straight into the field — no extra
         /// speech plumbing needed).
@@ -135,6 +167,8 @@ public struct CaptureReducer {
         /// "Route it" — run the classifier (a vision call for photos, heuristics for text).
         case classifyTapped
         case plantHinted(PlantHint?)
+        /// A pasted/typed link finished routing through `extractURL`.
+        case urlImported(URLImport)
         case selectDestination(CaptureDestination)
         case editTapped              // back from confirm to compose
         case fileTapped
@@ -200,12 +234,19 @@ public struct CaptureReducer {
             case .classifyTapped:
                 guard state.hasInput else { return .none }
                 // Photo → an AI vision pass (identifyPlant doubles as the plant-vs-not classifier).
-                // Text → pure heuristics, so it's instant (no spinner needed).
+                // A pasted/typed LINK → the `extractURL` front door (recipe/product/event/Brain).
+                // Plain text → pure heuristics, so it's instant (no spinner needed).
                 if let jpeg = state.imageJPEG {
                     state.stage = .classifying
                     return .run { send in
                         let hint = await Self.identifyPlant(jpeg)
                         await send(.plantHinted(hint))
+                    }
+                } else if let url = Self.detectURL(state.trimmedText) {
+                    state.stage = .classifying
+                    return .run { send in
+                        let imported = await Self.importURL(url)
+                        await send(.urlImported(imported))
                     }
                 } else {
                     state.suggestions = Self.classifyText(state.trimmedText, lists: state.lists)
@@ -221,6 +262,17 @@ public struct CaptureReducer {
                 state.stage = .confirm
                 return .none
 
+            case let .urlImported(imported):
+                state.urlImport = imported
+                // The AI's routed home first; Family Brain is always offered as the safe override so a
+                // link is never stranded.
+                state.suggestions = imported.destination == .brain
+                    ? [.brain]
+                    : [imported.destination, .brain]
+                state.selected = imported.destination
+                state.stage = .confirm
+                return .none
+
             case let .selectDestination(dest):
                 state.selected = dest
                 return .none
@@ -233,6 +285,21 @@ public struct CaptureReducer {
                 guard let dest = state.selected, let (hid, uid) = ctx() else { return .none }
                 state.stage = .filing
                 state.errorMessage = nil
+                // URL front door (V5-URL): file straight from the routed import payload.
+                if let imported = state.urlImport {
+                    analytics.log("smart_capture_routed", ["destination": dest.rawValue, "input": "url"])
+                    analytics.log("url_imported", ["destination": dest.rawValue])
+                    return .run { send in
+                        do {
+                            let receipt = try await Self.fileURL(
+                                imported: imported, dest: dest, hid: hid, uid: uid, persistence: persistence
+                            )
+                            await send(.filed(receipt: receipt, destination: dest))
+                        } catch {
+                            await send(.fileFailed(error.localizedDescription))
+                        }
+                    }
+                }
                 let text = state.trimmedText
                 let jpeg = state.imageJPEG
                 let plantHint = state.plantHint
@@ -444,6 +511,11 @@ public struct CaptureReducer {
             )
             try await persistence.saveEvent(hid, event)
             return "Added to the calendar 🗓️ — tomorrow morning, tweak it anytime."
+
+        case .recipe, .wishlist:
+            // Kitchen/Wishlist are URL-only destinations — they file via `fileURL`, never this
+            // photo/text path.
+            throw CaptureError.noTarget
         }
     }
 
@@ -457,6 +529,181 @@ public struct CaptureReducer {
         let f = DateFormatter()
         f.dateFormat = "MMM d 'capture'"
         return f.string(from: now)
+    }
+
+    // MARK: - URL front door (V5-URL)
+
+    /// The first http(s) link inside a captured note, or nil. This is the trigger that routes a
+    /// paste/typed link through `extractURL` instead of the plain-text heuristics.
+    static func detectURL(_ text: String) -> String? {
+        guard let re = try? NSRegularExpression(pattern: "https?://[^\\s]+", options: [.caseInsensitive])
+        else { return nil }
+        let range = NSRange(text.startIndex..., in: text)
+        guard let match = re.firstMatch(in: text, options: [], range: range),
+              let r = Range(match.range, in: text) else { return nil }
+        // Trim trailing punctuation a user might type after a pasted link.
+        let trailing = CharacterSet(charactersIn: ".,);]}\"'>")
+        var url = String(text[r])
+        while let last = url.unicodeScalars.last, trailing.contains(last) { url.removeLast() }
+        return url.isEmpty ? nil : url
+    }
+
+    /// Call the deployed `extractURL` callable and map its routed result to a ``URLImport``. Never
+    /// throws — a failed call degrades to a Family Brain import of the bare link so nothing is lost.
+    static func importURL(_ url: String) async -> URLImport {
+        let callable = Functions.functions(region: "us-central1").httpsCallable("extractURL")
+        guard let result = try? await callable.call(["url": url]),
+              let data = result.data as? [String: Any] else {
+            return URLImport(destination: .brain, title: url, url: url)
+        }
+        let dest = mapDestination(data["destination"] as? String)
+        let title = (data["title"] as? String)?.nonEmpty ?? url
+        let summary = (data["summary"] as? String)?.nonEmpty
+        let imageURL = (data["imageURL"] as? String)?.nonEmpty
+        let extractedText = (data["extractedText"] as? String)?.nonEmpty
+
+        var recipe: Recipe?
+        if dest == .recipe, let r = data["recipe"] as? [String: Any] {
+            recipe = parseRecipe(r, url: url, fallbackTitle: title, imageURL: imageURL)
+        }
+        var price: Double?
+        var store: String?
+        if dest == .wishlist, let p = data["product"] as? [String: Any] {
+            price = (p["price"] as? Double) ?? (p["price"] as? Int).map(Double.init)
+            store = (p["store"] as? String)?.nonEmpty
+        }
+        var start: Date?
+        var end: Date?
+        var location: String?
+        var allDay = false
+        if dest == .event, let e = data["event"] as? [String: Any] {
+            start = (e["startDate"] as? String).flatMap(parseISODate)
+            end = (e["endDate"] as? String).flatMap(parseISODate)
+            location = (e["location"] as? String)?.nonEmpty
+            allDay = (e["isAllDay"] as? Bool) ?? false
+        }
+        // An "event" with no parseable date isn't schedulable — keep the link in the Brain instead.
+        let finalDest: CaptureDestination = (dest == .event && start == nil) ? .brain : dest
+        return URLImport(
+            destination: finalDest, title: title, url: url, summary: summary, imageURL: imageURL,
+            extractedText: extractedText, recipe: recipe, productPrice: price, productStore: store,
+            eventStart: start, eventEnd: end, eventLocation: location, eventIsAllDay: allDay
+        )
+    }
+
+    static func mapDestination(_ raw: String?) -> CaptureDestination {
+        switch raw {
+        case "recipe": return .recipe
+        case "product": return .wishlist
+        case "event": return .event
+        default: return .brain
+        }
+    }
+
+    /// Map the server's Menere-shaped recipe dict → a `Recipe` (mirrors `RecipeImportClient`).
+    static func parseRecipe(_ r: [String: Any], url: String, fallbackTitle: String, imageURL: String?) -> Recipe {
+        let title = (r["title"] as? String)?.nonEmpty ?? fallbackTitle
+        let servings = (r["servings"] as? Int) ?? Int((r["servings"] as? Double) ?? 4)
+        let ingredients: [Ingredient] = (r["ingredients"] as? [[String: Any]] ?? []).compactMap { dict in
+            guard let name = (dict["name"] as? String)?.nonEmpty else { return nil }
+            let quantity = (dict["quantity"] as? Double) ?? (dict["quantity"] as? Int).map(Double.init)
+            let unit = (dict["unit"] as? String)?.nonEmpty
+            return Ingredient(name: name, quantity: quantity, unit: unit)
+        }
+        let instructions = (r["instructions"] as? [String] ?? []).filter { !$0.isEmpty }
+        return Recipe(
+            title: title,
+            servings: max(1, servings),
+            sourceURL: (r["sourceURL"] as? String)?.nonEmpty ?? url,
+            imageURL: (r["imageURL"] as? String)?.nonEmpty ?? imageURL,
+            ingredients: ingredients,
+            instructions: instructions
+        )
+    }
+
+    static func parseISODate(_ s: String) -> Date? {
+        let withFraction = ISO8601DateFormatter()
+        withFraction.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let d = withFraction.date(from: s) { return d }
+        let plain = ISO8601DateFormatter()
+        plain.formatOptions = [.withInternetDateTime]
+        return plain.date(from: s)
+    }
+
+    /// File a routed URL import through the SAME persistence the owning features use. Returns the warm
+    /// success receipt. `dest` is the confirmed destination (which may be a Brain override).
+    static func fileURL(
+        imported: URLImport,
+        dest: CaptureDestination,
+        hid: String,
+        uid: String,
+        persistence: PersistenceClient
+    ) async throws -> String {
+        let now = Date()
+        switch dest {
+        case .recipe:
+            let recipe = imported.recipe ?? Recipe(title: imported.title, sourceURL: imported.url, imageURL: imported.imageURL)
+            try await persistence.saveRecipe(hid, recipe)
+            return "Saved to Kitchen ✓ — “\(recipe.title)” is in your recipes."
+
+        case .wishlist:
+            let lists = try await persistence.lists(hid)
+            let listID: String
+            if let existing = lists.first(where: { $0.isWishlist }) {
+                listID = existing.id
+            } else {
+                let newList = FamilyList(title: "Wishlist", icon: "star.fill", listType: .wishlist)
+                try await persistence.saveList(hid, newList)
+                listID = newList.id
+            }
+            let item = ListItem(
+                title: imported.title,
+                listID: listID,
+                sortOrder: Int(now.timeIntervalSince1970),
+                note: imported.summary,
+                price: imported.productPrice,
+                link: imported.url,
+                store: imported.productStore,
+                priority: .medium
+            )
+            try await persistence.saveListItem(hid, item)
+            return "Added to Wishlist ✓ — “\(imported.title)”."
+
+        case .event:
+            guard let start = imported.eventStart else { throw CaptureError.noTarget }
+            let end = imported.eventEnd ?? start.addingTimeInterval(3600)
+            let event = FamilyEvent(
+                title: imported.title,
+                startDate: start,
+                endDate: end,
+                isAllDay: imported.eventIsAllDay,
+                location: imported.eventLocation,
+                notes: urlNote(summary: imported.summary, url: imported.url)
+            )
+            try await persistence.saveEvent(hid, event)
+            return "Added to the calendar 🗓️ — “\(imported.title)”."
+
+        default: // .brain (and the safe fallback for anything else)
+            let doc = Document(
+                id: UUID().uuidString,
+                title: imported.title,
+                type: .other,
+                summary: imported.summary,
+                extractedText: imported.extractedText,
+                notes: urlNote(summary: imported.summary, url: imported.url),
+                uploadedBy: uid,
+                createdAt: now,
+                processingState: .processed
+            )
+            try await persistence.saveDocument(hid, doc)
+            return "Filed to the Family Brain ✓ — “\(imported.title)”."
+        }
+    }
+
+    /// The note body for a URL-sourced event/doc: the summary (if any) above the source link.
+    static func urlNote(summary: String?, url: String) -> String {
+        if let summary, !summary.isEmpty { return "\(summary)\n\n\(url)" }
+        return url
     }
 
     // MARK: - Vision (identifyPlant callable, used as the photo router's AI signal)
