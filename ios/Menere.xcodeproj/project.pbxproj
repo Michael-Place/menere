@@ -12,6 +12,7 @@
 		0A7EB476A4C27377EA6C176D /* LutronConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = 82D8FFB008FE83152CB4FCD1 /* LutronConfig.swift */; };
 		1292A3324FAD670B7D1A87C5 /* MoneyRollup.swift in Sources */ = {isa = PBXBuildFile; fileRef = A258E8EED101D5C5DC9213C4 /* MoneyRollup.swift */; };
 		1E5D6BB849848A59978B4173 /* FamilyRadar.swift in Sources */ = {isa = PBXBuildFile; fileRef = B756050AEC9BD011CFF8E023 /* FamilyRadar.swift */; };
+		28859264F47C1B35ACE31F5B /* NotificationPrefs.swift in Sources */ = {isa = PBXBuildFile; fileRef = EB623C56CB5FE288C452027A /* NotificationPrefs.swift */; };
 		2C005B58CEC0745584034C16 /* Memory.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A41C4500EEED76CCCB94F31 /* Memory.swift */; };
 		2E47B645BDB7330792826410 /* UserDomain in Frameworks */ = {isa = PBXBuildFile; productRef = 184E235FFA9B598B12C27AEE /* UserDomain */; };
 		3190C27AEFA82D6C5D888A69 /* EntityGraph.swift in Sources */ = {isa = PBXBuildFile; fileRef = C6EB724149E8DBBEAA83CA5C /* EntityGraph.swift */; };
@@ -29,6 +30,7 @@
 		73A60D73A8F48B3ED3E6367A /* Recipe.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1D9312CCDBB55C7CC370B379 /* Recipe.swift */; };
 		741317E5025655B7BAC7C704 /* FamilyChore.swift in Sources */ = {isa = PBXBuildFile; fileRef = C8DC446C29A064C8D1FA088E /* FamilyChore.swift */; };
 		77541D4DE642D04BF7C8CFC4 /* BacanTVApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = EE9319E7D05547D92067C9F4 /* BacanTVApp.swift */; };
+		793C0D4CD2C8D59B3AF2D694 /* BudgetAlert.swift in Sources */ = {isa = PBXBuildFile; fileRef = 94DA664EF76EEF7AF26DDAFB /* BudgetAlert.swift */; };
 		7FEF216453F37B2B6733BD35 /* CareCompletion.swift in Sources */ = {isa = PBXBuildFile; fileRef = 451D12A073A1025B027A012A /* CareCompletion.swift */; };
 		850949D7257324BE8AC1F868 /* CommandCenterView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10C75C49A04F868236585DC6 /* CommandCenterView.swift */; };
 		8B5983A7C53688C8142D4B90 /* Expense.swift in Sources */ = {isa = PBXBuildFile; fileRef = C558772F68276B6C1023D04D /* Expense.swift */; };
@@ -61,6 +63,7 @@
 		F15A56BF20FCC1F7474AFECF /* HomeProfile.swift in Sources */ = {isa = PBXBuildFile; fileRef = 75206F9032AA7696B7C520C5 /* HomeProfile.swift */; };
 		F260CD8984921B13CA46FD89 /* MerossConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D0FE8EAC1894C0988AA3EB6 /* MerossConfig.swift */; };
 		F69538E28A47197EC956E4D2 /* GroceryCategory.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9C3E3163C87BFFE858D25462 /* GroceryCategory.swift */; };
+		F74128CD918B55839FF30C50 /* SavingsGoal.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9EB043CC3187116569905E74 /* SavingsGoal.swift */; };
 		FD89FCD802AC010C28418F7C /* MaintenanceTemplate.swift in Sources */ = {isa = PBXBuildFile; fileRef = DBE17F5D73845A434A0C052E /* MaintenanceTemplate.swift */; };
 /* End PBXBuildFile section */
 
@@ -93,9 +96,11 @@
 		82D8FFB008FE83152CB4FCD1 /* LutronConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LutronConfig.swift; sourceTree = "<group>"; };
 		8537DCF36010AB795AC5FE3E /* ChoreCompletion.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChoreCompletion.swift; sourceTree = "<group>"; };
 		8ADC640F89A0B5EBE6FF1853 /* CareItem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CareItem.swift; sourceTree = "<group>"; };
+		94DA664EF76EEF7AF26DDAFB /* BudgetAlert.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BudgetAlert.swift; sourceTree = "<group>"; };
 		96A60A2186B6011EABC417C3 /* HubspaceConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HubspaceConfig.swift; sourceTree = "<group>"; };
 		9A62F87CC80BC2F1C200E844 /* HueConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HueConfig.swift; sourceTree = "<group>"; };
 		9C3E3163C87BFFE858D25462 /* GroceryCategory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroceryCategory.swift; sourceTree = "<group>"; };
+		9EB043CC3187116569905E74 /* SavingsGoal.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SavingsGoal.swift; sourceTree = "<group>"; };
 		A258E8EED101D5C5DC9213C4 /* MoneyRollup.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MoneyRollup.swift; sourceTree = "<group>"; };
 		A86F6C5A08C8B2EFB09E51CE /* GroceryCostEstimator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroceryCostEstimator.swift; sourceTree = "<group>"; };
 		AE647A48F30BEEF1FDD3BE02 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
@@ -115,6 +120,7 @@
 		DBE17F5D73845A434A0C052E /* MaintenanceTemplate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MaintenanceTemplate.swift; sourceTree = "<group>"; };
 		DCC59018088FD16C744DEF48 /* SpendingInsights.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpendingInsights.swift; sourceTree = "<group>"; };
 		E714E577085262D09AC5902B /* SonosConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SonosConfig.swift; sourceTree = "<group>"; };
+		EB623C56CB5FE288C452027A /* NotificationPrefs.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationPrefs.swift; sourceTree = "<group>"; };
 		EE9319E7D05547D92067C9F4 /* BacanTVApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BacanTVApp.swift; sourceTree = "<group>"; };
 		F1455CD003CD8F86A3F1F262 /* GoogleService-Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = "GoogleService-Info.plist"; sourceTree = "<group>"; };
 		F1F82D1E332018877AB38374 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
@@ -176,6 +182,7 @@
 			isa = PBXGroup;
 			children = (
 				6F5697E62607583A613F5851 /* ActivityItem.swift */,
+				94DA664EF76EEF7AF26DDAFB /* BudgetAlert.swift */,
 				28C45C435BA3CED43344CDCF /* CalendarSyncPrefs.swift */,
 				451D12A073A1025B027A012A /* CareCompletion.swift */,
 				8ADC640F89A0B5EBE6FF1853 /* CareItem.swift */,
@@ -204,12 +211,14 @@
 				7D0FE8EAC1894C0988AA3EB6 /* MerossConfig.swift */,
 				A258E8EED101D5C5DC9213C4 /* MoneyRollup.swift */,
 				D088E8D29C70A2AE7708A589 /* NestConfig.swift */,
+				EB623C56CB5FE288C452027A /* NotificationPrefs.swift */,
 				C4E649F0A8E24B7C799A68C5 /* PackingCategory.swift */,
 				FB220CDC37FA24455C19B864 /* PackingTemplate.swift */,
 				57916759B4EA1587C7404406 /* PetCareKB.swift */,
 				08F285A502E1A20235564141 /* PlantCareKB.swift */,
 				6DE766E6C2FDC7DA1174037C /* ProjectStatus.swift */,
 				1D9312CCDBB55C7CC370B379 /* Recipe.swift */,
+				9EB043CC3187116569905E74 /* SavingsGoal.swift */,
 				E714E577085262D09AC5902B /* SonosConfig.swift */,
 				DCC59018088FD16C744DEF48 /* SpendingInsights.swift */,
 				C43C2065489A7E12F0415208 /* WishlistIdea.swift */,
@@ -406,6 +415,7 @@
 			files = (
 				E62B93DB7041355BD0FDAAD9 /* ActivityItem.swift in Sources */,
 				77541D4DE642D04BF7C8CFC4 /* BacanTVApp.swift in Sources */,
+				793C0D4CD2C8D59B3AF2D694 /* BudgetAlert.swift in Sources */,
 				69243244A1DB2E75D387C563 /* CalendarSyncPrefs.swift in Sources */,
 				7FEF216453F37B2B6733BD35 /* CareCompletion.swift in Sources */,
 				B58EB23EE800218F2B85EAC0 /* CareItem.swift in Sources */,
@@ -435,6 +445,7 @@
 				F260CD8984921B13CA46FD89 /* MerossConfig.swift in Sources */,
 				1292A3324FAD670B7D1A87C5 /* MoneyRollup.swift in Sources */,
 				6C47A7489524BFCE856D2016 /* NestConfig.swift in Sources */,
+				28859264F47C1B35ACE31F5B /* NotificationPrefs.swift in Sources */,
 				D67202FB4F17D7E20DB4C1D1 /* PackingCategory.swift in Sources */,
 				B183246534F3FEC58B573B07 /* PackingTemplate.swift in Sources */,
 				A5AD6D47683CD03037F4F5F1 /* PairingModel.swift in Sources */,
@@ -443,6 +454,7 @@
 				AAFC2791683ED6C9039999A7 /* ProjectStatus.swift in Sources */,
 				73A60D73A8F48B3ED3E6367A /* Recipe.swift in Sources */,
 				C865BDC48CE60ED95C1F1C5F /* RootView.swift in Sources */,
+				F74128CD918B55839FF30C50 /* SavingsGoal.swift in Sources */,
 				948A18AFB934C7562390CE62 /* ScrapbookModel.swift in Sources */,
 				B8C06A33F89C25D303527248 /* SlideshowView.swift in Sources */,
 				8EBA5033EF9B3BC1F2AE952C /* SonosConfig.swift in Sources */,
@@ -628,14 +640,14 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = App/Menere.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
-				CURRENT_PROJECT_VERSION = 36;
+				CURRENT_PROJECT_VERSION = 37;
 				DEVELOPMENT_TEAM = Z2FNFL3X73;
 				INFOPLIST_FILE = App/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.29.0;
+				MARKETING_VERSION = 1.30.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.copoche.menere;
 				SDKROOT = iphoneos;
 				SWIFT_VERSION = 5.0;
@@ -649,14 +661,14 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = App/Menere.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
-				CURRENT_PROJECT_VERSION = 36;
+				CURRENT_PROJECT_VERSION = 37;
 				DEVELOPMENT_TEAM = Z2FNFL3X73;
 				INFOPLIST_FILE = App/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.29.0;
+				MARKETING_VERSION = 1.30.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.copoche.menere;
 				SDKROOT = iphoneos;
 				SWIFT_VERSION = 5.0;
