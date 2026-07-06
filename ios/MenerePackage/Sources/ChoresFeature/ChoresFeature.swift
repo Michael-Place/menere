@@ -3,6 +3,7 @@ import ComposableArchitecture
 import FamilyDomain
 import HouseFeature
 import HueClient
+import LocalCache
 import MenereUI
 import PersistenceClient
 import StorageClient
@@ -94,7 +95,10 @@ public struct ChoresReducer {
 
     public enum Action: Equatable, BindableAction {
         case task
-        case loaded(chores: [Chore], members: [HouseholdMember], stats: [MemberStats], rewards: [Reward], activity: [ActivityItem], careItems: [CareItem], documents: [FamilyDomain.Document])
+        case loaded(chores: [Chore], members: [HouseholdMember], stats: [MemberStats], rewards: [Reward], activity: [ActivityItem], careItems: [CareItem]?, documents: [FamilyDomain.Document])
+        /// H2 — care items served from the local SQLite mirror: the instant cold-nav paint and every
+        /// subsequent reactive emission after a Firestore write-through upsert.
+        case careCacheHydrated([CareItem])
         case statsUpdated([MemberStats])
         case addTapped
         case editTapped(Chore)
@@ -157,7 +161,7 @@ public struct ChoresReducer {
         case binding(BindingAction<State>)
     }
 
-    private enum CancelID { case observeStats, careUndo }
+    private enum CancelID { case observeStats, careUndo, observeCareCache }
 
     public init() {}
 
@@ -176,9 +180,28 @@ public struct ChoresReducer {
             case .task:
                 guard let (hid, _) = ctx() else { return .none }
                 state.isLoading = true
+                // H2 — OFFLINE-FIRST INSTANT PAINT: read the local SQLite mirror synchronously and seed
+                // the care list THIS FRAME (no await, no network). On a warm cache this paints the 32
+                // plants / 3 pets immediately; the Firestore fetch below refreshes behind it. Guarded so
+                // a re-navigation with fresh in-memory data isn't clobbered by the cache.
+                @Dependency(\.localCache) var localCache
+                localCache.bootstrap()
+                if state.careItems.isEmpty {
+                    let cached = localCache.careItems(hid)
+                    if !cached.isEmpty { state.careItems = Self.sortedCare(cached) }
+                }
                 return .merge(
                     // Smart-home card data (independent; hides itself when Hue isn't configured).
                     .send(.houseCard(.load)),
+                    // H2 — keep the care list live from SQLite: emits the current snapshot immediately
+                    // (cold-nav paint incl. photos), then a fresh array after each Firestore upsert.
+                    .run { send in
+                        @Dependency(\.localCache) var localCache
+                        for await items in localCache.observeCareItems(hid) {
+                            await send(.careCacheHydrated(items))
+                        }
+                    }
+                    .cancellable(id: CancelID.observeCareCache, cancelInFlight: true),
                     .run { send in
                         @Dependency(\.persistence) var persistence
                         async let chores = persistence.chores(hid)
@@ -194,7 +217,10 @@ public struct ChoresReducer {
                             stats: (try? await stats) ?? [],
                             rewards: (try? await rewards) ?? [],
                             activity: (try? await activity) ?? [],
-                            careItems: (try? await careItems) ?? [],
+                            // H2: nil = the Firestore read FAILED (offline) — the reducer keeps the
+                            // cache-painted list and skips the write-through so we never wipe the mirror
+                            // offline. A non-nil (even empty) result is authoritative and written through.
+                            careItems: try? await careItems,
                             documents: (try? await documents) ?? []
                         ))
                     },
@@ -223,25 +249,29 @@ public struct ChoresReducer {
                 state.stats = stats
                 state.rewards = rewards.sorted { $0.xpCost < $1.xpCost }
                 state.activity = activity
-                state.careItems = Self.sortedCare(careItems)
-                // Fetch plant photos + die-cut stickers (kind-agnostic: any care item with a
-                // photoPath / stickerPath) into the cache, keyed by Storage path.
-                let photoPaths = (careItems.compactMap(\.photoPath)
-                    + careItems.compactMap(\.stickerPath)).filter { !$0.isEmpty }
-                guard !photoPaths.isEmpty else { return .none }
-                return .run { send in
-                    @Dependency(\.storage) var storage
-                    var loaded: [String: Data] = [:]
-                    for path in photoPaths where loaded[path] == nil {
-                        // H1: route through the shared cached pipeline (memory+disk, deduped) so a
-                        // re-appearance of the Home tab does NOT re-download care/plant/pet photos.
-                        if let data = try? await ImagePipeline.shared.data(
-                            forStoragePath: path,
-                            loader: { try await storage.downloadData(path) }
-                        ) { loaded[path] = data }
-                    }
-                    await send(.carePhotosLoaded(loaded))
+                // H2 — Firestore is authoritative when it actually answered (careItems != nil).
+                // Set the fresh list AND write it through to the local mirror (upsert present, delete
+                // missing) so next cold-nav paints instantly and deletions propagate. When nil (offline)
+                // we keep the cache-painted list and leave the mirror untouched.
+                guard let careItems else {
+                    // Offline: the observation stream is already driving careItems + photos from cache.
+                    return .none
                 }
+                state.careItems = Self.sortedCare(careItems)
+                let writeThrough: Effect<Action> = ctx().map { (hid, _) in
+                    .run { [careItems] _ in
+                        @Dependency(\.localCache) var localCache
+                        localCache.upsertCareItems(hid, careItems)
+                    }
+                } ?? .none
+                return .merge(writeThrough, Self.carePhotosEffect(for: careItems))
+
+            case let .careCacheHydrated(careItems):
+                // H2 — instant/reactive paint from the SQLite mirror. Only claims the list while
+                // Firestore hasn't yet delivered a fresh copy this session (so the authoritative
+                // ordering/data from `.loaded` isn't churned by a redundant re-emit of identical rows).
+                state.careItems = Self.sortedCare(careItems)
+                return Self.carePhotosEffect(for: careItems)
 
             case let .carePhotosLoaded(map):
                 state.carePhotos.merge(map) { _, new in new }
@@ -673,6 +703,28 @@ public struct ChoresReducer {
             let a = $0.soonestDueTask(now: now)?.daysUntilDue(now: now) ?? Int.max
             let b = $1.soonestDueTask(now: now)?.daysUntilDue(now: now) ?? Int.max
             return a == b ? $0.createdAt < $1.createdAt : a < b
+        }
+    }
+
+    /// Fetch plant photos + die-cut stickers (kind-agnostic: any care item with a photoPath /
+    /// stickerPath) into the in-memory cache, keyed by Storage path. Shared by the Firestore `.loaded`
+    /// path and the H2 SQLite `.careCacheHydrated` path so both render real thumbnails.
+    static func carePhotosEffect(for careItems: [CareItem]) -> Effect<Action> {
+        let photoPaths = (careItems.compactMap(\.photoPath)
+            + careItems.compactMap(\.stickerPath)).filter { !$0.isEmpty }
+        guard !photoPaths.isEmpty else { return .none }
+        return .run { send in
+            @Dependency(\.storage) var storage
+            var loaded: [String: Data] = [:]
+            for path in photoPaths where loaded[path] == nil {
+                // H1: route through the shared cached pipeline (memory+disk, deduped) so a
+                // re-appearance of the Home tab does NOT re-download care/plant/pet photos.
+                if let data = try? await ImagePipeline.shared.data(
+                    forStoragePath: path,
+                    loader: { try await storage.downloadData(path) }
+                ) { loaded[path] = data }
+            }
+            await send(.carePhotosLoaded(loaded))
         }
     }
 

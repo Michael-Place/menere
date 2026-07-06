@@ -26,6 +26,7 @@ let package = Package(
         .library(name: "ChoresFeature", targets: ["ChoresFeature"]),
         .library(name: "RecipesFeature", targets: ["RecipesFeature"]),
         .library(name: "PersistenceClient", targets: ["PersistenceClient"]),
+        .library(name: "LocalCache", targets: ["LocalCache"]),
         .library(name: "AnalyticsClient", targets: ["AnalyticsClient"]),
         .library(name: "StorageClient", targets: ["StorageClient"]),
         .library(name: "LocationClient", targets: ["LocationClient"]),
@@ -57,6 +58,9 @@ let package = Package(
         .package(url: "https://github.com/pointfreeco/swift-composable-architecture.git", .upToNextMajor(from: "1.19.0")),
         .package(url: "https://github.com/pointfreeco/swift-dependencies", from: "1.9.0"),
         .package(url: "https://github.com/pointfreeco/swift-sharing.git", from: "2.4.0"),
+        // H2 — local SQLite mirror (offline-first, snappy). pointfree sqlite-data (aka SharingGRDB):
+        // reactive @FetchAll reads over GRDB, integrated with swift-sharing (already a dep).
+        .package(url: "https://github.com/pointfreeco/sqlite-data", from: "1.6.6"),
     ],
     targets: [
         .target(
@@ -272,6 +276,7 @@ let package = Package(
                 "HouseFeature",
                 "HueClient",
                 "PersistenceClient",
+                "LocalCache",
                 "AnalyticsClient",
                 "StorageClient",
                 "UserDomain",
@@ -330,6 +335,18 @@ let package = Package(
                 .product(name: "DependenciesMacros", package: "swift-dependencies"),
                 .product(name: "FirebaseFirestore", package: "firebase-ios-sdk"),
                 "WineDomain",
+                "FamilyDomain",
+            ]
+        ),
+        // H2 — the local SQLite mirror. Owns the on-disk DB (Application Support), the CareItemRecord
+        // schema, write-through sync from Firestore, and a reactive @FetchAll-backed observation. Kept
+        // dependency-light (FamilyDomain + SQLiteData) so features can read from it acyclically.
+        .target(
+            name: "LocalCache",
+            dependencies: [
+                .product(name: "Dependencies", package: "swift-dependencies"),
+                .product(name: "DependenciesMacros", package: "swift-dependencies"),
+                .product(name: "SQLiteData", package: "sqlite-data"),
                 "FamilyDomain",
             ]
         ),
