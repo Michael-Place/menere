@@ -14,6 +14,10 @@
 	<string>$(PRODUCT_NAME)</string>
 	<key>CFBundleDisplayName</key>
 	<string>¡Bacán!</string>
+	<!-- V5-Siri: the App Shortcuts phrases use \(.applicationName); a spoken name lets Siri match
+	     "Bacán"/"Bacan" cleanly instead of the punctuated display name "¡Bacán!". -->
+	<key>CFBundleSpokenName</key>
+	<string>Bacan</string>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
 	<key>CFBundlePackageType</key>

@@ -51,6 +51,9 @@ public struct MainTabReducer {
         case search(BrainSearchReducer.Action)
         case assistant(AssistantReducer.Action)
         case tabSelected(TabItem)
+        /// V5-Siri — an open-app App Intent (Log a Memory / Quick Capture) asked the app to land
+        /// somewhere. Drained from `IntentRouter` by `MainTabView` on foreground.
+        case openIntentDestination(IntentDestination)
         case binding(BindingAction<State>)
     }
 
@@ -111,6 +114,19 @@ public struct MainTabReducer {
                 state.selectedTab = .memories
                 return .send(.memories(.captureMomentTapped))
 
+            // V5-Siri — route an open-app intent to its surface once the app is foregrounded.
+            case .openIntentDestination(let destination):
+                switch destination {
+                case .logMemory:
+                    state.selectedTab = .memories
+                    analytics.log("intent_open", ["destination": "log_memory"])
+                    return .send(.memories(.captureMomentTapped))
+                case .capture:
+                    state.showAssistant = true
+                    analytics.log("intent_open", ["destination": "capture"])
+                    return .none
+                }
+
             case .search(.closeTapped):
                 state.showSearch = false
                 return .none
@@ -168,6 +184,9 @@ public enum TabItem: Int, CaseIterable, Equatable {
 
 public struct MainTabView: View {
     @Bindable var store: StoreOf<MainTabReducer>
+
+    /// V5-Siri — drain any pending open-app-intent navigation when the app foregrounds.
+    @Environment(\.scenePhase) private var scenePhase
 
     /// Motion & Delight — a monotonic entrance token per tab. It advances each time a tab becomes
     /// selected (and `.tabEntrance` fires once on cold-launch via its `initial:` reveal), so every
@@ -258,6 +277,19 @@ public struct MainTabView: View {
         .sheet(isPresented: $store.showAssistant) {
             // AssistantView owns its own NavigationStack (sparkles header + Done).
             AssistantView(store: store.scope(state: \.assistant, action: \.assistant))
+        }
+        // V5-Siri — an open-app App Intent (Log a Memory / Quick Capture) parks its destination in
+        // `IntentRouter`; drain it on first appearance and on every foreground so the app lands there.
+        .onAppear { consumePendingIntent() }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active { consumePendingIntent() }
+        }
+    }
+
+    /// Read-and-clear any pending open-app-intent destination and route to it (exactly once).
+    private func consumePendingIntent() {
+        if let destination = IntentRouter.shared.consume() {
+            store.send(.openIntentDestination(destination))
         }
     }
 
