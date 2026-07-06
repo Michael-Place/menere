@@ -480,7 +480,17 @@ first-class, can't-miss "radar": health (vaccines, checkups), legal/registration
 warranty, subscription/renewal expirations surfaced ahead of time, one-tap → calendar.
 Mostly plumbing on `needsAttention` + document dates we already extract.
 
-### P21 — Plant–sensor bridge (sensor-driven plant care) ⭐ flagship "only-you"
+### P21 — Plant–sensor bridge — ⛔ PARKED 2026-07-05 (insufficient sensor hardware)
+Live bridge inspection (all 3 Hue bridges paired): the house has only **ONE temperature
+sensor + ONE ambient-light sensor**, both on the Downstairs hub; the Outdoor & Upstairs hubs
+have NO environmental sensors. One ambient temp can't drive per-room watering across 32
+plants in ~5 rooms — Michael's call: "too sparse to really drive this feature." **The value
+already exists manually via P19-C3** (the plant "situation" context field feeds the
+troubleshoot AI, which adjusts intervals). REVIVE only if Michael adds Hue temperature
+sensors to the actual plant rooms (Balcony/Pool Room/Living-room-window/etc.) — then the
+sensor→plant-location bridge is a small build. Original vision below for reference:
+
+### P21(orig) — Plant–sensor bridge (sensor-driven plant care) ⭐ flagship "only-you"
 Hue motion sensors report **temperature + light-level per room**; plants live in those
 rooms (`location`). So P19-C3's context-aware watering can be **sensor-driven, not
 typed**: a warm/bright room auto-shortens the water interval, a dark/cool room
