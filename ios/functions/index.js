@@ -29,6 +29,7 @@ const { memoryMonthSummary } = require("./memoryMonthSummary");
 const { reviewUsage } = require("./usageReview");
 const { notifyHousehold, memberName } = require("./notifications");
 const { awardChoreXP, reverseChoreXP } = require("./choreXP");
+const { serve: serveMcp, mintToken: mintMcpToken } = require("./mcpServer");
 
 const ANTHROPIC_API_KEY = defineSecret("ANTHROPIC_API_KEY");
 const POSTMARK_WEBHOOK_SECRET = defineSecret("POSTMARK_WEBHOOK_SECRET");
@@ -754,5 +755,54 @@ exports.receiveEmail = onRequest(
       });
     }
     res.status(200).send(`ok: ${written} events`);
+  }
+);
+
+// -----------------------------------------------------------------------------
+// P14-C4 — MCP server over the family Firestore (read/query tools).
+// -----------------------------------------------------------------------------
+
+/**
+ * `bacanMcp` is a v2 HTTPS `onRequest` function (us-central1) — a true **MCP server** over the
+ * family's Firestore, spoken via streamable HTTP + JSON-RPC 2.0 (`mcpServer.js`). Point an MCP
+ * client (Claude Desktop / Claude Code / claude.ai) at its URL with a per-household bearer token
+ * (`Authorization: Bearer bcn~<hid>~<secret>`) and it exposes read/query tools — plants, pets,
+ * documents, events, money, care-due, memories, lists — all scoped to the token's household.
+ * Missing/invalid token → 401. No secrets needed (Firestore only); no rate limiting (private app).
+ */
+exports.bacanMcp = onRequest(
+  { timeoutSeconds: 60, memory: "512MiB" },
+  async (req, res) => {
+    await serveMcp(req, res);
+  }
+);
+
+/**
+ * `regenerateMcpToken` is a v2 HTTPS callable (us-central1) — (re)mints the household's MCP bearer
+ * token. The household is derived from the CALLER (`users/{uid}.householdId`); a client-passed hid is
+ * never trusted. Overwrites `households/{hid}/config/mcpToken = { token, createdAt }` and returns
+ * `{ token, endpoint }`. Any prior token is immediately invalidated. Auth-required.
+ */
+exports.regenerateMcpToken = onCall(
+  { timeoutSeconds: 30, memory: "256MiB" },
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError("unauthenticated", "You must be signed in.");
+    }
+    const uid = request.auth.uid;
+    const userSnap = await db().collection("users").doc(uid).get();
+    const hid = userSnap.exists ? userSnap.data().householdId : null;
+    if (!hid) {
+      throw new HttpsError("failed-precondition", "No household for this user.");
+    }
+    const token = mintMcpToken(hid);
+    await db()
+      .collection("households").doc(hid)
+      .collection("config").doc("mcpToken")
+      .set({ token, createdAt: admin.firestore.Timestamp.now() });
+    return {
+      token,
+      endpoint: "https://us-central1-menere.cloudfunctions.net/bacanMcp",
+    };
   }
 );
