@@ -59,7 +59,13 @@ let package = Package(
     ],
     targets: [
         .target(
-            name: "MenereUI"
+            name: "MenereUI",
+            dependencies: [
+                // H1 image pipeline: BacanImage(path:) resolves the Storage loader via @Dependency(\.storage).
+                // StorageClient does NOT depend on MenereUI, so this is acyclic.
+                .product(name: "Dependencies", package: "swift-dependencies"),
+                "StorageClient",
+            ]
         ),
         .target(
             name: "AppCore",

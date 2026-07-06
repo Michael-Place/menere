@@ -301,7 +301,12 @@ public struct CareItemFormReducer {
                     @Dependency(\.storage) var storage
                     @Dependency(\.persistence) var persistence
                     if let photoPath {
-                        await send(.photoLoaded(try? await storage.downloadData(photoPath)))
+                        // H1: cached pipeline so re-opening a plant/pet form is instant.
+                        let data = try? await ImagePipeline.shared.data(
+                            forStoragePath: photoPath,
+                            loader: { try await storage.downloadData(photoPath) }
+                        )
+                        await send(.photoLoaded(data))
                     }
                     if let petID, let hid {
                         let docs = ((try? await persistence.documents(hid)) ?? [])

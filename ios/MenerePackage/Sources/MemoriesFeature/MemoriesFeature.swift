@@ -2,6 +2,7 @@ import AnalyticsClient
 import ComposableArchitecture
 import FamilyDomain
 import Foundation
+import MenereUI
 import PersistenceClient
 import StorageClient
 import UserDomain
@@ -124,7 +125,11 @@ public struct MemoriesReducer {
                 return .run { send in
                     var loaded: [String: Data] = [:]
                     for path in missing where loaded[path] == nil {
-                        if let data = try? await storage.downloadData(path) { loaded[path] = data }
+                        // H1: cached pipeline → the memory timeline stops re-downloading on every visit.
+                        if let data = try? await ImagePipeline.shared.data(
+                            forStoragePath: path,
+                            loader: { try await storage.downloadData(path) }
+                        ) { loaded[path] = data }
                     }
                     await send(.photosLoaded(loaded))
                 }

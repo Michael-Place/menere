@@ -152,9 +152,7 @@ public struct BottleCardView: View {
                     .resizable()
                     .scaledToFill()
             } else if let url = wine.labelImageURL {
-                AsyncImage(url: url) { image in
-                    image.resizable().scaledToFill()
-                } placeholder: {
+                BacanImage(url: url, contentMode: .fill) {
                     gradientPlaceholder
                 }
             } else {

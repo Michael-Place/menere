@@ -218,7 +218,11 @@ public struct AmbientSlideshow: View {
 
         var loaded: [Frame] = []
         for path in ordered {
-            guard let data = try? await storage.downloadData(path), let image = UIImage(data: data) else { continue }
+            // H1: cached pipeline (memory+disk, deduped) — slideshow frames stop re-downloading.
+            guard let data = try? await ImagePipeline.shared.data(
+                forStoragePath: path,
+                loader: { try await storage.downloadData(path) }
+            ), let image = UIImage(data: data) else { continue }
             loaded.append(Frame(path: path, image: image))
         }
         frames = loaded.shuffled()

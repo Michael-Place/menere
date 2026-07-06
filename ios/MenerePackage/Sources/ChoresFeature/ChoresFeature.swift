@@ -233,7 +233,12 @@ public struct ChoresReducer {
                     @Dependency(\.storage) var storage
                     var loaded: [String: Data] = [:]
                     for path in photoPaths where loaded[path] == nil {
-                        if let data = try? await storage.downloadData(path) { loaded[path] = data }
+                        // H1: route through the shared cached pipeline (memory+disk, deduped) so a
+                        // re-appearance of the Home tab does NOT re-download care/plant/pet photos.
+                        if let data = try? await ImagePipeline.shared.data(
+                            forStoragePath: path,
+                            loader: { try await storage.downloadData(path) }
+                        ) { loaded[path] = data }
                     }
                     await send(.carePhotosLoaded(loaded))
                 }

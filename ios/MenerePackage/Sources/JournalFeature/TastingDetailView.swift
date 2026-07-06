@@ -247,23 +247,14 @@ public struct TastingDetailView: View {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 16) {
                         ForEach(Array(store.tasting.photoURLs.enumerated()), id: \.element) { index, url in
-                            AsyncImage(url: url, transaction: Transaction(animation: .menereSnappy)) { phase in
-                                switch phase {
-                                case .success(let image):
-                                    image
-                                        .resizable()
-                                        .scaledToFill()
-                                        .frame(width: 96, height: 96)
-                                        .transition(.opacity)
-                                case .failure:
-                                    Image(systemName: "photo")
-                                        .foregroundStyle(.secondary)
-                                        .frame(width: 96, height: 96)
-                                default:
-                                    ProgressView()
-                                        .frame(width: 96, height: 96)
+                            BacanImage(url: url, targetSize: CGSize(width: 96, height: 96), contentMode: .fill) {
+                                ZStack {
+                                    Color.secondary.opacity(0.12)
+                                    Image(systemName: "photo").foregroundStyle(.secondary)
                                 }
                             }
+                            .frame(width: 96, height: 96)
+                            .clipped()
                             .polaroid(rotation: index.isMultiple(of: 2) ? -1.5 : 1.5)
                             .matchedTransitionSource(id: url, in: photoZoom)
                             .onTapGesture { selectedPhoto = SelectedPhoto(url: url) }
@@ -352,21 +343,10 @@ private struct PhotoZoomViewer: View {
         ZStack {
             Color.black.ignoresSafeArea()
 
-            AsyncImage(url: url, transaction: Transaction(animation: .menereSnappy)) { phase in
-                switch phase {
-                case .success(let image):
-                    image
-                        .resizable()
-                        .scaledToFit()
-                        .transition(.opacity)
-                case .failure:
-                    Image(systemName: "photo")
-                        .font(.largeTitle)
-                        .foregroundStyle(.secondary)
-                default:
-                    ProgressView()
-                        .tint(.white)
-                }
+            BacanImage(url: url, contentMode: .fit) {
+                Image(systemName: "photo")
+                    .font(.largeTitle)
+                    .foregroundStyle(.secondary)
             }
             .padding()
             .offset(y: dragOffset)

@@ -309,15 +309,8 @@ struct RecipeThumbnail: View {
     var body: some View {
         Group {
             if let imageURL, let url = URL(string: imageURL) {
-                AsyncImage(url: url) { phase in
-                    switch phase {
-                    case let .success(image):
-                        image.resizable().scaledToFill()
-                    case .empty:
-                        placeholder(showsSpinner: true)
-                    default:
-                        placeholder(showsSpinner: false)
-                    }
+                BacanImage(url: url, targetSize: CGSize(width: size, height: size), contentMode: .fill) {
+                    placeholder(showsSpinner: false)
                 }
             } else {
                 placeholder(showsSpinner: false)

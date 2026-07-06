@@ -161,7 +161,11 @@ public struct MemoryEditorReducer {
                     if !paths.isEmpty {
                         var loaded: [String: Data] = [:]
                         for path in paths where loaded[path] == nil {
-                            if let data = try? await storage.downloadData(path) { loaded[path] = data }
+                            // H1: cached pipeline (memory+disk, deduped).
+                            if let data = try? await ImagePipeline.shared.data(
+                                forStoragePath: path,
+                                loader: { try await storage.downloadData(path) }
+                            ) { loaded[path] = data }
                         }
                         await send(.imagesLoaded(loaded))
                     }

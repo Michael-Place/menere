@@ -450,9 +450,8 @@ public struct ChoresView: View {
     private func plantThumb(_ plant: CareItem) -> some View {
         let thirsty = (plant.soonestDueTask()?.daysUntilDue() ?? 1) <= 0
         return ScrapbookThumb(seed: plant.photoPath ?? plant.id, side: 44) {
-            if let path = plant.photoPath, let data = store.carePhotos[path], let img = UIImage(data: data) {
-                Image(uiImage: img).resizable().scaledToFill()
-            } else {
+            // H1: BacanImage reads through the cached pipeline + downsamples to the 44pt chip.
+            BacanImage(path: plant.photoPath, targetSize: CGSize(width: 44, height: 44), contentMode: .fill) {
                 ZStack {
                     Color.bacanGreen.opacity(0.15)
                     Image(systemName: "leaf.fill").foregroundStyle(Color.bacanGreen)
@@ -504,9 +503,8 @@ public struct ChoresView: View {
     private func petAvatar(_ pet: CareItem) -> some View {
         VStack(spacing: 4) {
             ScrapbookThumb(seed: pet.photoPath ?? pet.id, side: 44, clip: .roundedRect(8)) {
-                if let path = pet.photoPath, let data = store.carePhotos[path], let img = UIImage(data: data) {
-                    Image(uiImage: img).resizable().scaledToFill()
-                } else {
+                // H1: BacanImage reads through the cached pipeline + downsamples to the 44pt chip.
+                BacanImage(path: pet.photoPath, targetSize: CGSize(width: 44, height: 44), contentMode: .fill) {
                     ZStack {
                         Color.sky.opacity(0.15)
                         Image(systemName: "pawprint.fill").foregroundStyle(Color.sky)

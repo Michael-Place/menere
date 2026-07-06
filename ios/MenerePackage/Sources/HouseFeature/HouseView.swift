@@ -351,12 +351,8 @@ public struct HouseView: View {
             .frame(width: side, height: side)
             .overlay {
                 if let url = nowPlaying.albumArtURL {
-                    AsyncImage(url: url) { phase in
-                        if let image = phase.image {
-                            image.resizable().scaledToFill()
-                        } else {
-                            musicNote(playing: nowPlaying.isPlaying)
-                        }
+                    BacanImage(url: url, targetSize: CGSize(width: side, height: side), contentMode: .fill) {
+                        musicNote(playing: nowPlaying.isPlaying)
                     }
                 } else {
                     musicNote(playing: nowPlaying.isPlaying)

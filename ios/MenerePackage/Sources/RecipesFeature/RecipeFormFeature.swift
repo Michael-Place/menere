@@ -164,18 +164,11 @@ public struct RecipeFormView: View {
             Form {
                 if let imageURL = store.recipe.imageURL, let url = URL(string: imageURL) {
                     Section {
-                        AsyncImage(url: url) { phase in
-                            switch phase {
-                            case let .success(image):
-                                image.resizable().scaledToFill()
-                            case .empty:
-                                ZStack { Color.bacanGreen.opacity(0.12); ProgressView() }
-                            default:
-                                ZStack {
-                                    Color.bacanGreen.opacity(0.12)
-                                    Image(systemName: "fork.knife")
-                                        .font(.largeTitle).foregroundStyle(Color.bacanGreen)
-                                }
+                        BacanImage(url: url, targetSize: CGSize(width: 600, height: 200), contentMode: .fill) {
+                            ZStack {
+                                Color.bacanGreen.opacity(0.12)
+                                Image(systemName: "fork.knife")
+                                    .font(.largeTitle).foregroundStyle(Color.bacanGreen)
                             }
                         }
                         .frame(height: 200)
