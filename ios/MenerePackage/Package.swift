@@ -30,6 +30,7 @@ let package = Package(
         .library(name: "StorageClient", targets: ["StorageClient"]),
         .library(name: "LocationClient", targets: ["LocationClient"]),
         .library(name: "PhotoCurationClient", targets: ["PhotoCurationClient"]),
+        .library(name: "PhotoLibraryClient", targets: ["PhotoLibraryClient"]),
         .library(name: "HueClient", targets: ["HueClient"]),
         .library(name: "LutronClient", targets: ["LutronClient"]),
         .library(name: "SonosClient", targets: ["SonosClient"]),
@@ -65,6 +66,9 @@ let package = Package(
                 // StorageClient does NOT depend on MenereUI, so this is acyclic.
                 .product(name: "Dependencies", package: "swift-dependencies"),
                 "StorageClient",
+                // FL1: the in-app photo browser (PhotoLibraryBrowser) reads the library through this
+                // client. PhotoLibraryClient does NOT depend on MenereUI, so this stays acyclic.
+                "PhotoLibraryClient",
             ]
         ),
         .target(
@@ -205,6 +209,8 @@ let package = Package(
                 "AnalyticsClient",
                 "UserDomain",
                 "StorageClient",
+                // FL1: the memory editor loads full images for browser-picked assets via this client.
+                "PhotoLibraryClient",
             ]
         ),
         .target(
@@ -357,6 +363,15 @@ let package = Package(
         ),
         .target(
             name: "PhotoCurationClient",
+            dependencies: [
+                .product(name: "Dependencies", package: "swift-dependencies"),
+                .product(name: "DependenciesMacros", package: "swift-dependencies"),
+            ]
+        ),
+        // FL1 — the read side of the PhotoKit door (browse/search the library into memories). Kept
+        // dependency-light (no MenereUI) so MenereUI can depend on it acyclically.
+        .target(
+            name: "PhotoLibraryClient",
             dependencies: [
                 .product(name: "Dependencies", package: "swift-dependencies"),
                 .product(name: "DependenciesMacros", package: "swift-dependencies"),
@@ -569,6 +584,12 @@ let package = Package(
             name: "PhotoCurationClientTests",
             dependencies: [
                 "PhotoCurationClient",
+            ]
+        ),
+        .testTarget(
+            name: "PhotoLibraryClientTests",
+            dependencies: [
+                "PhotoLibraryClient",
             ]
         ),
         .testTarget(

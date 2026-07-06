@@ -29,7 +29,7 @@
 	<key>NSPhotoLibraryAddUsageDescription</key>
 	<string>Bacán curates your best family photos into an album your Apple TV can use as its screensaver.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
-	<string>Bacán curates your best family photos into an album your Apple TV can use as its screensaver.</string>
+	<string>Bacán uses your photos so you can browse and add family moments to your journal.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>Bacán uses your location to estimate drive times to dinner.</string>
 	<key>NSHomeKitUsageDescription</key>

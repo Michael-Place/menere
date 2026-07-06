@@ -46,6 +46,11 @@ public struct MemoryEditorView: View {
                 }
             }
             .task { store.send(.task) }
+            .sheet(isPresented: $store.showLibraryBrowser) {
+                PhotoLibraryBrowser { assetIDs in
+                    store.send(.libraryAssetsPicked(assetIDs))
+                }
+            }
         }
     }
 
@@ -105,6 +110,39 @@ public struct MemoryEditorView: View {
             .padding(14)
             .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Color.familySurface))
             .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(Color.inkSoft.opacity(0.16), lineWidth: 1))
+
+            // FL1 — the family lens: browse/search the whole library (favorites, months, albums,
+            // multi-select) alongside the quick PhotosPicker above.
+            Button {
+                store.send(.libraryBrowseTapped)
+            } label: {
+                HStack(spacing: 10) {
+                    Image(systemName: "photo.stack.fill")
+                        .font(.system(.headline, design: .rounded))
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("Browse your library")
+                            .font(.system(.subheadline, design: .rounded).weight(.semibold))
+                        Text("Search favorites, months & albums")
+                            .font(.system(.caption, design: .rounded))
+                            .foregroundStyle(Color.inkSoft)
+                    }
+                    Spacer()
+                    if store.loadingLibraryCount > 0 {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        Image(systemName: "chevron.right")
+                            .font(.system(.subheadline, design: .rounded))
+                            .foregroundStyle(Color.inkSoft)
+                    }
+                }
+                .foregroundStyle(Color.bacanGreen)
+                .padding(14)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Color.bacanGreen.opacity(0.10)))
+                .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(Color.bacanGreen.opacity(0.25), lineWidth: 1))
+            }
+            .buttonStyle(.pressable)
+            .accessibilityIdentifier("memory-browse-library")
         }
     }
 

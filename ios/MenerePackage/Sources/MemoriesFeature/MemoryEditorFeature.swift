@@ -3,6 +3,7 @@ import ComposableArchitecture
 import FamilyDomain
 import MenereUI
 import PersistenceClient
+import PhotoLibraryClient
 import PhotosUI
 import StorageClient
 import SwiftUI
@@ -43,6 +44,10 @@ public struct MemoryEditorReducer {
         /// Existing photo/sticker bytes loaded from Storage in edit mode, keyed by path (for display).
         var loadedImages: [String: Data] = [:]
         var isSaving = false
+        /// FL1 — the rich in-app photo browser (`PhotoLibraryBrowser`) sheet is up.
+        var showLibraryBrowser = false
+        /// FL1 — how many browser-picked assets are still loading their full image (for a gentle busy hint).
+        var loadingLibraryCount = 0
 
         public init(memory: Memory, isEditing: Bool, members: [HouseholdMember]) {
             self.memory = memory
@@ -107,6 +112,9 @@ public struct MemoryEditorReducer {
         case membersLoaded([HouseholdMember])
         case imagesLoaded([String: Data])
         case photoAdded(Data)
+        case libraryBrowseTapped
+        case libraryAssetsPicked([String])
+        case libraryLoadFinishedOne
         case removeSlot(id: String)
         case makeStickerTapped(id: String)
         case stickerLifted(id: String, Data?)
@@ -130,6 +138,7 @@ public struct MemoryEditorReducer {
     @Dependency(\.storage) var storage
     @Dependency(\.analytics) var analytics
     @Dependency(\.date) var date
+    @Dependency(\.photoLibrary) var photoLibrary
 
     private func hid() -> String? {
         @Shared(.user) var user
@@ -185,6 +194,34 @@ public struct MemoryEditorReducer {
             case let .photoAdded(data):
                 let index = state.slots.count
                 state.slots.append(MemoryPhotoSlot(id: "new-\(index)-\(UUID().uuidString)", photoData: data))
+                return .none
+
+            case .libraryBrowseTapped:
+                state.showLibraryBrowser = true
+                return .none
+
+            case let .libraryAssetsPicked(assetIDs):
+                // FL1: the family picked assets in the rich browser. Load each full image off the
+                // library and feed it through the SAME `photoAdded` path the PhotosPicker uses — the
+                // bytes are downscaled/JPEG'd (like PhotoCaptureField) before they become slots, so the
+                // existing Save→upload path is unchanged.
+                guard !assetIDs.isEmpty else { return .none }
+                state.showLibraryBrowser = false
+                state.loadingLibraryCount += assetIDs.count
+                return .run { send in
+                    for id in assetIDs {
+                        var jpeg: Data?
+                        if let data = await photoLibrary.loadFullImage(id),
+                           let ui = UIImage(data: data) {
+                            jpeg = CaptureImageProcessing.downscaledJPEG(from: ui) ?? data
+                        }
+                        if let jpeg { await send(.photoAdded(jpeg)) }
+                        await send(.libraryLoadFinishedOne)
+                    }
+                }
+
+            case .libraryLoadFinishedOne:
+                state.loadingLibraryCount = max(0, state.loadingLibraryCount - 1)
                 return .none
 
             case let .removeSlot(id):
