@@ -514,6 +514,36 @@ notifications). Michael queued #2, #3, smart notifications, Money.
   Shortcuts over the existing verb registry — most-felt, least-effort, glanceable family hub.
   (Now folds into V5.3 + V5.6 — the ingestion pipeline subsumes it.)
 
+# Hardening & Performance (2026-07-06, Michael requested — "make it snappy")
+Audit findings (2026-07-06): NOT using Nuke; images via `AsyncImage` (6 sites) + custom
+`StorageClient.downloadData(path)` (plants/pets/memories/care) with NO durable cache → photos
+re-download every appearance. SPM deps = firebase-ios-sdk, PhoneNumberKit, TCA, swift-
+dependencies, swift-sharing. NO sqlite-data/SharingGRDB → every screen waits on a Firestore
+round-trip (Firestore's default disk persistence softens but isn't reactive-local). One ad-hoc
+NSCache in HouseView only.
+- **H1 — Image pipeline (biggest felt win):** a unified cached image layer. Adopt **Nuke +
+  NukeUI `LazyImage`** (Michael named it) OR a lightweight custom `ImagePipeline` (NSCache
+  memory + Caches-dir disk, keyed by Storage path/URL). Must cover BOTH http URLs (`AsyncImage`
+  sites) and Firebase **Storage paths** (wrap `downloadData` → cache the Data by path;
+  plant/care imagery is immutable per path → cache-forever). Replace the 6 `AsyncImage` + all
+  `downloadData` image sites with one `BacanImage` view. Kills the re-download-every-view lag.
+- **H1.5 — Thumbnails:** generate/store downscaled thumbnails for grids (plant roster 32, pet
+  grid, memory timeline) so scroll views don't decode full-res; downscale+compress on UPLOAD too
+  (photos shouldn't be multi-MB). Server-side thumb on upload OR client downscale+cache.
+- **H2 — Local data cache (snappy, offline-first):** adopt **pointfree `sqlite-data`/
+  SharingGRDB** as a local mirror — screens read SQLite instantly via `@FetchAll`/`.sharedReader`
+  while Firestore fetches/listeners update the local store in the background. Start with the
+  highest-traffic/slowest collections (careItems/plants, documents, memories, lists), expand
+  after. Bigger architectural change (a sync layer between Firestore↔SQLite↔UI) — phase it.
+- **H3 — Other perf:** verify Lazy stacks/grids everywhere + paginate long lists (documents 65+);
+  Firestore cache-first reads + composite indexes + `limit()`; break up heavy SwiftUI view bodies
+  (type-checker timeouts seen in V1-C); lazy-init the smart-home fleet clients at launch (cold-
+  start); prefetch roster/Today imagery; memoize AI results (identify/troubleshoot) like the
+  daily briefing already is. Enable/verify Firestore offline persistence tuning.
+Sequencing: H1 (+H1.5) first — cheapest, most-felt. H2 is the deeper upgrade. Parallelizable:
+H1 (image layer, MenereUI/StorageClient) vs H3 (per-feature perf) are independent; H2 touches
+PersistenceClient broadly so run it more solo.
+
 # Act IV — The intelligence era (2026-07-04)
 
 **Reframe (from a step-back review of the real data + integrations):** the app has
