@@ -1,6 +1,7 @@
 import ComposableArchitecture
 import FamilyDomain
 import MenereUI
+import PhotoLibraryClient
 import SwiftUI
 import UIKit
 
@@ -17,7 +18,7 @@ public struct MemoriesView: View {
 
     public var body: some View {
         Group {
-            if store.memories.isEmpty {
+            if store.memories.isEmpty && store.onThisDayPhotos.isEmpty {
                 emptyState
             } else {
                 timeline
@@ -56,7 +57,7 @@ public struct MemoriesView: View {
     private var content: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 26, pinnedViews: [.sectionHeaders]) {
-                lastYearSection
+                onThisDaySection
 
                 if monthGroups.isEmpty {
                     filteredEmptyState
@@ -133,29 +134,179 @@ public struct MemoriesView: View {
         .accessibilityIdentifier("memory-filter-\(id ?? "all")")
     }
 
-    // MARK: This time last year
+    // MARK: On this day (FL3 — real library photos + resurfaced memories, across prior years)
+
+    /// The merged per-year buckets for today's calendar day across the last N years: any memories that
+    /// happened that day **plus** the real library photos from that day. Only years with content appear.
+    private var onThisDayBuckets: [(yearsAgo: Int, memories: [Memory], group: OnThisDayPhotoGroup?)] {
+        (1...MemoriesReducer.onThisDayYearSpan).compactMap { yearsAgo in
+            let memories = memoriesOnThisDay(yearsAgo: yearsAgo)
+            let group = store.onThisDayPhotos.first { $0.yearsAgo == yearsAgo }
+            let hasPhotos = group.map { !$0.assets.isEmpty } ?? false
+            guard !memories.isEmpty || hasPhotos else { return nil }
+            return (yearsAgo, memories, hasPhotos ? group : nil)
+        }
+    }
+
+    /// Memories whose date lands on today's calendar day `yearsAgo` years back (± the on-this-day
+    /// window), honoring the active kid filter — merged with the library photos in each year block.
+    private func memoriesOnThisDay(yearsAgo: Int) -> [Memory] {
+        let cal = Calendar.current
+        guard let anchor = cal.date(byAdding: .year, value: -yearsAgo, to: onThisDayReferenceNow) else { return [] }
+        let anchorDay = cal.startOfDay(for: anchor)
+        return store.visibleMemories.filter { memory in
+            let day = cal.startOfDay(for: memory.date)
+            let delta = cal.dateComponents([.day], from: day, to: anchorDay).day ?? .max
+            return abs(delta) <= MemoriesReducer.onThisDayWindowDays
+        }
+    }
+
+    /// "Today" for the on-this-day match (a single seam so photo + memory matching stay aligned).
+    private var onThisDayReferenceNow: Date { Date() }
 
     @ViewBuilder
-    private var lastYearSection: some View {
-        let pages = store.thisTimeLastYear
-        if !pages.isEmpty {
+    private var onThisDaySection: some View {
+        let buckets = onThisDayBuckets
+        if buckets.isEmpty {
+            // Nothing on this exact day — offer the gentle connect prompt only when we haven't asked yet.
+            if store.photoAuth == .prompt {
+                onThisDayConnectPrompt
+            }
+        } else {
             VStack(alignment: .leading, spacing: 16) {
                 HStack(spacing: 6) {
-                    Text("This time last year 💛")
+                    Text("On this day 💛")
                         .font(.system(.headline, design: .rounded).weight(.bold))
                         .foregroundStyle(Color.terracotta)
                 }
                 .padding(.vertical, 6)
                 .padding(.horizontal, 12)
                 .background(Capsule(style: .continuous).fill(Color.terracotta.opacity(0.12)))
-                .accessibilityIdentifier("memories-this-time-last-year")
+                .accessibilityIdentifier("memories-on-this-day")
 
-                ForEach(pages) { memory in
-                    pageButton(memory)
+                if store.photoAuth == .prompt {
+                    onThisDayConnectPrompt
+                }
+
+                ForEach(Array(buckets.enumerated()), id: \.element.yearsAgo) { index, bucket in
+                    onThisDayYearBlock(bucket)
+                        .tabEntrance(.tumble, index: index)
                 }
             }
             .padding(.bottom, 6)
         }
+    }
+
+    @ViewBuilder
+    private func onThisDayYearBlock(_ bucket: (yearsAgo: Int, memories: [Memory], group: OnThisDayPhotoGroup?)) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(yearsAgoLabel(bucket.yearsAgo))
+                .font(.system(.subheadline, design: .rounded).weight(.bold))
+                .foregroundStyle(Color.inkSoft)
+                .accessibilityIdentifier("memories-on-this-day-year-\(bucket.yearsAgo)")
+
+            // Resurfaced memories from that day.
+            ForEach(bucket.memories) { memory in
+                pageButton(memory)
+            }
+
+            // Real library photos from that day + one-tap "make a memory".
+            if let group = bucket.group {
+                onThisDayPhotoStrip(group)
+            }
+        }
+    }
+
+    private func onThisDayPhotoStrip(_ group: OnThisDayPhotoGroup) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 10) {
+                    ForEach(Array(group.assets.enumerated()), id: \.element.id) { i, asset in
+                        onThisDayThumb(asset, tiltSeed: group.id * 31 + i)
+                    }
+                }
+                .padding(.vertical, 4)
+            }
+
+            Button {
+                store.send(.makeMemoryFromOnThisDay(yearsAgo: group.yearsAgo))
+            } label: {
+                Label("Make a memory from these", systemImage: "sparkles")
+                    .font(.system(.subheadline, design: .rounded).weight(.semibold))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 16).padding(.vertical, 10)
+                    .background(Capsule(style: .continuous).fill(Color.bacanGreen))
+            }
+            .buttonStyle(.pressable)
+            .accessibilityIdentifier("memories-on-this-day-make-\(group.yearsAgo)")
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .fill(Color.familySurface)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .strokeBorder(Color.terracotta.opacity(0.25), lineWidth: 1.5)
+        )
+    }
+
+    private func onThisDayThumb(_ asset: PhotoAsset, tiltSeed: Int) -> some View {
+        let image = store.onThisDayThumbs[asset.id].flatMap { UIImage(data: $0) }
+        return ZStack {
+            if let image {
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFill()
+            } else {
+                Rectangle()
+                    .fill(Color.terracotta.opacity(0.12))
+                    .overlay(ProgressView().controlSize(.small).tint(Color.terracotta))
+            }
+        }
+        .frame(width: 96, height: 96)
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .strokeBorder(.white, lineWidth: 3)
+        )
+        .rotationEffect(.degrees(Scrapbook.tilt(for: "otd\(tiltSeed)", max: 4)))
+        .shadow(color: .black.opacity(0.10), radius: 4, x: 0, y: 2)
+        .accessibilityIdentifier("memories-on-this-day-photo")
+    }
+
+    private var onThisDayConnectPrompt: some View {
+        Button {
+            store.send(.connectPhotosTapped)
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: "photo.stack")
+                    .font(.system(.title3, design: .rounded))
+                    .foregroundStyle(Color.terracotta)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Relive this day in years past")
+                        .font(.system(.subheadline, design: .rounded).weight(.semibold))
+                        .foregroundStyle(Color.ink)
+                    Text("Let Bacán peek at your photos to surface today's date from years gone by.")
+                        .font(.system(.caption, design: .rounded))
+                        .foregroundStyle(Color.inkSoft)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.right").font(.footnote).foregroundStyle(Color.inkSoft)
+            }
+            .padding(14)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Color.terracotta.opacity(0.10)))
+            .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(Color.terracotta.opacity(0.25), lineWidth: 1))
+        }
+        .buttonStyle(.pressable)
+        .accessibilityIdentifier("memories-on-this-day-connect")
+    }
+
+    private func yearsAgoLabel(_ yearsAgo: Int) -> String {
+        yearsAgo == 1 ? "1 year ago" : "\(yearsAgo) years ago"
     }
 
     // MARK: Month header + AI recap

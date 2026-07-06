@@ -1,11 +1,57 @@
 import AnalyticsClient
 import ComposableArchitecture
+import CoreGraphics
 import FamilyDomain
 import Foundation
 import MenereUI
 import PersistenceClient
+import Photos
+import PhotoLibraryClient
 import StorageClient
 import UserDomain
+
+// MARK: - FL3 — "On this day" support types
+
+/// Read-authorization state for the FL3 "On this day" surface, distilled from ``PHAuthorizationStatus``
+/// into just the cases the Memories tab reacts to. `.limited` counts as `.ready` (we browse the shared
+/// subset).
+public enum PhotoAuthState: Equatable, Sendable {
+    /// Not checked yet (first render).
+    case unknown
+    /// `.notDetermined` — offer a gentle "connect your photos" prompt.
+    case prompt
+    /// `.denied` / `.restricted` — hide the photo affordances (memories still resurface).
+    case denied
+    /// `.authorized` / `.limited` — load this-date photos.
+    case ready
+
+    init(_ status: PHAuthorizationStatus) {
+        switch status {
+        case .authorized, .limited: self = .ready
+        case .denied, .restricted: self = .denied
+        case .notDetermined: self = .prompt
+        @unknown default: self = .prompt
+        }
+    }
+}
+
+/// FL3 — the real library photos taken on today's calendar day, `yearsAgo` years back (grouped so the
+/// UI can label "1 year ago" / "3 years ago"). Merged with any on-this-day *memories* in the view.
+public struct OnThisDayPhotoGroup: Equatable, Sendable, Identifiable {
+    /// How many years back this group is (1…N).
+    public let yearsAgo: Int
+    /// The anchor day that year (today shifted back `yearsAgo` years) — labels + memory dating.
+    public let date: Date
+    /// The library assets from that day (± the on-this-day window), newest first.
+    public let assets: [PhotoAsset]
+    public var id: Int { yearsAgo }
+
+    public init(yearsAgo: Int, date: Date, assets: [PhotoAsset]) {
+        self.yearsAgo = yearsAgo
+        self.date = date
+        self.assets = assets
+    }
+}
 
 /// The family **Memories** tab (P28-C2) — the scrapbook journal. Loads the household's ``Memory``
 /// timeline (newest first), fetches each page's photos/stickers for the collage, and drives the warm
@@ -32,6 +78,12 @@ public struct MemoriesReducer {
         public var selectedKidId: String?
         /// AI month recaps keyed by month bucket ("yyyy-M"), driving the shimmer + reveal.
         public var recaps: [String: RecapPhase] = [:]
+        /// FL3 — read authorization for the "On this day" library photos.
+        public var photoAuth: PhotoAuthState = .unknown
+        /// FL3 — real library photos taken on today's day across prior years (non-empty years only).
+        public var onThisDayPhotos: [OnThisDayPhotoGroup] = []
+        /// FL3 — thumbnail bytes for the on-this-day photo strip, keyed by asset id.
+        public var onThisDayThumbs: [String: Data] = [:]
         @Presents public var editor: MemoryEditorReducer.State?
 
         public init() {}
@@ -42,21 +94,22 @@ public struct MemoriesReducer {
             return memories.filter { $0.kidMemberIds.contains(id) }
         }
 
-        /// Memories whose date lands ~1 year ago (within ±3 weeks), honoring the active filter —
-        /// the "This time last year 💛" resurfacing. Empty (so the section hides) when none.
-        public var thisTimeLastYear: [Memory] {
-            let cal = Calendar.current
-            let now = Date()
-            guard let anchor = cal.date(byAdding: .year, value: -1, to: now) else { return [] }
-            let window: TimeInterval = 21 * 24 * 60 * 60 // ±3 weeks
-            return visibleMemories.filter { abs($0.date.timeIntervalSince(anchor)) <= window }
-        }
     }
 
     public enum Action: Equatable {
         case task
         case loaded(memories: [Memory], members: [HouseholdMember])
         case photosLoaded([String: Data])
+        /// FL3 — the current photo read-authorization was resolved (on load or after a prompt).
+        case onThisDayAuthLoaded(PhotoAuthState)
+        /// FL3 — the this-date-across-years library photos finished fetching.
+        case onThisDayPhotosLoaded([OnThisDayPhotoGroup])
+        /// FL3 — thumbnails for the on-this-day strip finished loading.
+        case onThisDayThumbsLoaded([String: Data])
+        /// FL3 — the soft "connect your photos" prompt was tapped (requests access, then loads).
+        case connectPhotosTapped
+        /// FL3 — "Make a memory from these" on a year's on-this-day photos.
+        case makeMemoryFromOnThisDay(yearsAgo: Int)
         /// The Memories-tab button AND the Today quick-action both send this to open a fresh page.
         case captureMomentTapped
         case memoryTapped(Memory)
@@ -76,6 +129,39 @@ public struct MemoriesReducer {
     @Dependency(\.analytics) var analytics
     @Dependency(\.memoryRecap) var memoryRecap
     @Dependency(\.date) var date
+    @Dependency(\.photoLibrary) var photoLibrary
+
+    /// FL3 — how many prior years back to look for "On this day" photos + memories.
+    static let onThisDayYearSpan = 5
+    /// FL3 — ± window (in calendar days) around today's day when matching this-date-across-years.
+    static let onThisDayWindowDays = 1
+
+    /// FL3 — fetch the library photos taken on today's day, `1…span` years back. Runs off the main
+    /// actor (PhotoKit is thread-safe for fetches); returns only the years that actually have photos.
+    static func fetchOnThisDay(now: Date, photoLibrary: PhotoLibraryClient) async -> [OnThisDayPhotoGroup] {
+        let cal = Calendar.current
+        var groups: [OnThisDayPhotoGroup] = []
+        for yearsAgo in 1...onThisDayYearSpan {
+            guard let anchor = cal.date(byAdding: .year, value: -yearsAgo, to: now),
+                  let range = dayRange(around: anchor, windowDays: onThisDayWindowDays, cal: cal) else { continue }
+            let assets = await photoLibrary.fetchAssets(
+                PhotoAssetFilter(dateRange: range, mediaType: .image, limit: 30)
+            )
+            if !assets.isEmpty {
+                groups.append(OnThisDayPhotoGroup(yearsAgo: yearsAgo, date: anchor, assets: assets))
+            }
+        }
+        return groups
+    }
+
+    /// The inclusive `Date` range covering `anchor`'s day ± `windowDays` full days.
+    static func dayRange(around anchor: Date, windowDays: Int, cal: Calendar) -> ClosedRange<Date>? {
+        guard let lower = cal.date(byAdding: .day, value: -windowDays, to: anchor),
+              let upper = cal.date(byAdding: .day, value: windowDays, to: anchor),
+              let end = cal.date(byAdding: DateComponents(day: 1, second: -1), to: cal.startOfDay(for: upper))
+        else { return nil }
+        return cal.startOfDay(for: lower)...end
+    }
 
     /// The month bucket key for a date ("yyyy-M") — shared by the reducer + timeline grouping.
     static func monthKey(for date: Date) -> String {
@@ -105,13 +191,26 @@ public struct MemoriesReducer {
             switch action {
             case .task:
                 analytics.log("memories_opened")
-                guard let hid = hid() else { return .none }
-                state.isLoading = true
-                return .run { send in
-                    async let memories = (try? await persistence.memories(hid)) ?? []
-                    async let members = (try? await persistence.members(hid)) ?? []
-                    await send(.loaded(memories: await memories, members: await members))
+                let now = date.now
+                // FL3 — resolve photo authorization (no prompt) and, if we can read, load this-date
+                // photos. Runs alongside the memory load; it's independent of the household.
+                let onThisDay: Effect<Action> = .run { send in
+                    let status = photoLibrary.authorizationStatus()
+                    let auth = PhotoAuthState(status)
+                    await send(.onThisDayAuthLoaded(auth))
+                    guard auth == .ready else { return }
+                    await send(.onThisDayPhotosLoaded(Self.fetchOnThisDay(now: now, photoLibrary: photoLibrary)))
                 }
+                guard let hid = hid() else { return onThisDay }
+                state.isLoading = true
+                return .merge(
+                    .run { send in
+                        async let memories = (try? await persistence.memories(hid)) ?? []
+                        async let members = (try? await persistence.members(hid)) ?? []
+                        await send(.loaded(memories: await memories, members: await members))
+                    },
+                    onThisDay
+                )
 
             case let .loaded(memories, members):
                 state.isLoading = false
@@ -137,6 +236,61 @@ public struct MemoriesReducer {
             case let .photosLoaded(map):
                 state.photoCache.merge(map) { _, new in new }
                 return .none
+
+            case let .onThisDayAuthLoaded(auth):
+                state.photoAuth = auth
+                return .none
+
+            case let .onThisDayPhotosLoaded(groups):
+                state.onThisDayPhotos = groups
+                guard !groups.isEmpty else { return .none }
+                let total = groups.reduce(0) { $0 + $1.assets.count }
+                analytics.log("onthisday_photos_shown", [
+                    "years": String(groups.count),
+                    "photos": String(total),
+                ])
+                // Load a thumbnail for each on-this-day asset (best-effort, deduped).
+                let ids = groups.flatMap { $0.assets.map(\.id) }.filter { state.onThisDayThumbs[$0] == nil }
+                guard !ids.isEmpty else { return .none }
+                return .run { send in
+                    var thumbs: [String: Data] = [:]
+                    for id in ids where thumbs[id] == nil {
+                        if let data = await photoLibrary.loadThumbnail(id, CGSize(width: 160, height: 160)) {
+                            thumbs[id] = data
+                        }
+                    }
+                    await send(.onThisDayThumbsLoaded(thumbs))
+                }
+
+            case let .onThisDayThumbsLoaded(map):
+                state.onThisDayThumbs.merge(map) { _, new in new }
+                return .none
+
+            case .connectPhotosTapped:
+                let now = date.now
+                return .run { send in
+                    let status = await photoLibrary.requestAccess()
+                    let auth = PhotoAuthState(status)
+                    await send(.onThisDayAuthLoaded(auth))
+                    guard auth == .ready else { return }
+                    await send(.onThisDayPhotosLoaded(Self.fetchOnThisDay(now: now, photoLibrary: photoLibrary)))
+                }
+
+            case let .makeMemoryFromOnThisDay(yearsAgo):
+                guard let group = state.onThisDayPhotos.first(where: { $0.yearsAgo == yearsAgo }),
+                      !group.assets.isEmpty else { return .none }
+                let assetIDs = group.assets.map(\.id)
+                // Date the new page to the day those photos were actually taken (fallback: the anchor).
+                let memoryDate = group.assets.first?.creationDate ?? group.date
+                let memory = Memory(date: memoryDate, createdBy: uid() ?? "")
+                state.editor = MemoryEditorReducer.State(memory: memory, isEditing: false, members: state.members)
+                analytics.log("onthisday_memory_made", [
+                    "yearsAgo": String(yearsAgo),
+                    "photos": String(assetIDs.count),
+                ])
+                // Reuse the editor's existing browse→memory load path (loadFullImage → downscale → slot);
+                // Save then uploads through StorageClient exactly like a hand-picked memory.
+                return .send(.editor(.presented(.libraryAssetsPicked(assetIDs))))
 
             case .captureMomentTapped:
                 let memory = Memory(date: date.now, createdBy: uid() ?? "")
