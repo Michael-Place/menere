@@ -32,6 +32,13 @@ const { awardChoreXP, reverseChoreXP } = require("./choreXP");
 const { serve: serveMcp, mintToken: mintMcpToken } = require("./mcpServer");
 const { pairAppleTV: runPairAppleTV } = require("./appleTVPairing");
 
+// Act V V2-E — proactive, QUIET notifications (weekly digest + daily "3 things"). Kept in their own
+// require block + export block (below) to minimize merge conflict with concurrent index.js edits.
+const { onSchedule } = require("firebase-functions/v2/scheduler");
+const { generateWeeklyDigest } = require("./digestGenerate");
+const { selectDailyNudge } = require("./dailyNudge");
+const { readNotificationPrefs, inQuietHours, etWeekday } = require("./familySignals");
+
 const ANTHROPIC_API_KEY = defineSecret("ANTHROPIC_API_KEY");
 const POSTMARK_WEBHOOK_SECRET = defineSecret("POSTMARK_WEBHOOK_SECRET");
 
@@ -814,5 +821,83 @@ exports.regenerateMcpToken = onCall(
       token,
       endpoint: "https://us-central1-menere.cloudfunctions.net/bacanMcp",
     };
+  }
+);
+
+// -----------------------------------------------------------------------------
+// Act V V2-E — proactive, QUIET notifications (weekly digest + daily "3 things").
+// Both are v2 `onSchedule` (Cloud Scheduler) jobs that run once each ET morning and iterate every
+// household, RESPECTING each household's `config/notificationPrefs` (on/off, weekly day, quiet
+// hours). They compose via the pure helpers in digestGenerate.js / dailyNudge.js and deliver through
+// the existing notify-only FCM path (`notifyHousehold`). The daily nudge NEVER pushes on an empty day.
+// -----------------------------------------------------------------------------
+
+/** Every household id (private app — usually one). */
+async function allHouseholdIds() {
+  const snap = await db().collection("households").get();
+  return snap.docs.map((d) => d.id);
+}
+
+/**
+ * `weeklyFamilyDigest` — daily 08:00 ET tick; for each household whose prefs say "weekly on" AND whose
+ * chosen weekday is today (and not in quiet hours), composes the warm week-ahead digest (Claude), saves
+ * it to `households/{hid}/digests/{YYYY-Www}`, and pushes `{ title, body }` to the family.
+ */
+exports.weeklyFamilyDigest = onSchedule(
+  {
+    schedule: "0 8 * * *",
+    timeZone: "America/New_York",
+    memory: "512MiB",
+    timeoutSeconds: 180,
+    secrets: [ANTHROPIC_API_KEY],
+  },
+  async () => {
+    const now = new Date();
+    const today = etWeekday(now); // 1=Sun … 7=Sat (Apple weekday)
+    for (const hid of await allHouseholdIds()) {
+      try {
+        const prefs = await readNotificationPrefs(db(), hid);
+        if (!prefs.weeklyDigestEnabled) continue;
+        if (prefs.weeklyDigestWeekday !== today) continue;
+        if (inQuietHours(now, prefs)) continue;
+        const digest = await generateWeeklyDigest({
+          db: db(), hid, apiKey: ANTHROPIC_API_KEY.value(), now,
+        });
+        if (!digest) continue;
+        await notifyHousehold(db(), hid, { title: digest.title, body: digest.body });
+      } catch (err) {
+        console.error(`[weeklyFamilyDigest] hid=${hid} failed: ${err.message}`);
+      }
+    }
+  }
+);
+
+/**
+ * `dailyThreeThings` — daily 08:00 ET tick; for each household whose prefs say "daily nudge on" (and not
+ * in quiet hours), selects at most 3 of today's most-actionable items and pushes them — but only when
+ * there's something worth saying (a genuinely calm day gets NO push). Persists to
+ * `households/{hid}/nudges/{YYYY-MM-DD}`. No AI, no secrets — deterministic Radar-style prioritization.
+ */
+exports.dailyThreeThings = onSchedule(
+  {
+    schedule: "0 8 * * *",
+    timeZone: "America/New_York",
+    memory: "256MiB",
+    timeoutSeconds: 120,
+  },
+  async () => {
+    const now = new Date();
+    for (const hid of await allHouseholdIds()) {
+      try {
+        const prefs = await readNotificationPrefs(db(), hid);
+        if (!prefs.dailyNudgeEnabled) continue;
+        if (inQuietHours(now, prefs)) continue;
+        const nudge = await selectDailyNudge({ db: db(), hid, now });
+        if (!nudge) continue; // empty day — stay quiet
+        await notifyHousehold(db(), hid, { title: nudge.title, body: nudge.body });
+      } catch (err) {
+        console.error(`[dailyThreeThings] hid=${hid} failed: ${err.message}`);
+      }
+    }
   }
 );

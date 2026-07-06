@@ -39,6 +39,8 @@ public struct SettingsReducer {
         @Presents var wishlist: WishlistReducer.State?
         /// P25-C2 — "How we're using Bacán" AI usage-review sheet (closing the signal loop).
         @Presents var usageReview: UsageReviewReducer.State?
+        /// Act V V2-E — "Notifications" prefs sheet (weekly digest + daily nudge + quiet hours).
+        @Presents var notificationPrefs: NotificationPrefsReducer.State?
         /// P27-T0 — "Apple TV screensaver" setup + photo-sync sheet.
         @Presents var appleTVScreensaver: AppleTVScreensaverReducer.State?
 
@@ -159,6 +161,9 @@ public struct SettingsReducer {
         // P25-C2 — How we're using Bacán (usage review)
         case usageReviewTapped
         case usageReview(PresentationAction<UsageReviewReducer.Action>)
+        // Act V V2-E — Notifications prefs
+        case notificationsTapped
+        case notificationPrefs(PresentationAction<NotificationPrefsReducer.Action>)
         // P27-T0 — Apple TV screensaver
         case appleTVScreensaverTapped
         case appleTVScreensaver(PresentationAction<AppleTVScreensaverReducer.Action>)
@@ -258,6 +263,15 @@ public struct SettingsReducer {
                 analytics.log("usage_review_opened")
                 return .none
             case .usageReview:
+                return .none
+            case .notificationsTapped:
+                @Shared(.user) var user
+                guard let hid = user?.householdId else { return .none }
+                state.notificationPrefs = NotificationPrefsReducer.State(hid: hid)
+                @Dependency(\.analytics) var analytics
+                analytics.log("notification_prefs_opened")
+                return .none
+            case .notificationPrefs:
                 return .none
             case .appleTVScreensaverTapped:
                 state.appleTVScreensaver = AppleTVScreensaverReducer.State()
@@ -882,6 +896,9 @@ public struct SettingsReducer {
         .ifLet(\.$usageReview, action: \.usageReview) {
             UsageReviewReducer()
         }
+        .ifLet(\.$notificationPrefs, action: \.notificationPrefs) {
+            NotificationPrefsReducer()
+        }
         .ifLet(\.$appleTVPairing, action: \.appleTVPairing) {
             AppleTVPairingReducer()
         }
@@ -1027,45 +1044,9 @@ public struct SettingsView: View {
 
             smartHomeSection
 
-            // P25 — Ideas for Bacán: always-discoverable wishlist capture.
-            Section {
-                Button {
-                    store.send(.ideasTapped)
-                } label: {
-                    HStack(spacing: 12) {
-                        Image(systemName: "lightbulb.fill")
-                            .foregroundStyle(Color.marigold)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Ideas for Bacán").foregroundStyle(Color.ink)
-                            Text("Got an idea? We're all ears.")
-                                .font(.caption).foregroundStyle(.secondary)
-                        }
-                        Spacer()
-                        Image(systemName: "chevron.right").font(.caption).foregroundStyle(.secondary)
-                    }
-                }
-                .accessibilityIdentifier("ideas-for-bacan-row")
-            }
-
-            // P25-C2 — How we're using Bacán: the AI usage review (closing the signal loop).
-            Section {
-                Button {
-                    store.send(.usageReviewTapped)
-                } label: {
-                    HStack(spacing: 12) {
-                        Image(systemName: "chart.bar.doc.horizontal.fill")
-                            .foregroundStyle(Color.bacanGreen)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("How we're using Bacán").foregroundStyle(Color.ink)
-                            Text("A warm read on what's used and what's not.")
-                                .font(.caption).foregroundStyle(.secondary)
-                        }
-                        Spacer()
-                        Image(systemName: "chevron.right").font(.caption).foregroundStyle(.secondary)
-                    }
-                }
-                .accessibilityIdentifier("usage-review-row")
-            }
+            // Ideas + usage review + Act V V2-E Notifications, grouped into one property to keep the
+            // main List body's type-check tractable (the inline forms tipped the compiler's budget).
+            familyToolsSection
 
             // P27-T0 — Apple TV screensaver: curate pet/plant photos into the TV album.
             Section {
@@ -1124,6 +1105,7 @@ public struct SettingsView: View {
         .sheet(item: $store.scope(state: \.usageReview, action: \.usageReview)) { usageStore in
             UsageReviewView(store: usageStore)
         }
+        .modifier(NotificationPrefsPresentation(store: store))
         .sheet(item: $store.scope(state: \.appleTVScreensaver, action: \.appleTVScreensaver)) { tvStore in
             AppleTVScreensaverView(store: tvStore)
         }
@@ -1168,6 +1150,55 @@ public struct SettingsView: View {
     // P27-T2 — "Link Apple TV" row (device-pairing the living-room tvOS app). Extracted to keep the
     // profile Form's ViewBuilder under the type-checker budget.
     @ViewBuilder
+    /// Ideas · usage review · Notifications — grouped so the main List body stays type-checkable.
+    private var familyToolsSection: some View {
+        Group {
+        // P25 — Ideas for Bacán: always-discoverable wishlist capture.
+        Section {
+            settingsRow(
+                icon: "lightbulb.fill", tint: Color.marigold,
+                title: "Ideas for Bacán", subtitle: "Got an idea? We're all ears.",
+                identifier: "ideas-for-bacan-row"
+            ) { store.send(.ideasTapped) }
+        }
+        // P25-C2 — How we're using Bacán: the AI usage review (closing the signal loop).
+        Section {
+            settingsRow(
+                icon: "chart.bar.doc.horizontal.fill", tint: Color.bacanGreen,
+                title: "How we're using Bacán", subtitle: "A warm read on what's used and what's not.",
+                identifier: "usage-review-row"
+            ) { store.send(.usageReviewTapped) }
+        }
+        // Act V V2-E — Notifications: weekly digest + daily "3 things" + quiet hours.
+        Section {
+            settingsRow(
+                icon: "bell.badge.fill", tint: Color.terracotta,
+                title: "Notifications", subtitle: "Weekly digest and a quiet daily nudge.",
+                identifier: "notifications-row"
+            ) { store.send(.notificationsTapped) }
+        }
+        }
+    }
+
+    /// A standard disclosure-style Settings row (icon · title · subtitle · chevron) → an action.
+    private func settingsRow(
+        icon: String, tint: Color, title: String, subtitle: String, identifier: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            HStack(spacing: 12) {
+                Image(systemName: icon).foregroundStyle(tint)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title).foregroundStyle(Color.ink)
+                    Text(subtitle).font(.caption).foregroundStyle(.secondary)
+                }
+                Spacer()
+                Image(systemName: "chevron.right").font(.caption).foregroundStyle(.secondary)
+            }
+        }
+        .accessibilityIdentifier(identifier)
+    }
+
     private var linkAppleTVRow: some View {
         Button {
             store.send(.linkAppleTVTapped)
@@ -2127,6 +2158,19 @@ private struct ChildHealthPresentation: ViewModifier {
         content
             .sheet(item: $store.scope(state: \.childHealth, action: \.childHealth)) { childStore in
                 ChildHealthView(store: childStore)
+            }
+    }
+}
+
+/// Act V V2-E — the Notifications prefs sheet, extracted as a modifier to keep the main `body`'s
+/// presentation chain within the Swift type-checker's budget (mirrors the smart-home presentations).
+private struct NotificationPrefsPresentation: ViewModifier {
+    @Bindable var store: StoreOf<SettingsReducer>
+
+    func body(content: Content) -> some View {
+        content
+            .sheet(item: $store.scope(state: \.notificationPrefs, action: \.notificationPrefs)) { prefsStore in
+                NotificationPrefsView(store: prefsStore)
             }
     }
 }

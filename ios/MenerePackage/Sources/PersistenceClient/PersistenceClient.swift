@@ -207,6 +207,16 @@ public struct PersistenceClient: Sendable {
     /// replaced, mirroring `saveHueConfig` et al., so a cleared limit actually clears.
     public var saveBudgetConfig: @Sendable (_ hid: String, _ config: BudgetConfig) async throws -> Void
 
+    // MARK: Proactive notifications (Act V V2-E)
+    /// The household's notification prefs at `households/{hid}/config/notificationPrefs`, or nil when
+    /// the doc is absent (→ defaults). Decode-safe (an empty `{}` doc still resolves) — the same
+    /// cheap-gate pattern as the smart-home config docs and `BudgetConfig`. The scheduled digest/nudge
+    /// Cloud Functions read this same doc and respect it.
+    public var notificationPrefs: @Sendable (_ hid: String) async throws -> NotificationPrefs?
+    /// Full-document write of the notification prefs. Not a merge — the whole
+    /// `config/notificationPrefs` doc is replaced, mirroring `saveBudgetConfig` et al.
+    public var saveNotificationPrefs: @Sendable (_ hid: String, _ prefs: NotificationPrefs) async throws -> Void
+
     // MARK: Bacán wishlist (P25)
     /// The family's "Ideas for Bacán" wishlist at `households/{hid}/wishlist`, newest-first.
     public var wishlist: @Sendable (_ hid: String) async throws -> [WishlistIdea]
@@ -628,6 +638,17 @@ extension PersistenceClient: DependencyKey {
                 // Full-doc replace (merge: false) — same rationale as saveHueConfig et al.
                 try await households().document(hid).collection("config").document("budgets").setData(
                     Firestore.Encoder().encode(config)
+                )
+            },
+            notificationPrefs: { hid in
+                let s = try await households().document(hid).collection("config").document("notificationPrefs").getDocument()
+                guard let d = s.data() else { return nil }
+                return try Firestore.Decoder().decode(NotificationPrefs.self, from: d)
+            },
+            saveNotificationPrefs: { hid, prefs in
+                // Full-doc replace (merge: false) — same rationale as saveBudgetConfig et al.
+                try await households().document(hid).collection("config").document("notificationPrefs").setData(
+                    Firestore.Encoder().encode(prefs)
                 )
             },
             wishlist: { hid in
