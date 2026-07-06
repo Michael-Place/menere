@@ -56,7 +56,10 @@ public struct DocsLibraryView: View {
                     collectionsContent
                 } else {
                     Section {
-                        ForEach(store.documents) { doc in
+                        // H3 — render only the current page (`visibleDocuments`); the load-more
+                        // sentinel below pages in the next 20 as it scrolls into view. Delete offsets
+                        // index a newest-first prefix, so they map straight onto `documents`.
+                        ForEach(store.visibleDocuments) { doc in
                             Button {
                                 store.send(.documentTapped(doc))
                             } label: {
@@ -67,6 +70,17 @@ public struct DocsLibraryView: View {
                             .buttonStyle(.plain)
                         }
                         .onDelete { store.send(.deleteDocuments($0)) }
+
+                        if store.canLoadMore {
+                            HStack {
+                                Spacer()
+                                ProgressView().padding(.vertical, 4)
+                                Spacer()
+                            }
+                            .listRowBackground(Color.clear)
+                            .accessibilityIdentifier("docs-load-more")
+                            .onAppear { store.send(.loadMore) }
+                        }
                     }
                     .listRowBackground(Color.familySurface)
                 }

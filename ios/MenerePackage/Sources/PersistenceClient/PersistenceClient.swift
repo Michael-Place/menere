@@ -94,6 +94,17 @@ public struct PersistenceClient: Sendable {
     public var observeDocuments: @Sendable (_ hid: String) -> AsyncThrowingStream<[Document], Error> = { _ in
         AsyncThrowingStream { $0.finish() }
     }
+    /// Cursor-paged one-shot read of the documents collection: newest-first, at most `limit`,
+    /// starting *after* `afterCreatedAt` (nil = from the newest). Additive to `documents` /
+    /// `observeDocuments` — a `.limit()`-bounded read so a paginated library needn't fetch the
+    /// whole collection up front. Page by passing the previous page's last `createdAt` as the cursor.
+    public var documentsPage: @Sendable (_ hid: String, _ limit: Int, _ afterCreatedAt: Date?) async throws -> [Document]
+    /// Live *windowed* documents listener: identical to `observeDocuments` but capped at `limit`
+    /// (newest-first). Reactive like its unbounded twin, but bounded — raise `limit` to page in more
+    /// while staying live. Additive so existing full-listener callers are untouched.
+    public var observeDocumentsPage: @Sendable (_ hid: String, _ limit: Int) -> AsyncThrowingStream<[Document], Error> = { _, _ in
+        AsyncThrowingStream { $0.finish() }
+    }
     public var saveDocument: @Sendable (_ hid: String, _ doc: Document) async throws -> Void
     public var deleteDocument: @Sendable (_ hid: String, _ docID: String) async throws -> Void
 
@@ -486,6 +497,34 @@ extension PersistenceClient: DependencyKey {
                 AsyncThrowingStream { continuation in
                     let listener = households().document(hid).collection("documents")
                         .order(by: "createdAt", descending: true)
+                        .addSnapshotListener { snapshot, error in
+                            if let error {
+                                continuation.finish(throwing: error)
+                                return
+                            }
+                            let docs = snapshot?.documents.compactMap {
+                                try? Firestore.Decoder().decode(Document.self, from: $0.data())
+                            } ?? []
+                            continuation.yield(docs)
+                        }
+                    continuation.onTermination = { _ in listener.remove() }
+                }
+            },
+            documentsPage: { hid, limit, afterCreatedAt in
+                var query: Query = households().document(hid).collection("documents")
+                    .order(by: "createdAt", descending: true)
+                    .limit(to: limit)
+                if let afterCreatedAt {
+                    query = query.start(after: [Timestamp(date: afterCreatedAt)])
+                }
+                let snapshot = try await query.getDocuments()
+                return try snapshot.documents.map { try Firestore.Decoder().decode(Document.self, from: $0.data()) }
+            },
+            observeDocumentsPage: { hid, limit in
+                AsyncThrowingStream { continuation in
+                    let listener = households().document(hid).collection("documents")
+                        .order(by: "createdAt", descending: true)
+                        .limit(to: limit)
                         .addSnapshotListener { snapshot, error in
                             if let error {
                                 continuation.finish(throwing: error)

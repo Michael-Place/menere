@@ -19,6 +19,24 @@ public struct DocsReducer {
         var documents: [FamilyDomain.Document] = []
         var isLoading = false
 
+        // H3 — display-window pagination for the flat "All" list. The live listener still streams the
+        // *full* set (Collections clustering, cross-tab search consistency, and the pending→processed
+        // write-back all need every doc), so this bounds only how many rows the List builds/diffs at
+        // once: render `visibleCount`, grow by `pageSize` each time the load-more sentinel scrolls in.
+        static let pageSize = 20
+        var visibleCount = DocsReducer.State.pageSize
+
+        /// The current page of the flat list — a newest-first prefix of the full set.
+        var visibleDocuments: [FamilyDomain.Document] {
+            documents.count <= visibleCount ? documents : Array(documents.prefix(visibleCount))
+        }
+
+        /// True while the flat list still has rows to reveal (drives the load-more sentinel). Only the
+        /// flat "All" view paginates — the Collections lens and a drilled-in cluster show in full.
+        var canLoadMore: Bool {
+            !showCollections && openedCollection == nil && visibleCount < documents.count
+        }
+
         // P24 — Collections lens. `showCollections` flips the flat list to a clustered view;
         // `openedCollection` (when set) drills into one cluster's filtered document list.
         var showCollections = false
@@ -64,6 +82,7 @@ public struct DocsReducer {
     public enum Action: Equatable, BindableAction {
         case task
         case documentsLoaded([FamilyDomain.Document])
+        case loadMore                      // H3 — reveal the next page of the flat list
         // Intake entry points
         case scanTapped
         case choosePhotosTapped
@@ -141,6 +160,12 @@ public struct DocsReducer {
                         state.detail = nil
                     }
                 }
+                return .none
+
+            case .loadMore:
+                // Grow the display window by one page. Guarded by `canLoadMore` at the call site, so
+                // this only fires while more rows remain; capped implicitly by `visibleDocuments`.
+                state.visibleCount += State.pageSize
                 return .none
 
             case .scanTapped:
