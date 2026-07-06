@@ -31,6 +31,9 @@ public struct MoneyReducer {
         var referenceDate: Date = Date()
         /// Intended future spend rolled up from the family's wishlist/gift/project lists (read-only).
         var planned: PlannedSpending.Rollup = .empty
+        /// V1-C — the MEAL→GROCERY→MONEY loop: this week's grocery bill estimated off the meal plan
+        /// (read-only; an honest ballpark, surfaced in the "Planned / wishlist" card).
+        var groceriesPlanned: GroceryCostEstimator.Estimate = .empty
 
         // P22 — Spending intelligence.
         /// Whether the spending-insights sheet is presented.
@@ -100,6 +103,7 @@ public struct MoneyReducer {
         case documentsLoaded([FamilyDomain.Document])
         case budgetsLoaded(BudgetConfig?)
         case plannedLoaded(PlannedSpending.Rollup)
+        case groceriesPlannedLoaded(GroceryCostEstimator.Estimate)
         case previousMonthTapped
         case nextMonthTapped
         case insightsOpened
@@ -136,6 +140,13 @@ public struct MoneyReducer {
         return user?.id
     }
 
+    /// Start of the calendar week containing `date` — the window for the meal-plan grocery estimate
+    /// (mirrors `RecipesReducer.startOfWeek`, so Kitchen and Money price the same week).
+    static func startOfWeek(_ date: Date) -> Date {
+        let cal = Calendar.current
+        return cal.dateInterval(of: .weekOfYear, for: date)?.start ?? cal.startOfDay(for: date)
+    }
+
     public var body: some ReducerOf<Self> {
         BindingReducer()
         Reduce { state, action in
@@ -143,6 +154,7 @@ public struct MoneyReducer {
             case .task:
                 state.currentUid = uid()
                 state.referenceDate = date.now
+                let weekStart = MoneyReducer.startOfWeek(state.referenceDate)
                 guard let hid = hid() else { return .none }
                 state.isLoading = true
                 return .run { send in
@@ -161,6 +173,17 @@ public struct MoneyReducer {
                         itemsByList[list.id] = (try? await persistence.listItems(hid, list.id)) ?? []
                     }
                     await send(.plannedLoaded(PlannedSpending.rollup(lists: lists, itemsByList: itemsByList)))
+
+                    // V1-C — the MEAL→GROCERY→MONEY loop: estimate this week's grocery bill from the
+                    // meal plan (read-only; reuses the exact ingredient set the Kitchen shops for).
+                    async let recipes = persistence.recipes(hid)
+                    async let mealPlan = persistence.mealPlan(hid)
+                    let estimate = GroceryCostEstimator.weeklyEstimate(
+                        recipes: (try? await recipes) ?? [],
+                        mealPlan: (try? await mealPlan) ?? [],
+                        weekStart: weekStart
+                    )
+                    await send(.groceriesPlannedLoaded(estimate))
                 }
 
             case let .expensesLoaded(expenses):
@@ -180,6 +203,10 @@ public struct MoneyReducer {
                 state.planned = planned
                 return .none
 
+            case let .groceriesPlannedLoaded(estimate):
+                state.groceriesPlanned = estimate
+                return .none
+
             case .previousMonthTapped:
                 state.monthAnchor = MoneyRollup.shiftMonth(state.monthAnchor, by: -1)
                 state.spendingSummary = nil // month changed — recap no longer applies
@@ -193,7 +220,7 @@ public struct MoneyReducer {
             case .insightsOpened:
                 state.showInsights = true
                 analytics.log("spending_insights_opened")
-                if !state.forecast.isEmpty || !state.planned.isEmpty { analytics.log("money_forecast_viewed") }
+                if !state.forecast.isEmpty || !state.planned.isEmpty || !state.groceriesPlanned.isEmpty { analytics.log("money_forecast_viewed") }
                 // Kick off the AI recap once per month view (refresh regenerates).
                 guard state.spendingSummary == nil, !state.isSummarizing else { return .none }
                 return .send(.generateSummary)

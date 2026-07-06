@@ -157,6 +157,26 @@ public struct RecipesView: View {
             .scrollContentBackground(.hidden)
             .background(Color.familyCanvas)
 
+            if !groceryEstimate.isEmpty {
+                HStack(spacing: 6) {
+                    Image(systemName: "cart.badge.questionmark")
+                        .font(.footnote)
+                        .foregroundStyle(Color.bacanGreen)
+                    Text("Estimated groceries this week: ~\(Self.currency(groceryEstimate.total))")
+                        .font(.footnote.weight(.semibold))
+                        .foregroundStyle(Color.ink)
+                    Spacer(minLength: 0)
+                }
+                .padding(.horizontal)
+                .accessibilityIdentifier("grocery-cost-estimate")
+                Text("A rough guess from typical prices — not a real total.")
+                    .font(.caption2)
+                    .foregroundStyle(Color.inkSoft)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal)
+                    .padding(.top, 1)
+            }
+
             Button {
                 store.send(.generateGroceryList)
             } label: {
@@ -170,6 +190,18 @@ public struct RecipesView: View {
             .padding()
             .accessibilityIdentifier("generate-grocery-list-button")
         }
+    }
+
+    /// The MEAL→GROCERY cost loop (V1-C): a ballpark price on this week's shopping trip, computed
+    /// from the meal plan's dinners. An honest estimate — see `GroceryCostEstimator`.
+    private var groceryEstimate: GroceryCostEstimator.Estimate {
+        GroceryCostEstimator.weeklyEstimate(
+            recipes: store.recipes, mealPlan: store.mealPlan, weekStart: store.weekStart
+        )
+    }
+
+    static func currency(_ amount: Double) -> String {
+        amount.formatted(.currency(code: "USD").precision(.fractionLength(0)))
     }
 
     @ViewBuilder

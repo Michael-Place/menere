@@ -380,6 +380,9 @@ public struct RecipesReducer {
                 }
                 let count = items.count
                 analytics.log("grocery_list_generated", ["items": String(count)])
+                // V1-C — the meal→grocery→Money cost loop: log the ballpark spend for this trip.
+                let estimate = GroceryCostEstimator.estimate(ingredients: ingredients)
+                analytics.log("grocery_cost_estimated", ["estimate": String(Int(estimate.total.rounded()))])
                 return .run { send in
                     @Dependency(\.persistence) var persistence
                     try await persistence.saveList(hid, list)

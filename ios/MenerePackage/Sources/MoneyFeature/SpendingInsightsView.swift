@@ -29,7 +29,7 @@ struct SpendingInsightsView: View {
                     }
                     // Forward-looking (P22.1) — shown even on an empty month; they read history + lists.
                     if !store.forecast.isEmpty { comingUpCard }
-                    if !store.planned.isEmpty { plannedCard }
+                    if !store.planned.isEmpty || !store.groceriesPlanned.isEmpty { plannedCard }
                 }
                 .padding(16)
             }
@@ -318,19 +318,23 @@ struct SpendingInsightsView: View {
 
     private var plannedCard: some View {
         let planned = store.planned
+        let groceries = store.groceriesPlanned
         return VStack(alignment: .leading, spacing: 12) {
             HStack {
                 Label("Planned / wishlist", systemImage: "cart.badge.plus")
                     .font(.system(.subheadline, design: .rounded).weight(.semibold))
                     .foregroundStyle(Color.ink)
                 Spacer()
-                Text(MoneyView.currency(planned.total))
+                Text(MoneyView.currency(planned.total + groceries.total))
                     .font(.subheadline.weight(.bold).monospacedDigit())
                     .foregroundStyle(Color.inkSoft)
             }
             Text("What you've earmarked in your lists — future spend, not yet spent.")
                 .font(.caption)
                 .foregroundStyle(Color.inkSoft)
+            if !groceries.isEmpty {
+                PlannedRow(symbol: "cart.fill", tint: .bacanGreen, label: "Groceries (planned)", amount: groceries.total, lists: ["This week's meal plan · estimate"])
+            }
             if planned.wishlistTotal > 0 {
                 PlannedRow(symbol: "star.fill", tint: .marigold, label: "In wishlists", amount: planned.wishlistTotal, lists: planned.wishlistLists)
             }
@@ -339,6 +343,11 @@ struct SpendingInsightsView: View {
             }
             if planned.projectTotal > 0 {
                 PlannedRow(symbol: "hammer.fill", tint: .sky, label: "In project budgets", amount: planned.projectTotal, lists: planned.projectLists)
+            }
+            if !groceries.isEmpty {
+                Text("Groceries are a rough estimate from this week's meal plan, not a real total.")
+                    .font(.caption2)
+                    .foregroundStyle(Color.inkSoft)
             }
         }
         .cardChrome()
