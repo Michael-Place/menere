@@ -17,6 +17,7 @@ const { lookupColaClassType } = require("./ttbLookup");
 const { identifyWineLabel } = require("./claudeVision");
 const { extractRecipe: runExtractRecipe } = require("./recipeExtract");
 const { extractEventsFromText } = require("./eventExtract");
+const { resolveHousehold: resolveInboundHousehold, routeEmail } = require("./emailRouter");
 const { generateDailyBriefing } = require("./briefingGenerate");
 const { processDocument } = require("./docProcess");
 const { identifyPlant } = require("./plantIdentify");
@@ -685,93 +686,72 @@ exports.onListItemChecked = onDocumentUpdated(
 );
 
 /**
- * `receiveEmail` is a Postmark inbound webhook (onRequest). A family forwards an email to
- * `{inviteCode}@inbox.<your-domain>`; we resolve the household by that invite code, run Claude
- * event extraction over the subject + body, and write the events to the calendar.
+ * `receiveEmail` is a Postmark inbound webhook (onRequest) — Bacán's "open front door" (V5-email).
+ * A family forwards (or sends) an email to their stable alias and it is AI-ROUTED into the right
+ * module: attachments → Family Brain (Storage + `processDocument`), event-shaped mail → calendar
+ * events (the original behavior, preserved), order/shipping confirmations → a Brain doc tagged
+ * shipping/order, general notes → the best module (list / memory / Brain doc, Brain when unsure).
+ * See `emailRouter.js` for the addressing scheme + classify-and-route core.
+ *
+ * Addressing (`resolveHousehold`): the recipient carries a code — `hub+{code}@<domain>`, a Postmark
+ * `MailboxHash`, or the bare local part — resolved against `households/{hid}.inboundEmailCode` (the
+ * stable forwarding code), then the legacy `inviteCode`, then a sender-address fallback.
  *
  * SETUP REQUIRED (see ROADMAP-family.md): a Postmark account with an inbound mail domain, an
  * MX record pointing at Postmark, the inbound webhook URL configured as this function's URL with
  * `?secret=<POSTMARK_WEBHOOK_SECRET>`, and the `POSTMARK_WEBHOOK_SECRET` secret set.
  */
 exports.receiveEmail = onRequest(
-  { timeoutSeconds: 120, memory: "512MiB", secrets: [ANTHROPIC_API_KEY, POSTMARK_WEBHOOK_SECRET] },
+  { timeoutSeconds: 300, memory: "1GiB", secrets: [ANTHROPIC_API_KEY, POSTMARK_WEBHOOK_SECRET] },
   async (req, res) => {
     if (req.query.secret !== POSTMARK_WEBHOOK_SECRET.value()) {
       res.status(401).send("unauthorized");
       return;
     }
     const payload = req.body || {};
-    // Resolve the household by its invite code, taken from the recipient address. Supports both:
-    //   • custom domain:   ABC123@inbox.<your-domain>           (local part = invite code)
-    //   • Postmark default: <serverhash>+ABC123@inbound.postmarkapp.com  (MailboxHash = invite code)
-    // The latter lets us reuse a Postmark account with zero DNS setup.
-    const toAddress =
-      (Array.isArray(payload.ToFull) && payload.ToFull[0] && payload.ToFull[0].Email) ||
-      payload.To ||
-      "";
-    const rawLocal = String(toAddress).split("@")[0];
-    const plusHash = rawLocal.includes("+") ? rawLocal.split("+").pop() : "";
-    const key = String(payload.MailboxHash || plusHash || rawLocal).trim().toUpperCase();
-    if (!key) {
-      res.status(200).send("no recipient");
-      return;
-    }
 
-    const householdSnap = await db()
-      .collection("households")
-      .where("inviteCode", "==", key)
-      .limit(1)
-      .get();
-    if (householdSnap.empty) {
+    const resolved = await resolveInboundHousehold(db(), payload);
+    if (!resolved) {
+      // Drop safely (log) — no household could be resolved from the recipient code or sender.
+      console.log(`[email] dropped: no household for to=${payload.To || ""} from=${payload.From || ""}`);
       res.status(200).send("no household");
       return;
     }
-    const hid = householdSnap.docs[0].id;
+    const hid = resolved.hid;
 
-    const text = `${payload.Subject || ""}\n\n${payload.TextBody || payload.StrippedTextReply || ""}`.trim();
-    if (!text) {
+    const hasContent =
+      `${payload.Subject || ""}${payload.TextBody || ""}${payload.StrippedTextReply || ""}`.trim() ||
+      (Array.isArray(payload.Attachments) && payload.Attachments.length > 0);
+    if (!hasContent) {
       res.status(200).send("no content");
       return;
     }
 
-    let events = [];
+    let result;
     try {
-      events = await extractEventsFromText(ANTHROPIC_API_KEY.value(), text, "America/New_York");
+      result = await routeEmail({
+        db: db(),
+        apiKey: ANTHROPIC_API_KEY.value(),
+        hid,
+        payload,
+        timezone: "America/New_York",
+      });
     } catch (err) {
-      res.status(200).send(`extraction failed: ${err.message}`);
+      console.error(`[email] routing failed for hid=${hid}: ${err.message}`);
+      res.status(200).send(`routing failed: ${err.message}`);
       return;
     }
 
-    const eventsCol = db().collection("households").doc(hid).collection("events");
-    let written = 0;
-    for (const ev of events) {
-      const start = new Date(ev.startDate);
-      if (isNaN(start.getTime())) continue;
-      const end = ev.endDate ? new Date(ev.endDate) : null;
-      const id = eventsCol.doc().id;
-      await eventsCol.doc(id).set({
-        id,
-        title: String(ev.title || "Untitled"),
-        startDate: admin.firestore.Timestamp.fromDate(start),
-        endDate: end && !isNaN(end.getTime()) ? admin.firestore.Timestamp.fromDate(end) : null,
-        isAllDay: !!ev.isAllDay,
-        location: ev.location || null,
-        notes: ev.notes || null,
-        recurrence: "none",
-        assigneeIDs: [],
-        createdAt: admin.firestore.Timestamp.now(),
-        updatedAt: admin.firestore.Timestamp.now(),
-      });
-      written += 1;
+    // Confirmation push so the family sees it landed ("Filed your email → Family Brain: {vendor}").
+    try {
+      await notifyHousehold(db(), hid, { title: "Straight from your inbox", body: result.summary });
+    } catch (err) {
+      console.error(`[email] confirmation push failed for hid=${hid}: ${err.message}`);
     }
 
-    if (written > 0) {
-      await notifyHousehold(db(), hid, {
-        title: "Straight from your inbox",
-        body: `${written} event${written === 1 ? "" : "s"} added from your forwarded email`,
-      });
-    }
-    res.status(200).send(`ok: ${written} events`);
+    const destinations = result.decisions.map((d) => d.destination).join(",");
+    console.log(`[email] hid=${hid} via=${resolved.via} → [${destinations}] :: ${result.summary}`);
+    res.status(200).send(`ok: routed via ${resolved.via} → ${destinations || "none"}`);
   }
 );
 
