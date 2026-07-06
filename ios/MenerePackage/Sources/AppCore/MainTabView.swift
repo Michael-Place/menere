@@ -114,9 +114,26 @@ public struct MainTabReducer {
                 state.selectedTab = .memories
                 return .send(.memories(.captureMomentTapped))
             // P17-C2 — a Today chore/care row body → the Home tab (chores + house/plant/pet care).
+            // Generic fallback (e.g. a "+N more" body with no single target): just switch tabs.
             case .today(.delegate(.openHome)):
                 state.selectedTab = .chores
                 return .none
+            // Full drill-in — switch to the Home tab AND push the SPECIFIC item's detail so the tap
+            // lands ON that plant/pet/care item / the Chores & rewards board (no per-chore screen
+            // exists, so a chore lands on the board that lists it). `.deeplinkTo` seeds the bound
+            // NavigationStack path before the tab appears, so it renders the detail immediately.
+            case let .today(.delegate(.openHomePlant(id))):
+                state.selectedTab = .chores
+                return .send(.chores(.deeplinkTo(.plantDetail(id: id))))
+            case let .today(.delegate(.openHomePet(id))):
+                state.selectedTab = .chores
+                return .send(.chores(.deeplinkTo(.petDetail(id: id))))
+            case let .today(.delegate(.openHomeCare(id))):
+                state.selectedTab = .chores
+                return .send(.chores(.deeplinkTo(.careDetail(id: id))))
+            case .today(.delegate(.openHomeChore)):
+                state.selectedTab = .chores
+                return .send(.chores(.deeplinkTo(.choresRewards)))
             // P17-C2 — tonight's dinner name → Kitchen, opening that recipe's detail (reuses the
             // Recipes tab's own `editTapped` detail path; no new persistence).
             case let .today(.delegate(.openRecipe(recipe))):
@@ -131,9 +148,12 @@ public struct MainTabReducer {
                     analytics.log("intent_open", ["destination": "log_memory"])
                     return .send(.memories(.captureMomentTapped))
                 case .capture:
-                    state.showAssistant = true
+                    // The smart-capture inbox is the literal "capture surface" — and the only one that
+                    // consumes a Share-Extension handoff (`CaptureHandoffStore.take()` prefill). Land on
+                    // Today and open it so both Quick Capture (Siri) and a Safari share arrive prefilled.
+                    state.selectedTab = .today
                     analytics.log("intent_open", ["destination": "capture"])
-                    return .none
+                    return .send(.today(.captureTapped))
                 }
 
             case .search(.closeTapped):
@@ -250,7 +270,10 @@ public struct MainTabView: View {
             }
 
             Tab(TabItem.chores.title, systemImage: TabItem.chores.systemImage, value: TabItem.chores) {
-                NavigationStack {
+                // Path-bound so a Today drill-in (`.chores(.deeplinkTo)`) lands ON the specific
+                // plant/care/chore/pet detail. The view's own `NavigationLink(value:)` taps append to
+                // this same bound path, so normal in-tab navigation is unchanged.
+                NavigationStack(path: $store.chores.path) {
                     ChoresView(store: store.scope(state: \.chores, action: \.chores))
                         .toolbar { familyToolbar }
                 }

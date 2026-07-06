@@ -29,7 +29,12 @@ public struct ChoresView: View {
 
     /// Hub destinations pushed onto the tab's `NavigationStack` (Smart home is a direct
     /// `NavigationLink` since it seeds ``HouseView`` from the loaded config).
-    enum Destination: Hashable {
+    ///
+    /// Public so `AppCore` can bind the tab's `NavigationStack(path:)` to `ChoresReducer.State.path`
+    /// and Today's drill-in can push a SPECIFIC item's detail (plant/pet/care/chore) programmatically
+    /// via `ChoresReducer.Action.deeplinkTo` — the same values the view-side `NavigationLink(value:)`
+    /// taps append.
+    public enum Destination: Hashable, Sendable {
         case choresRewards, houseCare, plants, yard, pets, activity
         /// P19-C1 — a single plant's rich DETAIL page (hero, overview, care-task list), pushed when a
         /// plant row is tapped. Carries the plant's id; the screen re-derives the live ``CareItem`` from

@@ -336,6 +336,15 @@ public struct TodayReducer {
         /// it can be managed. The inline checkbox/mark-done still act in place; this is the row navigate.
         /// `card` names the source (chores / chores_more / care) for the `today_card_tapped` event.
         case openHomeTapped(card: String)
+        /// Full drill-in — a specific Today row was tapped; land ON that item's Home detail. Each looks
+        /// up the item (care rows route by kind: plant→plant detail, pet→pet profile, house/zone→care
+        /// detail) and emits the matching `Delegate`. A chore has no per-chore screen, so it drills to
+        /// the Chores & rewards board.
+        case careRowTapped(itemID: String)
+        case choreRowTapped
+        /// A Family Radar CARE alert (overdue pet/plant/house task) body was tapped → land ON that
+        /// item's detail (the pet-profile ask). Radar *document* alerts still open the Brain doc.
+        case radarCareRowTapped(itemID: String)
         /// P17-C2 — tonight's home-cooked dinner name was tapped → open that recipe's detail in Kitchen.
         case dinnerRecipeTapped
         /// A family member card was tapped → open their day sheet (logs `today_member_tapped`).
@@ -377,9 +386,17 @@ public struct TodayReducer {
         case openKitchen
         /// P28-C2 — jump to the Memories tab and open the "capture a moment" scrapbook editor.
         case openMemories
-        /// P17-C2 — switch to the Home tab (chores + house/plant/pet care live there). Used when a
-        /// chore row / care row / "+N more" body is tapped to drill into the feature where it's acted on.
+        /// P17-C2 — switch to the Home tab (chores + house/plant/pet care live there). Used as the
+        /// generic fallback (e.g. a "+N more" body tap with no single target) — just switch tabs.
         case openHome
+        /// Full drill-in (P17-C2 → detail): switch to the Home tab AND push the SPECIFIC item's detail
+        /// so the tap lands ON it, not just on the tab. The parent maps each to a `ChoresView.Destination`.
+        case openHomePlant(id: String)
+        case openHomePet(id: String)
+        case openHomeCare(id: String)
+        /// A chore row/"+N more" → the Home tab's Chores & rewards board (there is no per-chore screen,
+        /// so this lands on the board that lists the chore — the closest existing detail).
+        case openHomeChore
         /// P17-C2 — switch to the Kitchen tab and open a specific recipe's detail (tonight's dinner).
         case openRecipe(Recipe)
     }
@@ -807,10 +824,43 @@ public struct TodayReducer {
                 return .send(.delegate(.openMemories))
 
             case let .openHomeTapped(card):
-                // A chore/care row body (or "+N more") → the Home tab, where the item can be managed.
+                // Generic fallback for a "+N more" body (no single target) → just the Home tab.
                 @Dependency(\.analytics) var analytics
                 analytics.log("today_card_tapped", ["card": card, "destination": "home"])
                 return .send(.delegate(.openHome))
+
+            case let .careRowTapped(itemID):
+                // Land ON the specific care item's Home detail. Route by kind so a plant/pet gets its
+                // rich profile and house/zone upkeep gets the lighter care detail.
+                @Dependency(\.analytics) var analytics
+                guard let item = state.careItems.first(where: { $0.id == itemID }) else {
+                    analytics.log("today_card_tapped", ["card": "care", "destination": "home"])
+                    return .send(.delegate(.openHome))
+                }
+                analytics.log("today_card_tapped", ["card": "care", "destination": "home_detail"])
+                switch item.kind {
+                case .plant: return .send(.delegate(.openHomePlant(id: itemID)))
+                case .pet:   return .send(.delegate(.openHomePet(id: itemID)))
+                case .house, .zone: return .send(.delegate(.openHomeCare(id: itemID)))
+                }
+
+            case .choreRowTapped:
+                @Dependency(\.analytics) var analytics
+                analytics.log("today_card_tapped", ["card": "chores", "destination": "home_detail"])
+                return .send(.delegate(.openHomeChore))
+
+            case let .radarCareRowTapped(itemID):
+                @Dependency(\.analytics) var analytics
+                guard let item = state.careItems.first(where: { $0.id == itemID }) else {
+                    analytics.log("radar_care_item_tapped", ["destination": "home"])
+                    return .send(.delegate(.openHome))
+                }
+                analytics.log("radar_care_item_tapped", ["kind": item.kind.rawValue, "destination": "home_detail"])
+                switch item.kind {
+                case .plant: return .send(.delegate(.openHomePlant(id: itemID)))
+                case .pet:   return .send(.delegate(.openHomePet(id: itemID)))
+                case .house, .zone: return .send(.delegate(.openHomeCare(id: itemID)))
+                }
 
             case .dinnerRecipeTapped:
                 // Tonight's home-cooked dinner name → that recipe's detail in Kitchen. Falls back to the

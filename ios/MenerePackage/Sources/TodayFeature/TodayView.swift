@@ -680,7 +680,7 @@ public struct TodayView: View {
                 VStack(spacing: 12) {
                     ForEach(shown) { chore in choreRow(chore) }
                     if overflow > 0 {
-                        Button { store.send(.openHomeTapped(card: "chores_more")) } label: {
+                        Button { store.send(.choreRowTapped) } label: {
                             HStack(spacing: 6) {
                                 Text("+\(overflow) more in Home")
                                 Spacer()
@@ -711,8 +711,9 @@ public struct TodayView: View {
             .buttonStyle(.pressable)
             .accessibilityIdentifier("today-chore-toggle-\(chore.id)")
 
-            // The rest of the row is a tap target → the Home tab, where the chore can be managed.
-            Button { store.send(.openHomeTapped(card: "chores")) } label: {
+            // The rest of the row is a tap target → the Home tab's Chores & rewards board, where the
+            // chore lives (no per-chore screen exists).
+            Button { store.send(.choreRowTapped) } label: {
                 HStack(spacing: 12) {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(chore.title)
@@ -770,7 +771,7 @@ public struct TodayView: View {
                     VStack(spacing: 12) {
                         ForEach(Array(due.prefix(3))) { item in
                             TodayCareRow(due: item) {
-                                store.send(.openHomeTapped(card: "care"))
+                                store.send(.careRowTapped(itemID: item.item.id))
                             } onMarkDone: {
                                 store.send(.markCareTaskDone(itemID: item.item.id, taskID: item.task.id))
                             }
@@ -1298,17 +1299,32 @@ private struct CareRadarRow: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            Image(systemName: item.iconSymbol)
-                .font(.subheadline)
-                .foregroundStyle(Color.terracotta)
-                .frame(width: 22)
-            VStack(alignment: .leading, spacing: 4) {
-                Text(item.label)
-                    .foregroundStyle(Color.ink)
-                    .lineLimit(1)
-                overdueChip
+            // The leading region (icon + label + chip) drills ON the care item's Home detail — a pet
+            // alert lands on that pet's profile, a plant/house task on its detail. Only tappable when
+            // this row stands for a single item (the grouped "N plants need water" summary has no id).
+            Button {
+                if let careItemID = item.careItemID {
+                    store.send(.radarCareRowTapped(itemID: careItemID))
+                }
+            } label: {
+                HStack(spacing: 12) {
+                    Image(systemName: item.iconSymbol)
+                        .font(.subheadline)
+                        .foregroundStyle(Color.terracotta)
+                        .frame(width: 22)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(item.label)
+                            .foregroundStyle(Color.ink)
+                            .lineLimit(1)
+                        overdueChip
+                    }
+                    Spacer(minLength: 0)
+                }
+                .contentShape(Rectangle())
             }
-            Spacer(minLength: 0)
+            .buttonStyle(.pressable)
+            .disabled(item.careItemID == nil)
+            .accessibilityIdentifier("today-radar-care-open-\(item.id)")
             if item.isActionable, let careItemID = item.careItemID, let taskID = item.taskID {
                 Button {
                     store.send(.radarCareItemMarkedDone(itemID: careItemID, taskID: taskID))

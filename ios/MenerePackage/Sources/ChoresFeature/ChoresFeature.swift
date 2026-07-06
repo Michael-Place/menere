@@ -14,6 +14,11 @@ import UserDomain
 public struct ChoresReducer {
     @ObservableState
     public struct State: Equatable {
+        /// The Home tab's `NavigationStack` path (bound by `AppCore` in `MainTabView`). The view's own
+        /// `NavigationLink(value:)` taps append to it; Today's drill-in seeds it via ``Action/deeplinkTo``
+        /// so tapping a Today plant/care/chore/pet row lands ON that item's detail — not just the tab.
+        /// `public` so the parent `NavigationStack(path:)` can bind straight to it.
+        public var path: [ChoresView.Destination] = []
         var chores: [Chore] = []
         var members: [HouseholdMember] = []
         var stats: [MemberStats] = []
@@ -95,6 +100,10 @@ public struct ChoresReducer {
 
     public enum Action: Equatable, BindableAction {
         case task
+        /// Programmatic drill-in from another tab (Today): push a SPECIFIC detail onto the Home tab's
+        /// `NavigationStack` so a tapped plant/care/chore/pet row lands ON that item. Resets the path to
+        /// a single level so the drill-in never stacks atop a stale push.
+        case deeplinkTo(ChoresView.Destination)
         case loaded(chores: [Chore], members: [HouseholdMember], stats: [MemberStats], rewards: [Reward], activity: [ActivityItem], careItems: [CareItem]?, documents: [FamilyDomain.Document])
         /// H2 — care items served from the local SQLite mirror: the instant cold-nav paint and every
         /// subsequent reactive emission after a Firestore write-through upsert.
@@ -238,6 +247,13 @@ public struct ChoresReducer {
                     }
                     .cancellable(id: CancelID.observeStats, cancelInFlight: true)
                 )
+
+            case let .deeplinkTo(destination):
+                // Land exactly on the target: replace the path so a Today drill-in doesn't pile onto a
+                // prior push. The bound `NavigationStack` renders the pushed detail as the Home tab
+                // appears (state is set before the switch completes), so no `onAppear` ordering dance.
+                state.path = [destination]
+                return .none
 
             case let .loaded(chores, members, stats, rewards, activity, careItems, documents):
                 state.isLoading = false

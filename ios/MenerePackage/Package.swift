@@ -202,6 +202,9 @@ let package = Package(
                 "HubspaceClient",
                 "MerossClient",
                 "HomeKitClient",
+                // V5 Share Extension last-mile: read the parked share (`CaptureHandoffStore.take()`)
+                // and prefill the smart-capture surface with the shared URL/text/image.
+                "SharedCapture",
             ]
         ),
         .target(

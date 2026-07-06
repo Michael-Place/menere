@@ -6,8 +6,10 @@ import FirebaseFunctions
 import Foundation
 import MenereUI
 import PersistenceClient
+import SharedCapture
 import StorageClient
 import SwiftUI
+import UIKit
 import UserDomain
 
 // MARK: - Smart-capture inbox (Act V — V2-D)
@@ -160,6 +162,11 @@ public struct CaptureReducer {
 
     public enum Action: Equatable, BindableAction {
         case task
+        /// V5 Share Extension last-mile: read-and-clear the parked share (`CaptureHandoffStore.take()`)
+        /// off the reducer, loading + downscaling any shared image bytes from the app-group container.
+        case consumeHandoff
+        /// The parked share (if any) + its processed image, ready to prefill the compose surface.
+        case handoffLoaded(PendingShare, jpeg: Data?, thumbnail: Data?)
         case contextLoaded(lists: [FamilyList], members: [HouseholdMember])
         /// A photo finished processing in the view (downscaled JPEG + preview thumbnail).
         case photoProcessed(jpeg: Data, thumbnail: Data)
@@ -205,14 +212,61 @@ public struct CaptureReducer {
             switch action {
             case .task:
                 analytics.log("smart_capture_opened")
-                guard let (hid, _) = ctx() else { return .none }
+                // Prefill from a shared item regardless of household — the compose surface still shows
+                // the link/text/image even before context loads.
+                guard let (hid, _) = ctx() else { return .send(.consumeHandoff) }
+                return .merge(
+                    .send(.consumeHandoff),
+                    .run { send in
+                        async let lists = persistence.lists(hid)
+                        async let members = persistence.members(hid)
+                        await send(.contextLoaded(
+                            lists: (try? await lists) ?? [],
+                            members: (try? await members) ?? []
+                        ))
+                    }
+                )
+
+            case .consumeHandoff:
+                // Read-and-clear the parked share off the main actor; load + downscale any image bytes
+                // (they live as a file in the app-group container) before handing back for prefill.
                 return .run { send in
-                    async let lists = persistence.lists(hid)
-                    async let members = persistence.members(hid)
-                    await send(.contextLoaded(
-                        lists: (try? await lists) ?? [],
-                        members: (try? await members) ?? []
-                    ))
+                    guard let share = CaptureHandoffStore.take() else { return }
+                    var jpeg: Data?
+                    var thumbnail: Data?
+                    if share.kind == .image,
+                       let name = share.attachmentFilename,
+                       let url = PendingShareStore.attachmentURL(for: name),
+                       let data = try? Data(contentsOf: url),
+                       let ui = UIImage(data: data) {
+                        jpeg = CaptureImageProcessing.downscaledJPEG(from: ui, maxEdge: 2000, quality: 0.75)
+                        thumbnail = CaptureImageProcessing.thumbnailJPEG(from: ui)
+                    }
+                    await send(.handoffLoaded(share, jpeg: jpeg, thumbnail: thumbnail))
+                }
+
+            case let .handoffLoaded(share, jpeg, thumbnail):
+                analytics.log("share_prefill", ["kind": share.kind.rawValue])
+                switch share.kind {
+                case .image:
+                    // Prefill the photo slot; any note that rode along goes into the field too.
+                    if let jpeg, let thumbnail {
+                        state.imageJPEG = jpeg
+                        state.thumbnail = thumbnail
+                    }
+                    let note = share.composeText
+                    if !note.isEmpty { state.text = note }
+                    return .none
+                case .url:
+                    // Prefill the field with the link, then route it straight through the URL front door
+                    // (V5-URL) so the sheet opens already carrying a proposed destination.
+                    state.text = share.composeText
+                    return .send(.classifyTapped)
+                case .text, .pdf:
+                    // Text lands in the note field; a PDF has no compose slot, so carry its title/note
+                    // text (nothing is lost) and let the user route it.
+                    state.text = share.composeText
+                    return .none
                 }
 
             case let .contextLoaded(lists, members):
