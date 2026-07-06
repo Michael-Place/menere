@@ -43,6 +43,7 @@
 		B183246534F3FEC58B573B07 /* PackingTemplate.swift in Sources */ = {isa = PBXBuildFile; fileRef = FB220CDC37FA24455C19B864 /* PackingTemplate.swift */; };
 		B58EB23EE800218F2B85EAC0 /* CareItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8ADC640F89A0B5EBE6FF1853 /* CareItem.swift */; };
 		B8C06A33F89C25D303527248 /* SlideshowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1C48D4656BE53CF3C6515603 /* SlideshowView.swift */; };
+		BC99A36FC11ACFA3A8B177E5 /* GroceryCostEstimator.swift in Sources */ = {isa = PBXBuildFile; fileRef = A86F6C5A08C8B2EFB09E51CE /* GroceryCostEstimator.swift */; };
 		C865BDC48CE60ED95C1F1C5F /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 41055B2C0C280352A5BA0E26 /* RootView.swift */; };
 		CA8A07DBF98E4F679CB92FAB /* MaintenanceKnowledgeBase.swift in Sources */ = {isa = PBXBuildFile; fileRef = 437B8BDC48401261A9D61B3D /* MaintenanceKnowledgeBase.swift */; };
 		CA9C8AE4E3E9C87EF9860EFD /* WishlistIdea.swift in Sources */ = {isa = PBXBuildFile; fileRef = C43C2065489A7E12F0415208 /* WishlistIdea.swift */; };
@@ -96,6 +97,7 @@
 		9A62F87CC80BC2F1C200E844 /* HueConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HueConfig.swift; sourceTree = "<group>"; };
 		9C3E3163C87BFFE858D25462 /* GroceryCategory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroceryCategory.swift; sourceTree = "<group>"; };
 		A258E8EED101D5C5DC9213C4 /* MoneyRollup.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MoneyRollup.swift; sourceTree = "<group>"; };
+		A86F6C5A08C8B2EFB09E51CE /* GroceryCostEstimator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroceryCostEstimator.swift; sourceTree = "<group>"; };
 		AE647A48F30BEEF1FDD3BE02 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		B756050AEC9BD011CFF8E023 /* FamilyRadar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FamilyRadar.swift; sourceTree = "<group>"; };
 		C43C2065489A7E12F0415208 /* WishlistIdea.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WishlistIdea.swift; sourceTree = "<group>"; };
@@ -187,6 +189,7 @@
 				5020C88778BC0E0532035851 /* FamilyList.swift */,
 				B756050AEC9BD011CFF8E023 /* FamilyRadar.swift */,
 				9C3E3163C87BFFE858D25462 /* GroceryCategory.swift */,
+				A86F6C5A08C8B2EFB09E51CE /* GroceryCostEstimator.swift */,
 				CD4DDDEEABEB97183E417753 /* GroceryItemDB.swift */,
 				021B13671F3612A8DDCC1CB0 /* HomeHealthCalculator.swift */,
 				71342489DC1663D2E7536E4C /* HomeKitConfig.swift */,
@@ -417,6 +420,7 @@
 				60A2F888F0B3D7681710F26C /* FamilyList.swift in Sources */,
 				1E5D6BB849848A59978B4173 /* FamilyRadar.swift in Sources */,
 				F69538E28A47197EC956E4D2 /* GroceryCategory.swift in Sources */,
+				BC99A36FC11ACFA3A8B177E5 /* GroceryCostEstimator.swift in Sources */,
 				D873F53591BAAA5A1FED7190 /* GroceryItemDB.swift in Sources */,
 				548702A4AE23FB8E40CD4807 /* HomeHealthCalculator.swift in Sources */,
 				4DFCD75384C1965A78A211F8 /* HomeKitConfig.swift in Sources */,
@@ -624,14 +628,14 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = App/Menere.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
-				CURRENT_PROJECT_VERSION = 35;
+				CURRENT_PROJECT_VERSION = 36;
 				DEVELOPMENT_TEAM = Z2FNFL3X73;
 				INFOPLIST_FILE = App/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.28.0;
+				MARKETING_VERSION = 1.29.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.copoche.menere;
 				SDKROOT = iphoneos;
 				SWIFT_VERSION = 5.0;
@@ -645,14 +649,14 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = App/Menere.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
-				CURRENT_PROJECT_VERSION = 35;
+				CURRENT_PROJECT_VERSION = 36;
 				DEVELOPMENT_TEAM = Z2FNFL3X73;
 				INFOPLIST_FILE = App/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.28.0;
+				MARKETING_VERSION = 1.29.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.copoche.menere;
 				SDKROOT = iphoneos;
 				SWIFT_VERSION = 5.0;
