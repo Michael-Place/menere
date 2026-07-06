@@ -140,6 +140,10 @@ public struct TodayReducer {
         /// `DocumentDetailReducer` (pages, fields, its own idempotent add-to-calendar).
         @Presents var docDetail: DocumentDetailReducer.State?
 
+        /// The smart-capture inbox (Act V — V2-D). ONE sheet that AI-routes a photo/note to the right
+        /// module (Brain / plant / memory / list / reminder), so there's no "which screen?" tax.
+        @Presents var capture: CaptureReducer.State?
+
         /// P17-C1 — tapping a schedule row opens the tapped event for edit in the SAME
         /// `EventFormReducer` the Calendar tab uses (reschedule / edit / delete, one save path).
         @Presents var eventForm: EventFormReducer.State?
@@ -281,6 +285,10 @@ public struct TodayReducer {
         /// `radar_care_item` telemetry, then routes through the shared `markCareTaskDone` completion.
         case radarCareItemMarkedDone(itemID: String, taskID: String)
         case docDetail(PresentationAction<DocumentDetailReducer.Action>)
+        // Smart capture (Act V — V2-D).
+        /// The capture affordance was tapped → present the smart-capture inbox sheet.
+        case captureTapped
+        case capture(PresentationAction<CaptureReducer.Action>)
         // P17-C1 — actionable Today.
         /// A schedule row was tapped → open that event for edit (logs `today_event_tapped`).
         case eventTapped(FamilyEvent)
@@ -803,6 +811,20 @@ public struct TodayReducer {
             case .docDetail:
                 return .none
 
+            case .captureTapped:
+                @Dependency(\.analytics) var analytics
+                analytics.log("smart_capture_tapped")
+                state.capture = CaptureReducer.State()
+                return .none
+
+            case .capture(.presented(.delegate(.didFile))):
+                // Something was just filed from the capture sheet — refresh Today's cards (behind the
+                // still-open sheet) so the new doc/plant/memory/event shows the moment it's dismissed.
+                return .send(.task)
+
+            case .capture:
+                return .none
+
             case let .eventTapped(event):
                 @Dependency(\.analytics) var analytics
                 analytics.log("today_event_tapped")
@@ -877,6 +899,9 @@ public struct TodayReducer {
         }
         .ifLet(\.$docDetail, action: \.docDetail) {
             DocumentDetailReducer()
+        }
+        .ifLet(\.$capture, action: \.capture) {
+            CaptureReducer()
         }
         .ifLet(\.$eventForm, action: \.eventForm) {
             EventFormReducer()

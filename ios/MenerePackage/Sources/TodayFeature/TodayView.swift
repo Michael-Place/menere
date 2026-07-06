@@ -25,6 +25,8 @@ public struct TodayView: View {
 
                 briefingCard
 
+                captureAnythingButton
+
                 weekStrip
                 scheduleCard
                 dinnerCard
@@ -65,8 +67,54 @@ public struct TodayView: View {
         )) {
             DinnerPickerSheet(store: store)
         }
+        // Act V — V2-D: the smart-capture inbox. One sheet that AI-routes a photo/note anywhere.
+        .sheet(item: $store.scope(state: \.capture, action: \.capture)) { captureStore in
+            CaptureView(store: captureStore)
+        }
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button { store.send(.captureTapped) } label: {
+                    Image(systemName: "plus.circle.fill")
+                }
+                .accessibilityLabel("Capture anything")
+                .accessibilityIdentifier("today-capture-button")
+            }
+        }
         .task { store.send(.task) }
         .refreshable { await store.send(.task).finish() }
+    }
+
+    /// Act V — V2-D. The hero entry to the smart-capture inbox: the single fastest way to get anything
+    /// into the app. Bacán decides where the photo/note goes; the user confirms.
+    private var captureAnythingButton: some View {
+        Button {
+            store.send(.captureTapped)
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: "sparkles")
+                    .font(.title3.weight(.semibold))
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Capture anything")
+                        .font(.system(.headline, design: .rounded).weight(.bold))
+                    Text("A photo or a note — Bacán files it for you.")
+                        .font(.system(.caption, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.85))
+                }
+                Spacer()
+                Image(systemName: "plus.circle.fill")
+                    .font(.title2)
+            }
+            .foregroundStyle(.white)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 16)
+            .frame(maxWidth: .infinity)
+            .background(
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .fill(Color.bacanGreen)
+            )
+        }
+        .buttonStyle(.pressable)
+        .accessibilityIdentifier("today-capture-hero")
     }
 
     // MARK: Greeting

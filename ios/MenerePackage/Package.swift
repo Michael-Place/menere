@@ -177,6 +177,7 @@ let package = Package(
                 "AnalyticsClient",
                 "UserDomain",
                 "DocsFeature",
+                "StorageClient",
                 "LocationClient",
                 "HueClient",
                 "LutronClient",
