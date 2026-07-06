@@ -24,6 +24,50 @@ enum CC {
     }
 }
 
+// MARK: - Time of day
+
+/// Reads the device clock to shape the command center's mood — a warm morning greeting that leans
+/// on today's plan, versus a calmer evening that celebrates the leaderboard. Kept deliberately
+/// subtle: it changes the greeting, a one-line tagline, which cards lead, and which card glows.
+enum TimeOfDay {
+    case morning, afternoon, evening, night
+
+    static var current: TimeOfDay {
+        switch Calendar.current.component(.hour, from: Date()) {
+        case 5..<12: return .morning
+        case 12..<17: return .afternoon
+        case 17..<22: return .evening
+        default: return .night
+        }
+    }
+
+    /// Evening + night wind the room down — calmer copy, leaderboard gets the spotlight.
+    var isWindingDown: Bool { self == .evening || self == .night }
+
+    /// The big headline greeting. `family` is already fallback-safe ("your family").
+    func headline(family: String) -> String {
+        switch self {
+        case .morning:   return "Good morning, \(family) 🌅"
+        case .afternoon: return "Good afternoon, \(family) ☀️"
+        case .evening:   return "Winding down 🌙"
+        case .night:     return "Good night 🌙"
+        }
+    }
+
+    /// A quieter second line under the headline.
+    func tagline(family: String) -> String {
+        switch self {
+        case .morning:   return "Here's your day at a glance."
+        case .afternoon: return "Here's what's still ahead today."
+        case .evening:   return "\(family)'s evening — here's where things landed."
+        case .night:     return "The house is settling in. See you in the morning."
+        }
+    }
+
+    /// Time-aware leaderboard title.
+    var leaderboardTitle: String { isWindingDown ? "Tonight's leaders" : "Chores leaderboard" }
+}
+
 // MARK: - Model
 
 /// Reads everything the command center shows — all one-shot Firestore reads, no callables.
@@ -213,6 +257,15 @@ final class CommandCenterModel {
         leaders = rows.sorted { ($0.xp, $1.name) > ($1.xp, $0.name) }
     }
 
+    /// The clear chores champion, if there is one: the top member must have earned XP *and* be
+    /// strictly ahead of second place (or be the only one on the board). A tie → no crown, no
+    /// confetti (celebrating everyone equally would just be noise).
+    var champion: LeaderRow? {
+        guard let top = leaders.first, top.xp > 0 else { return nil }
+        if leaders.count == 1 { return top }
+        return top.xp > leaders[1].xp ? top : nil
+    }
+
     // MARK: Helpers
 
     /// Firestore stores dates as `Timestamp`; tolerate a raw `Date` too (cache paths).
@@ -241,6 +294,13 @@ struct CommandCenterView: View {
     @State private var model: CommandCenterModel
     @FocusState private var exitFocused: Bool
 
+    /// Bumped once per appearance when a clear champion is present → fires a single confetti burst.
+    @State private var confettiBurst = 0
+    /// Tracks the champion across a session so a *change* of leader re-fires the celebration.
+    @State private var celebratedChampionID: String?
+
+    private let tod = TimeOfDay.current
+
     init(summary: PairingModel.HouseholdSummary, onExit: @escaping () -> Void) {
         self.summary = summary
         self.onExit = onExit
@@ -248,32 +308,64 @@ struct CommandCenterView: View {
     }
 
     var body: some View {
-        ZStack {
+        // The content is the PRIMARY view so it inherits tvOS's built-in title-safe area (the
+        // gradient/confetti are demoted to `.background`/`.overlay`, so they can't collapse the
+        // content's safe insets — which was pulling the header off the top of the panel). A little
+        // hand padding adds breathing room inside the safe rect.
+        VStack(alignment: .leading, spacing: 28) {
+            header
+
+            HStack(alignment: .top, spacing: 36) {
+                // Time-aware emphasis: mornings lead with the plan (schedule on top);
+                // evenings wind down and hand the spotlight to the leaderboard.
+                VStack(spacing: 24) {
+                    if tod.isWindingDown {
+                        briefingCard
+                        dinnerCard
+                        scheduleCard
+                    } else {
+                        scheduleCard
+                        dinnerCard
+                        briefingCard
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .top)
+
+                leaderboardCard
+                    .frame(width: 700)
+            }
+        }
+        .padding(.horizontal, 48)
+        .padding(.top, 80)
+        .padding(.bottom, 32)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(
             LinearGradient(
                 colors: [CC.cream, CC.creamDeep],
                 startPoint: .topLeading, endPoint: .bottomTrailing
             )
             .ignoresSafeArea()
-
-            VStack(alignment: .leading, spacing: 32) {
-                header
-
-                HStack(alignment: .top, spacing: 36) {
-                    VStack(spacing: 26) {
-                        briefingCard
-                        scheduleCard
-                        dinnerCard
-                    }
-                    .frame(maxWidth: .infinity, alignment: .top)
-
-                    leaderboardCard
-                        .frame(width: 700)
-                }
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            .padding(56)
+        )
+        // Big-screen joy: a one-shot confetti rain over everything when there's a champion.
+        .overlay(
+            ConfettiView(burst: confettiBurst)
+                .ignoresSafeArea()
+                .allowsHitTesting(false)
+        )
+        .task {
+            await model.load()
+            celebrateIfLeader()
         }
-        .task { await model.load() }
+        .onChange(of: model.champion?.id) { _, _ in celebrateIfLeader() }
+    }
+
+    /// Fires the celebration when a clear champion appears — and again if the leader changes mid-
+    /// session (a live re-read could flip the crown). Never fires for a tie or an empty board.
+    private func celebrateIfLeader() {
+        guard let champ = model.champion else { celebratedChampionID = nil; return }
+        guard champ.id != celebratedChampionID else { return }
+        celebratedChampionID = champ.id
+        confettiBurst += 1
     }
 
     // MARK: Header
@@ -281,12 +373,15 @@ struct CommandCenterView: View {
     private var header: some View {
         HStack(alignment: .center) {
             VStack(alignment: .leading, spacing: 8) {
-                Text(greeting)
-                    .font(.system(size: 64, weight: .heavy, design: .rounded))
+                Text(tod.headline(family: summary.familyName))
+                    .font(.system(size: 56, weight: .heavy, design: .rounded))
                     .foregroundStyle(CC.green)
-                Text(dateLine)
+                Text(tod.tagline(family: summary.familyName))
                     .font(.system(.title2, design: .rounded).weight(.medium))
-                    .foregroundStyle(CC.ink.opacity(0.6))
+                    .foregroundStyle(CC.ink.opacity(0.55))
+                Text(dateLine)
+                    .font(.system(.title3, design: .rounded).weight(.medium))
+                    .foregroundStyle(CC.ink.opacity(0.4))
             }
             Spacer()
             Button(action: onExit) {
@@ -295,12 +390,6 @@ struct CommandCenterView: View {
             }
             .focused($exitFocused)
         }
-    }
-
-    private var greeting: String {
-        let hour = Calendar.current.component(.hour, from: Date())
-        let word = hour < 12 ? "Good morning" : (hour < 18 ? "Good afternoon" : "Good evening")
-        return "\(word), \(summary.familyName)"
     }
 
     private var dateLine: String {
@@ -341,7 +430,8 @@ struct CommandCenterView: View {
     }
 
     private var scheduleCard: some View {
-        CommandCard(icon: "calendar", accent: CC.sky, title: "Today's schedule") {
+        CommandCard(icon: "calendar", accent: CC.sky, title: "Today's schedule",
+                    emphasized: !tod.isWindingDown) {
             if !model.schedule.isEmpty {
                 VStack(spacing: 14) {
                     ForEach(model.schedule.prefix(6)) { item in
@@ -400,13 +490,23 @@ struct CommandCenterView: View {
     }
 
     private var leaderboardCard: some View {
-        CommandCard(icon: "trophy.fill", accent: CC.marigold, title: "Chores leaderboard") {
+        CommandCard(icon: "trophy.fill", accent: CC.marigold, title: tod.leaderboardTitle,
+                    emphasized: tod.isWindingDown) {
             if !model.leaders.isEmpty {
-                VStack(spacing: 18) {
-                    ForEach(Array(model.leaders.enumerated()), id: \.element.id) { idx, row in
-                        LeaderboardRow(rank: idx + 1, row: row)
+                // Scrolls (focusable) once the family grows past what fits — degrades gracefully.
+                ScrollView(.vertical, showsIndicators: false) {
+                    VStack(spacing: 18) {
+                        ForEach(Array(model.leaders.enumerated()), id: \.element.id) { idx, row in
+                            LeaderboardRow(
+                                rank: idx + 1,
+                                row: row,
+                                isChampion: row.id == model.champion?.id
+                            )
+                        }
                     }
                 }
+                .frame(maxHeight: 720)
+                .focusable(model.leaders.count > 5)
             } else if model.isLoading {
                 loadingLine
             } else {
@@ -431,6 +531,7 @@ private struct CommandCard<Content: View>: View {
     let icon: String
     let accent: Color
     let title: String
+    var emphasized: Bool = false
     @ViewBuilder var content: Content
 
     var body: some View {
@@ -446,12 +547,19 @@ private struct CommandCard<Content: View>: View {
             content
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(36)
+        .padding(30)
         .background(
-            RoundedRectangle(cornerRadius: 36)
+            RoundedRectangle(cornerRadius: 32)
                 .fill(CC.card)
-                .shadow(color: .black.opacity(0.10), radius: 18, y: 10)
+                // The time-of-day emphasis: a subtly stronger lift + a whisper-thin accent ring.
+                .shadow(color: .black.opacity(emphasized ? 0.16 : 0.10),
+                        radius: emphasized ? 26 : 18, y: emphasized ? 14 : 10)
         )
+        .overlay(
+            RoundedRectangle(cornerRadius: 32)
+                .strokeBorder(accent.opacity(emphasized ? 0.55 : 0), lineWidth: 3)
+        )
+        .animation(.easeInOut(duration: 0.5), value: emphasized)
     }
 }
 
@@ -471,6 +579,10 @@ private struct EmptyLine: View {
 private struct LeaderboardRow: View {
     let rank: Int
     let row: CommandCenterModel.LeaderRow
+    var isChampion: Bool = false
+
+    /// A soft breathing glow for the reigning champion — celebratory but never frantic.
+    @State private var glow = false
 
     private var medal: String? {
         switch rank {
@@ -496,19 +608,28 @@ private struct LeaderboardRow: View {
             }
             .frame(width: 64)
 
-            // Avatar chip.
+            // Avatar chip — the champion wears a little crown.
             Image(systemName: row.avatar)
                 .font(.system(size: 40))
                 .foregroundStyle(.white)
                 .frame(width: 76, height: 76)
                 .background(Circle().fill(color))
+                .overlay(alignment: .topTrailing) {
+                    if isChampion {
+                        Text("👑")
+                            .font(.system(size: 46))
+                            .rotationEffect(.degrees(18))
+                            .offset(x: 20, y: -34)
+                            .shadow(color: .black.opacity(0.25), radius: 4, y: 2)
+                    }
+                }
 
             // Name + level.
             VStack(alignment: .leading, spacing: 4) {
                 Text(row.name)
                     .font(.system(size: 36, weight: .bold, design: .rounded))
                     .foregroundStyle(CC.ink)
-                Text("Level \(row.level)")
+                Text(isChampion ? "Level \(row.level) · leading! 🎉" : "Level \(row.level)")
                     .font(.system(.title3, design: .rounded).weight(.semibold))
                     .foregroundStyle(color)
             }
@@ -528,7 +649,105 @@ private struct LeaderboardRow: View {
         .padding(.horizontal, 22)
         .background(
             RoundedRectangle(cornerRadius: 26)
-                .fill(rank == 1 ? color.opacity(0.14) : CC.cream.opacity(0.6))
+                .fill(rank == 1 ? color.opacity(isChampion ? 0.20 : 0.14) : CC.cream.opacity(0.6))
         )
+        .overlay(
+            RoundedRectangle(cornerRadius: 26)
+                .strokeBorder(color.opacity(isChampion ? (glow ? 0.85 : 0.35) : 0),
+                              lineWidth: isChampion ? 4 : 0)
+        )
+        .shadow(color: isChampion ? color.opacity(glow ? 0.45 : 0.18) : .clear,
+                radius: isChampion ? (glow ? 26 : 14) : 0)
+        .scaleEffect(isChampion && glow ? 1.015 : 1.0)
+        .onAppear {
+            guard isChampion else { return }
+            withAnimation(.easeInOut(duration: 1.8).repeatForever(autoreverses: true)) {
+                glow = true
+            }
+        }
+    }
+}
+
+// MARK: - Confetti
+
+/// A tasteful, one-shot confetti rain. Increment `burst` to fire it — a fresh cohort of paper bits
+/// drifts down and fades. It clears itself after the fall, so it never loops or nags: pure moment.
+private struct ConfettiView: View {
+    let burst: Int
+
+    @State private var pieces: [Piece] = []
+
+    struct Piece: Identifiable {
+        let id = UUID()
+        let x: CGFloat            // 0…1 across the width
+        let color: Color
+        let size: CGFloat
+        let spin: Double
+        let delay: Double
+        let duration: Double
+        let isCircle: Bool
+    }
+
+    private static let palette: [Color] = [CC.marigold, CC.terracotta, CC.sky, CC.green]
+
+    var body: some View {
+        GeometryReader { geo in
+            ZStack(alignment: .top) {
+                ForEach(pieces) { piece in
+                    ConfettiPieceView(piece: piece, screen: geo.size)
+                }
+            }
+            .frame(width: geo.size.width, height: geo.size.height)
+        }
+        .onChange(of: burst) { _, newValue in
+            guard newValue > 0 else { return }
+            fire()
+        }
+    }
+
+    private func fire() {
+        var fresh: [Piece] = []
+        for _ in 0..<80 {
+            fresh.append(Piece(
+                x: .random(in: 0...1),
+                color: Self.palette.randomElement()!,
+                size: .random(in: 16...30),
+                spin: .random(in: 180...900),
+                delay: .random(in: 0...0.6),
+                duration: .random(in: 2.2...3.4),
+                isCircle: Bool.random()
+            ))
+        }
+        pieces = fresh
+        // Tidy up after the longest piece has finished its fall.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 4.5) {
+            pieces.removeAll()
+        }
+    }
+}
+
+private struct ConfettiPieceView: View {
+    let piece: ConfettiView.Piece
+    let screen: CGSize
+
+    @State private var fall = false
+
+    var body: some View {
+        Group {
+            if piece.isCircle {
+                Circle().fill(piece.color)
+            } else {
+                RoundedRectangle(cornerRadius: 4).fill(piece.color)
+            }
+        }
+        .frame(width: piece.size, height: piece.size * (piece.isCircle ? 1 : 0.6))
+        .rotationEffect(.degrees(fall ? piece.spin : 0))
+        .position(x: piece.x * screen.width, y: fall ? screen.height + 60 : -60)
+        .opacity(fall ? 0 : 1)
+        .onAppear {
+            withAnimation(.easeIn(duration: piece.duration).delay(piece.delay)) {
+                fall = true
+            }
+        }
     }
 }

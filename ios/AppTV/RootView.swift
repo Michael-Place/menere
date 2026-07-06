@@ -116,22 +116,27 @@ struct ConnectedScreen: View {
     @State private var showWelcome = true
     @FocusState private var toggleFocused: Bool
 
+    /// A gentle crossfade with a whisper of scale — the command center blooms in over the ambient
+    /// photos, the photos ease back out. Slower than a cut so the living room feels calm.
+    private static let modeSwitch = Animation.easeInOut(duration: 0.6)
+
     var body: some View {
         ZStack {
             switch mode {
             case .ambient:
                 ambient
+                    .transition(.opacity.combined(with: .scale(scale: 1.04)))
             case .command:
                 CommandCenterView(summary: summary) {
-                    withAnimation(.easeInOut(duration: 0.4)) { mode = .ambient }
+                    withAnimation(Self.modeSwitch) { mode = .ambient }
                 }
-                .transition(.opacity)
+                .transition(.opacity.combined(with: .scale(scale: 0.97)))
             }
         }
         // The living-room idiom: Play/Pause on the Siri Remote flips between the screensaver and
         // the command center, no matter where focus sits.
         .onPlayPauseCommand {
-            withAnimation(.easeInOut(duration: 0.4)) {
+            withAnimation(Self.modeSwitch) {
                 mode = (mode == .ambient) ? .command : .ambient
             }
         }
@@ -167,7 +172,7 @@ struct ConnectedScreen: View {
                 HStack {
                     Spacer()
                     Button {
-                        withAnimation(.easeInOut(duration: 0.4)) { mode = .command }
+                        withAnimation(Self.modeSwitch) { mode = .command }
                     } label: {
                         Label("Command Center", systemImage: "rectangle.3.group.fill")
                             .font(.system(.title3, design: .rounded).weight(.semibold))
