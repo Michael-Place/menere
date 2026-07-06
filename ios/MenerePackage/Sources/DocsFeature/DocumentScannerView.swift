@@ -2,14 +2,14 @@ import SwiftUI
 import UIKit
 import VisionKit
 
-/// Whether the in-app document camera is usable on this device. `false` on the simulator, which the
-/// reducer uses to degrade "Scan document" to a friendly alert.
+/// Whether the in-app document camera is usable on this device. `false` on the simulator, where the
+/// reducer degrades "Scan document" gracefully to the photo-library import path.
 ///
 /// Runtime checks are unreliable on the iOS 26 simulator — both `VNDocumentCameraViewController
 /// .isSupported` and `UIImagePickerController.isSourceTypeAvailable(.camera)` report `true` there,
 /// after which VisionKit presents a broken scanner behind its own "Camera Unavailable" alert. A
 /// compile-time `targetEnvironment(simulator)` guard is the only reliable signal: the scanner code
-/// path still exists and compiles, but on simulator builds it degrades to our friendly alert.
+/// path still exists and compiles, but on simulator builds it falls back to the photo library.
 public enum DocumentScanSupport {
     public static var isAvailable: Bool {
         #if targetEnvironment(simulator)

@@ -169,12 +169,15 @@ public struct DocsReducer {
                 return .none
 
             case .scanTapped:
-                // Camera-backed document scanning is unavailable on the simulator: the code path
-                // exists but degrades to a friendly alert rather than crashing.
+                // Camera-backed document scanning is unavailable on the simulator (and on any device
+                // with no usable camera). Rather than dead-ending on an alert, degrade GRACEFULLY to
+                // the photo-library import — the exact same route to the Brain (`.photosPicked` →
+                // title prompt → upload → `processDocument`), just sourcing pages from the library
+                // instead of the live VisionKit scanner. On real hardware this branch never runs.
                 if DocumentScanSupport.isAvailable {
                     state.showScanner = true
                 } else {
-                    state.alertMessage = "The document scanner needs a real camera — it's not available on the simulator. Try “Choose photos” or “Choose file” instead."
+                    state.showPhotosPicker = true
                 }
                 return .none
 
