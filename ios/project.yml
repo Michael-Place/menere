@@ -3,12 +3,19 @@ options:
   bundleIdPrefix: com.copoche
   deploymentTarget:
     iOS: "26.0"
+    tvOS: "18.0"
   xcodeVersion: "16.0"
   generateEmptyDirectories: true
 
 packages:
   MenerePackage:
     path: MenerePackage
+  # The tvOS app can't depend on MenerePackage (many targets are iOS-bound: UIKit/HomeKit/camera/
+  # LAN). It talks to Firebase directly, so it references firebase-ios-sdk at the project level.
+  # Same URL/version as MenerePackage's transitive dependency, so SPM resolves a single copy.
+  Firebase:
+    url: https://github.com/firebase/firebase-ios-sdk
+    from: "11.13.0"
 
 targets:
   Menere:
@@ -41,5 +48,38 @@ targets:
         script: |
           if [ -f "${PROJECT_DIR}/App/GoogleService-Info.plist" ]; then
             cp "${PROJECT_DIR}/App/GoogleService-Info.plist" "${BUILT_PRODUCTS_DIR}/${PRODUCT_NAME}.app/GoogleService-Info.plist"
+          fi
+        basedOnDependencyAnalysis: false
+
+  # ---------------------------------------------------------------------------------------------
+  # BacanTV — the living-room Apple TV app (P27-T2). Shares the Firebase backend + the pure
+  # FamilyDomain model SOURCE (plain Codable structs, Foundation-only) which is compiled directly
+  # into this target — no dependency on the iOS-bound MenerePackage. Auth = device-pairing.
+  # ---------------------------------------------------------------------------------------------
+  BacanTV:
+    type: application
+    platform: tvOS
+    sources:
+      - path: AppTV
+      - path: MenerePackage/Sources/FamilyDomain
+    settings:
+      base:
+        INFOPLIST_FILE: AppTV/Info.plist
+        PRODUCT_BUNDLE_IDENTIFIER: com.copoche.menere.tv
+        MARKETING_VERSION: "1.0.0"
+        CURRENT_PROJECT_VERSION: "1"
+        SWIFT_VERSION: "5.0"
+        TARGETED_DEVICE_FAMILY: "3"
+        DEVELOPMENT_TEAM: Z2FNFL3X73
+    dependencies:
+      - package: Firebase
+        product: FirebaseAuth
+      - package: Firebase
+        product: FirebaseFirestore
+    postBuildScripts:
+      - name: "Copy GoogleService-Info.plist"
+        script: |
+          if [ -f "${PROJECT_DIR}/AppTV/GoogleService-Info.plist" ]; then
+            cp "${PROJECT_DIR}/AppTV/GoogleService-Info.plist" "${BUILT_PRODUCTS_DIR}/${PRODUCT_NAME}.app/GoogleService-Info.plist"
           fi
         basedOnDependencyAnalysis: false

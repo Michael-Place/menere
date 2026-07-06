@@ -30,6 +30,7 @@ const { reviewUsage } = require("./usageReview");
 const { notifyHousehold, memberName } = require("./notifications");
 const { awardChoreXP, reverseChoreXP } = require("./choreXP");
 const { serve: serveMcp, mintToken: mintMcpToken } = require("./mcpServer");
+const { pairAppleTV: runPairAppleTV } = require("./appleTVPairing");
 
 const ANTHROPIC_API_KEY = defineSecret("ANTHROPIC_API_KEY");
 const POSTMARK_WEBHOOK_SECRET = defineSecret("POSTMARK_WEBHOOK_SECRET");
@@ -159,6 +160,15 @@ exports.joinHousehold = onCall(
       unclaimedMembers,
     };
   }
+);
+
+/**
+ * `pairAppleTV` (P27-T2-C1) — a signed-in family member confirms a TV pairing code so the
+ * living-room tvOS app can sign in via a Firebase custom token. See `appleTVPairing.js`.
+ */
+exports.pairAppleTV = onCall(
+  { timeoutSeconds: 30, memory: "256MiB" },
+  async (request) => runPairAppleTV(request)
 );
 
 /**

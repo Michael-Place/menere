@@ -42,6 +42,9 @@ public struct SettingsReducer {
         /// P27-T0 — "Apple TV screensaver" setup + photo-sync sheet.
         @Presents var appleTVScreensaver: AppleTVScreensaverReducer.State?
 
+        // MARK: Link Apple TV (P27-T2-C1 — device-pairing the living-room tvOS app)
+        @Presents var appleTVPairing: AppleTVPairingReducer.State?
+
         // MARK: Smart home (Hue, P12-C3 — multi-bridge)
         /// The household's Hue config, or nil when never paired (→ the "Set up" row).
         var hueConfig: HueConfig?
@@ -159,6 +162,8 @@ public struct SettingsReducer {
         // P27-T0 — Apple TV screensaver
         case appleTVScreensaverTapped
         case appleTVScreensaver(PresentationAction<AppleTVScreensaverReducer.Action>)
+        case linkAppleTVTapped
+        case appleTVPairing(PresentationAction<AppleTVPairingReducer.Action>)
         case binding(BindingAction<State>)
 
         // Smart home (Hue, multi-bridge)
@@ -260,6 +265,13 @@ public struct SettingsReducer {
                 analytics.log("tv_screensaver_opened")
                 return .none
             case .appleTVScreensaver:
+                return .none
+            case .linkAppleTVTapped:
+                state.appleTVPairing = AppleTVPairingReducer.State()
+                @Dependency(\.analytics) var analytics
+                analytics.log("tv_pairing_opened")
+                return .none
+            case .appleTVPairing:
                 return .none
             default:
                 return .none
@@ -870,6 +882,9 @@ public struct SettingsReducer {
         .ifLet(\.$usageReview, action: \.usageReview) {
             UsageReviewReducer()
         }
+        .ifLet(\.$appleTVPairing, action: \.appleTVPairing) {
+            AppleTVPairingReducer()
+        }
         .ifLet(\.$appleTVScreensaver, action: \.appleTVScreensaver) {
             AppleTVScreensaverReducer()
         }
@@ -1070,6 +1085,9 @@ public struct SettingsView: View {
                     }
                 }
                 .accessibilityIdentifier("apple-tv-screensaver-row")
+
+                // P27-T2 — Link the native tvOS app (device-pairing).
+                linkAppleTVRow
             }
 
             Section {
@@ -1109,6 +1127,7 @@ public struct SettingsView: View {
         .sheet(item: $store.scope(state: \.appleTVScreensaver, action: \.appleTVScreensaver)) { tvStore in
             AppleTVScreensaverView(store: tvStore)
         }
+        .modifier(AppleTVPairingPresentation(store: store))
         .sheet(item: $store.scope(state: \.huePairing, action: \.huePairing)) { pairingStore in
             HuePairingView(store: pairingStore)
         }
@@ -1144,6 +1163,28 @@ public struct SettingsView: View {
         // HomeKit (P15-C7) loads on appear from the VIEW (not the `.task` reducer action) so it reflects
         // true authorization on every open — the first live read surfaces the system permission prompt.
         .task { store.send(.loadHomeKit) }
+    }
+
+    // P27-T2 — "Link Apple TV" row (device-pairing the living-room tvOS app). Extracted to keep the
+    // profile Form's ViewBuilder under the type-checker budget.
+    @ViewBuilder
+    private var linkAppleTVRow: some View {
+        Button {
+            store.send(.linkAppleTVTapped)
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: "appletv.fill")
+                    .foregroundStyle(Color.bacanGreen)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Link Apple TV").foregroundStyle(Color.ink)
+                    Text("Sign the living-room app into your family.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                Spacer()
+                Image(systemName: "chevron.right").font(.caption).foregroundStyle(.secondary)
+            }
+        }
+        .accessibilityIdentifier("link-apple-tv-row")
     }
 
     // MARK: - Smart home (P15-C8b — split into two cards)
@@ -2010,6 +2051,19 @@ private struct MerossSettingsPresentations: ViewModifier {
 
 /// The Lutron shades setup sheet + Remove confirmation, bundled into a modifier (P15-C8) so they don't
 /// deepen the main `body` modifier chain (the type-checker's budget).
+/// P27-T2 — the "Link Apple TV" pairing sheet. A ViewModifier (like the smart-home ones) so the
+/// profile view's modifier chain stays under the Swift type-checker budget.
+private struct AppleTVPairingPresentation: ViewModifier {
+    @Bindable var store: StoreOf<SettingsReducer>
+
+    func body(content: Content) -> some View {
+        content
+            .sheet(item: $store.scope(state: \.appleTVPairing, action: \.appleTVPairing)) { pairingStore in
+                AppleTVPairingView(store: pairingStore)
+            }
+    }
+}
+
 private struct LutronSettingsPresentations: ViewModifier {
     @Bindable var store: StoreOf<SettingsReducer>
 
