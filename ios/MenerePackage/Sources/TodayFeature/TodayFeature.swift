@@ -10,6 +10,9 @@ import LutronClient
 import MenereUI
 import NestClient
 import PersistenceClient
+import PhotoLibraryClient
+import StorageClient
+import UIKit
 import UserDomain
 
 /// The live snapshot behind the Today "house" card (P12-C3, multi-bridge): the config plus one
@@ -61,6 +64,25 @@ public struct TodayOccurrence: Identifiable, Equatable {
     public let event: FamilyEvent
     public let date: Date
     public var id: String { "\(event.id)@\(date.timeIntervalSince1970)" }
+}
+
+/// FL2 — the new-photo nudge model. What Today needs to gently invite the family to journal a fresh
+/// batch of photos: how many were added since the acknowledged watermark, a few thumbnail asset ids for
+/// a warm preview strip, and the newest asset's date (which becomes the next watermark on ack). Present
+/// only when authorized and there IS a fresh batch — its absence is the "no card" state.
+public struct PhotoNudge: Equatable, Sendable {
+    /// How many new image assets were added since the acknowledged watermark.
+    public var newCount: Int
+    /// Up to a handful of the newest asset ids, for the preview thumbnails (`loadThumbnail`).
+    public var thumbnailAssetIDs: [String]
+    /// The creation date of the NEWEST asset in this batch — the next watermark on dismiss/act.
+    public var newestDate: Date
+
+    public init(newCount: Int, thumbnailAssetIDs: [String], newestDate: Date) {
+        self.newCount = newCount
+        self.thumbnailAssetIDs = thumbnailAssetIDs
+        self.newestDate = newestDate
+    }
 }
 
 /// Identifies the member whose "day" sheet is presented (P17-C1). An `Identifiable` wrapper so the
@@ -158,6 +180,20 @@ public struct TodayReducer {
         /// the default. `selectDay` moves it; today stays time-aware (past collapses), other days show a
         /// plain agenda.
         var selectedDay: Date = Calendar.current.startOfDay(for: Date())
+
+        // FL2 — the new-photo nudge. `photoNudge` present ⇢ the warm "you added N photos" card shows
+        // (only when Photos is authorized/limited AND there's a fresh batch past the watermark).
+        // `photoNudgeNotDetermined` drives the softer one-time "let Bacán surface your photos?" opt-in.
+        // The watermark itself lives in @AppStorage (`today.photoNudge.ackEpoch`), not in state, so it
+        // survives relaunch and the same batch never re-nags. Acting/dismissing advances it.
+        var photoNudge: PhotoNudge?
+        var photoNudgeNotDetermined = false
+        /// The rich in-app photo browser (`PhotoLibraryBrowser`) sheet is up (tap → make a memory).
+        var showPhotoBrowser = false
+        /// A memory-create from browser-picked photos is uploading (brief "tucking it in" state).
+        var photoNudgeSaving = false
+        /// Just saved N photos into a memory — drives the fleeting "Saved to Memories ✨" confirmation.
+        var photoNudgeSavedCount: Int?
 
         public init() {}
 
@@ -305,6 +341,24 @@ public struct TodayReducer {
         /// Assign a recipe as tonight's dinner from the picker (logs `today_dinner_changed`); reuses
         /// the meal-plan persistence path.
         case assignDinner(Recipe)
+        // FL2 — the new-photo nudge.
+        /// Recompute the nudge: read Photos auth + the watermark, fetch `recentlyAdded`, build the card.
+        /// Fired on `.task` and again on every library change (the observer stream) while Today is alive.
+        case loadPhotoNudge
+        case photoNudgeLoaded(PhotoNudge?, notDetermined: Bool)
+        /// "Make a memory" — logs `photo_nudge_tapped` and presents the rich photo browser.
+        case photoNudgeTapped
+        /// "Not now" on the authorized card — advances the watermark so this batch won't re-nag.
+        case photoNudgeDismissed
+        /// The soft not-determined opt-in ("Sure") — asks for Photos access, then reloads.
+        case photoNudgeSurfaceTapped
+        /// The soft not-determined opt-in ("Maybe later") — remembers we asked, never nags again.
+        case photoNudgeSurfaceDismissed
+        case photoBrowserDismissed
+        /// The browser handed back picked asset ids → create a memory via the existing persistence path.
+        case photoNudgeAssetsPicked([String])
+        case photoNudgeMemorySaved(count: Int)
+        case photoNudgeClearConfirmation
         case delegate(Delegate)
     }
 
@@ -321,7 +375,13 @@ public struct TodayReducer {
 
     public init() {}
 
-    private enum CancelID { case briefing, drive, house }
+    private enum CancelID { case briefing, drive, house, photoNudge, photoNudgeObserver }
+
+    /// FL2 — the persisted "last acknowledged newest photo" watermark (epoch seconds). Everything
+    /// created at-or-before it is considered already-seen, so a batch never re-nags after dismiss/act.
+    private static let photoNudgeAckKey = "today.photoNudge.ackEpoch"
+    /// FL2 — whether we've already offered the soft not-determined opt-in once (so it never nags).
+    private static let photoNudgeAskedKey = "today.photoNudge.askedToSurface"
 
     private func hid() -> String? {
         @Shared(.user) var user
@@ -345,6 +405,26 @@ public struct TodayReducer {
         return String(token)
     }
 
+    /// FL2 — a long-running effect that recomputes the nudge whenever the photo library changes
+    /// (new photos, edits, or a change to the limited selection) while Today is alive. Deduped by id.
+    private static func photoNudgeObserverEffect() -> Effect<Action> {
+        .run { send in
+            @Dependency(\.photoLibrary) var photoLibrary
+            for await _ in photoLibrary.observeLibraryChanges() {
+                await send(.loadPhotoNudge)
+            }
+        }
+        .cancellable(id: CancelID.photoNudgeObserver, cancelInFlight: true)
+    }
+
+    /// FL2 — advance the persisted watermark past a batch's newest photo (+1s so the `>=` fetch
+    /// predicate doesn't re-return that same newest asset). A no-op when there's nothing to ack.
+    private func acknowledgePhotoBatch(_ newest: Date?) {
+        guard let newest else { return }
+        @Shared(.appStorage(TodayReducer.photoNudgeAckKey)) var ackEpoch = 0.0
+        $ackEpoch.withLock { $0 = newest.timeIntervalSince1970 + 1 }
+    }
+
     public var body: some ReducerOf<Self> {
         Reduce { state, action in
             switch action {
@@ -352,9 +432,10 @@ public struct TodayReducer {
                 @Dependency(\.analytics) var analytics
                 analytics.log("today_opened")   // P25 telemetry (fire-and-forget)
                 guard let hid = hid() else {
-                    // No household yet — leave every card in its empty state, never block.
+                    // No household yet — leave every card in its empty state, never block. The photo
+                    // nudge is device-level (not household-scoped), so still surface it.
                     state.firstName = firstName(from: [])
-                    return .none
+                    return .merge(.send(.loadPhotoNudge), Self.photoNudgeObserverEffect())
                 }
                 state.isLoading = true
                 // The card loads run as ONE effect; the briefing is a SEPARATE, merged effect so a
@@ -397,6 +478,9 @@ public struct TodayReducer {
                     .send(.loadMerossConfig),
                     // HomeKit config (P15-C7) — OPTIONAL; only forces the mock. HouseView reads live HomeKit.
                     .send(.loadHomeKitConfig),
+                    // FL2 — the new-photo nudge: compute it now, then keep it fresh as the library changes.
+                    .send(.loadPhotoNudge),
+                    Self.photoNudgeObserverEffect(),
                     // Ask once so tonight's drive time can resolve (idempotent; no-op if determined).
                     .run { _ in
                         @Dependency(\.location) var location
@@ -892,6 +976,135 @@ public struct TodayReducer {
                     @Dependency(\.persistence) var persistence
                     try await persistence.saveMealPlanEntry(hid, entry)
                 }
+
+            // MARK: FL2 — the new-photo nudge
+
+            case .loadPhotoNudge:
+                return .run { send in
+                    @Dependency(\.photoLibrary) var photoLibrary
+                    switch photoLibrary.authorizationStatus() {
+                    case .authorized, .limited:
+                        @Shared(.appStorage(TodayReducer.photoNudgeAckKey)) var ackEpoch = 0.0
+                        let since = Date(timeIntervalSince1970: ackEpoch)
+                        // Newest-first images only; a bare `recentlyAdded` already filters by creation date.
+                        let assets = await photoLibrary.recentlyAdded(since).filter { $0.mediaType == .image }
+                        guard let newest = assets.first?.creationDate, !assets.isEmpty else {
+                            await send(.photoNudgeLoaded(nil, notDetermined: false)); return
+                        }
+                        let nudge = PhotoNudge(
+                            newCount: assets.count,
+                            thumbnailAssetIDs: Array(assets.prefix(4).map(\.id)),
+                            newestDate: newest
+                        )
+                        await send(.photoNudgeLoaded(nudge, notDetermined: false))
+                    case .notDetermined:
+                        // Only offer the soft opt-in once — respect a quiet default, never nag.
+                        @Shared(.appStorage(TodayReducer.photoNudgeAskedKey)) var asked = false
+                        await send(.photoNudgeLoaded(nil, notDetermined: !asked))
+                    default:
+                        await send(.photoNudgeLoaded(nil, notDetermined: false))
+                    }
+                }
+                .cancellable(id: CancelID.photoNudge, cancelInFlight: true)
+
+            case let .photoNudgeLoaded(nudge, notDetermined):
+                let wasShowing = state.photoNudge != nil
+                state.photoNudge = nudge
+                state.photoNudgeNotDetermined = notDetermined
+                // Log `photo_nudge_shown` once per appearance (nil→shown), not on every library refresh.
+                if !wasShowing, let nudge, nudge.newCount > 0 {
+                    @Dependency(\.analytics) var analytics
+                    analytics.log("photo_nudge_shown", ["count": String(nudge.newCount)])
+                }
+                return .none
+
+            case .photoNudgeTapped:
+                @Dependency(\.analytics) var analytics
+                analytics.log("photo_nudge_tapped", ["count": String(state.photoNudge?.newCount ?? 0)])
+                state.showPhotoBrowser = true
+                return .none
+
+            case .photoNudgeDismissed:
+                @Dependency(\.analytics) var analytics
+                analytics.log("photo_nudge_dismissed")
+                acknowledgePhotoBatch(state.photoNudge?.newestDate)
+                state.photoNudge = nil
+                return .none
+
+            case .photoNudgeSurfaceTapped:
+                // Soft opt-in accepted: remember we asked, request access, then recompute.
+                @Shared(.appStorage(TodayReducer.photoNudgeAskedKey)) var asked = false
+                $asked.withLock { $0 = true }
+                state.photoNudgeNotDetermined = false
+                return .run { send in
+                    @Dependency(\.photoLibrary) var photoLibrary
+                    _ = await photoLibrary.requestAccess()
+                    await send(.loadPhotoNudge)
+                }
+
+            case .photoNudgeSurfaceDismissed:
+                @Shared(.appStorage(TodayReducer.photoNudgeAskedKey)) var asked = false
+                $asked.withLock { $0 = true }
+                state.photoNudgeNotDetermined = false
+                return .none
+
+            case .photoBrowserDismissed:
+                state.showPhotoBrowser = false
+                return .none
+
+            case let .photoNudgeAssetsPicked(assetIDs):
+                state.showPhotoBrowser = false
+                // Whether or not they picked, this batch has been dealt with — advance the watermark so
+                // the card doesn't reappear for the same photos.
+                acknowledgePhotoBatch(state.photoNudge?.newestDate)
+                state.photoNudge = nil
+                guard let hid = hid(), !assetIDs.isEmpty else { return .none }
+                state.photoNudgeSaving = true
+                @Shared(.user) var user
+                let uid = user?.id ?? ""
+                return .run { send in
+                    @Dependency(\.photoLibrary) var photoLibrary
+                    @Dependency(\.storage) var storage
+                    @Dependency(\.persistence) var persistence
+                    @Dependency(\.analytics) var analytics
+                    @Dependency(\.date.now) var now
+                    // Reuse the SAME memory-create path the editor + smart-capture use: load each full
+                    // image, downscale/JPEG it, upload to Storage, then persist one Memory. No new backend.
+                    let memId = UUID().uuidString
+                    var photoPaths: [String] = []
+                    for id in assetIDs {
+                        guard let data = await photoLibrary.loadFullImage(id),
+                              let ui = UIImage(data: data) else { continue }
+                        let jpeg = CaptureImageProcessing.downscaledJPEG(from: ui) ?? data
+                        if let path = try? await storage.uploadMemoryPhoto(hid, memId, photoPaths.count, jpeg) {
+                            photoPaths.append(path)
+                        }
+                    }
+                    guard !photoPaths.isEmpty else {
+                        await send(.photoNudgeMemorySaved(count: 0)); return
+                    }
+                    let memory = Memory(
+                        id: memId, title: nil, richText: "", photoPaths: photoPaths,
+                        date: now, createdBy: uid, createdAt: now, updatedAt: now
+                    )
+                    try? await persistence.saveMemory(hid, memory)
+                    analytics.log("photo_nudge_memory_created", ["photos": String(photoPaths.count)])
+                    await send(.photoNudgeMemorySaved(count: photoPaths.count))
+                }
+
+            case let .photoNudgeMemorySaved(count):
+                state.photoNudgeSaving = false
+                state.photoNudgeSavedCount = count > 0 ? count : nil
+                guard count > 0 else { return .none }
+                // Let the "Saved to Memories ✨" confirmation glow briefly, then fade it out.
+                return .run { send in
+                    try? await Task.sleep(for: .seconds(3))
+                    await send(.photoNudgeClearConfirmation)
+                }
+
+            case .photoNudgeClearConfirmation:
+                state.photoNudgeSavedCount = nil
+                return .none
 
             case .delegate:
                 return .none

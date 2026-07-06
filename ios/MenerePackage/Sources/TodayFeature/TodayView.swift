@@ -29,6 +29,9 @@ public struct TodayView: View {
 
                 captureAnythingButton.tabEntrance(.cascade, index: 2)
 
+                // FL2 — the new-photo nudge (present only when there's a fresh batch / a soft opt-in).
+                PhotoNudgeCard(store: store).tabEntrance(.cascade, index: 3)
+
                 weekStrip.tabEntrance(.cascade, index: 3)
                 scheduleCard.tabEntrance(.cascade, index: 4)
                 dinnerCard.tabEntrance(.cascade, index: 5)
@@ -72,6 +75,16 @@ public struct TodayView: View {
         // Act V — V2-D: the smart-capture inbox. One sheet that AI-routes a photo/note anywhere.
         .sheet(item: $store.scope(state: \.capture, action: \.capture)) { captureStore in
             CaptureView(store: captureStore)
+        }
+        // FL2 — "Make a memory" from the new-photo nudge opens the rich in-app photo browser; its
+        // selected asset ids are handed to the existing memory-create path (no MemoriesFeature edits).
+        .sheet(isPresented: Binding(
+            get: { store.showPhotoBrowser },
+            set: { if !$0 { store.send(.photoBrowserDismissed) } }
+        )) {
+            PhotoLibraryBrowser { assetIDs in
+                store.send(.photoNudgeAssetsPicked(assetIDs))
+            }
         }
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
