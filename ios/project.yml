@@ -28,8 +28,8 @@ targets:
         INFOPLIST_FILE: App/Info.plist
         CODE_SIGN_ENTITLEMENTS: App/Menere.entitlements
         PRODUCT_BUNDLE_IDENTIFIER: com.copoche.menere
-        MARKETING_VERSION: "1.36.0"
-        CURRENT_PROJECT_VERSION: "44"
+        MARKETING_VERSION: "1.37.0"
+        CURRENT_PROJECT_VERSION: "45"
         SWIFT_VERSION: "5.0"
         TARGETED_DEVICE_FAMILY: "1,2"
         DEVELOPMENT_TEAM: Z2FNFL3X73
@@ -46,9 +46,12 @@ targets:
       # V5 — Foundation-only app-group bridge (reads the Share Extension inbox on foreground).
       - package: MenerePackage
         product: SharedCapture
-      # V5 — embed the Share Extension into the app bundle (PlugIns/).
-      - target: BacanShareExtension
-        embed: true
+      # V5 — Share Extension embed TEMPORARILY DISABLED (2026-07-06): the app group
+      # group.com.copoche.menere needs a one-time Apple Developer portal setup (no ASC API for it)
+      # before it can archive/ship. Code stays in ShareExtension/ + SharedCapture. Re-enable this
+      # + the app-group entitlement + the BacanShareExtension target once the group is registered.
+      # - target: BacanShareExtension
+      #   embed: true
     postBuildScripts:
       - name: "Copy GoogleService-Info.plist"
         script: |
@@ -62,26 +65,29 @@ targets:
   # URLs / text / images / PDFs, writes a `PendingShare` into the app-group container. Lightweight:
   # links ONLY the Foundation-only `SharedCapture` bridge (no Firebase / app UI).
   # ---------------------------------------------------------------------------------------------
-  BacanShareExtension:
-    type: app-extension
-    platform: iOS
-    sources:
-      - path: ShareExtension
-    settings:
-      base:
-        INFOPLIST_FILE: ShareExtension/Info.plist
-        CODE_SIGN_ENTITLEMENTS: ShareExtension/ShareExtension.entitlements
-        PRODUCT_BUNDLE_IDENTIFIER: com.copoche.menere.share
-        PRODUCT_NAME: BacanShareExtension
-        PRODUCT_MODULE_NAME: BacanShareExtension
-        MARKETING_VERSION: "1.36.0"
-        CURRENT_PROJECT_VERSION: "44"
-        SWIFT_VERSION: "5.0"
-        TARGETED_DEVICE_FAMILY: "1,2"
-        DEVELOPMENT_TEAM: Z2FNFL3X73
-    dependencies:
-      - package: MenerePackage
-        product: SharedCapture
+  # BacanShareExtension: TEMPORARILY DISABLED (2026-07-06) — needs the group.com.copoche.menere
+  # app group registered in the Apple Developer portal before it can archive. Re-enable this whole
+  # target + the embed above + the app-group entitlement in App/Menere.entitlements once done.
+  # BacanShareExtension:
+  #   type: app-extension
+  #   platform: iOS
+  #   sources:
+  #     - path: ShareExtension
+  #   settings:
+  #     base:
+  #       INFOPLIST_FILE: ShareExtension/Info.plist
+  #       CODE_SIGN_ENTITLEMENTS: ShareExtension/ShareExtension.entitlements
+  #       PRODUCT_BUNDLE_IDENTIFIER: com.copoche.menere.share
+  #       PRODUCT_NAME: BacanShareExtension
+  #       PRODUCT_MODULE_NAME: BacanShareExtension
+  #       MARKETING_VERSION: "1.37.0"
+  #       CURRENT_PROJECT_VERSION: "45"
+  #       SWIFT_VERSION: "5.0"
+  #       TARGETED_DEVICE_FAMILY: "1,2"
+  #       DEVELOPMENT_TEAM: Z2FNFL3X73
+  #   dependencies:
+  #     - package: MenerePackage
+  #       product: SharedCapture
 
   # ---------------------------------------------------------------------------------------------
   # BacanTV — the living-room Apple TV app (P27-T2). Shares the Firebase backend + the pure
