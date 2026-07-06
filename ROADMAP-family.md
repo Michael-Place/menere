@@ -514,6 +514,25 @@ notifications). Michael queued #2, #3, smart notifications, Money.
   Shortcuts over the existing verb registry — most-felt, least-effort, glanceable family hub.
   (Now folds into V5.3 + V5.6 — the ingestion pipeline subsumes it.)
 
+# The Family Lens — Apple Photos / PhotoKit (2026-07-06, Michael requested)
+Gap: journal uses only the locked-down `PhotosPicker` (manual, no browse/search/auto). Open the
+full PhotoKit door. NOTE: Apple does NOT expose its People/face NAMES to apps → "photos of
+Oliver" needs our OWN on-device Vision face clustering (FL4).
+- **FL1 — PhotoKit foundation + in-app browser (Tier 1) [BUILDING]:** a `PhotoLibraryClient`
+  (PHPhotoLibrary access/permission, fetch by date/album/Favorites, thumbnail + full-image load,
+  `PHPhotoLibraryChangeObserver` stream) + an in-app photo BROWSER (LazyVGrid, filter chips,
+  multi-select) wired into the Memory editor (browse → select → memory, uploading like today).
+  `NSPhotoLibraryUsageDescription`. Privacy-first (limited-library option).
+- **FL2 — New-photo nudge (Tier 2):** change-observer → Today card "you added N photos — make a
+  memory?" (best-shot curation via Vision later). Reuses PhotoLibraryClient.
+- **FL3 — Real "On this day" (Tier 2):** pull ACTUAL library photos from this date across past
+  years into the journal's this-time-last-year. Reuses PhotoLibraryClient.
+- **FL4 — "Photos of {kid}" (Tier 3, marquee):** on-device Vision face grouping (tag a face once
+  → cluster the library). Privacy-preserving; bigger build.
+- **FL5+ deeper:** Live Photos/video in memories, iCloud Shared Album read, screenshots→Brain
+  (ties to V5 ingestion), scene/content tagging.
+Sequence: FL1 foundation solo (project.yml + new module), then FL2 + FL3 parallel on top.
+
 # Motion & Delight (2026-07-06, Michael requested)
 - **Tab load-in animations:** each tab plays a signature staggered entrance on cold launch + on
   tab-switch — "surprise & delight as I navigate." Shared `TabEntrance` reveal (spring stagger,
