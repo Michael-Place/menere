@@ -985,7 +985,16 @@ public struct TodayReducer {
                     switch photoLibrary.authorizationStatus() {
                     case .authorized, .limited:
                         @Shared(.appStorage(TodayReducer.photoNudgeAckKey)) var ackEpoch = 0.0
-                        let since = Date(timeIntervalSince1970: ackEpoch)
+                        // First run with access: baseline the watermark to "now" so the EXISTING
+                        // library is never counted as "new" (bug: defaulted to 1970 → whole library
+                        // of 18k photos surfaced). Only photos added *after* this moment ever nudge.
+                        if ackEpoch == 0 {
+                            $ackEpoch.withLock { $0 = Date().timeIntervalSince1970 }
+                            await send(.photoNudgeLoaded(nil, notDetermined: false)); return
+                        }
+                        // Bound "recent" to the last 14 days so a stale watermark can't balloon the count.
+                        let windowStart = Date().addingTimeInterval(-14 * 24 * 3600)
+                        let since = max(Date(timeIntervalSince1970: ackEpoch), windowStart)
                         // Newest-first images only; a bare `recentlyAdded` already filters by creation date.
                         let assets = await photoLibrary.recentlyAdded(since).filter { $0.mediaType == .image }
                         guard let newest = assets.first?.creationDate, !assets.isEmpty else {
