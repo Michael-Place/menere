@@ -108,6 +108,13 @@ public struct PersistenceClient: Sendable {
     public var saveDocument: @Sendable (_ hid: String, _ doc: Document) async throws -> Void
     public var deleteDocument: @Sendable (_ hid: String, _ docID: String) async throws -> Void
 
+    // MARK: Projects — family initiative workspaces (Projects PR1)
+    /// All projects in a household at `households/{hid}/projects` (order not guaranteed; callers sort
+    /// newest-first). Mirrors the documents/careItems one-shot read pattern.
+    public var projects: @Sendable (_ hid: String) async throws -> [Project]
+    public var saveProject: @Sendable (_ hid: String, _ project: Project) async throws -> Void
+    public var deleteProject: @Sendable (_ hid: String, _ projectID: String) async throws -> Void
+
     // MARK: Family journal — memories (P28)
     /// All memories in a household at `households/{hid}/memories`, **newest date first** (the
     /// scrapbook timeline order).
@@ -545,6 +552,18 @@ extension PersistenceClient: DependencyKey {
             },
             deleteDocument: { hid, docID in
                 try await households().document(hid).collection("documents").document(docID).delete()
+            },
+            projects: { hid in
+                let snapshot = try await households().document(hid).collection("projects").getDocuments()
+                return try snapshot.documents.map { try Firestore.Decoder().decode(Project.self, from: $0.data()) }
+            },
+            saveProject: { hid, project in
+                try await households().document(hid).collection("projects").document(project.id).setData(
+                    Firestore.Encoder().encode(project), merge: true
+                )
+            },
+            deleteProject: { hid, projectID in
+                try await households().document(hid).collection("projects").document(projectID).delete()
             },
             memories: { hid in
                 let snapshot = try await households().document(hid).collection("memories")

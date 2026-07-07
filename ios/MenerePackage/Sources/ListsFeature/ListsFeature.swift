@@ -7,6 +7,7 @@ import LocalCache
 import MenereUI
 import MoneyFeature
 import PersistenceClient
+import ProjectsFeature
 import ScanFeature
 import SwiftUI
 import UserDomain
@@ -38,6 +39,10 @@ public struct ListsReducer {
         // the MoneyFeature screen. State lives here, mirroring the Cellar / Docs wiring.
         @Presents var money: MoneyReducer.State?
 
+        // Projects (family initiative workspaces) is the fourth pinned row; pushing it presents the
+        // ProjectsFeature list. State lives here, mirroring the Cellar / Docs / Money wiring.
+        @Presents var projects: ProjectsReducer.State?
+
         public init() {}
     }
 
@@ -59,6 +64,8 @@ public struct ListsReducer {
         case docs(PresentationAction<DocsReducer.Action>)
         case moneyTapped
         case money(PresentationAction<MoneyReducer.Action>)
+        case projectsTapped
+        case projects(PresentationAction<ProjectsReducer.Action>)
         case scan(ScanReducer.Action)
         case scanRequested
         case scanDismissed
@@ -216,6 +223,15 @@ public struct ListsReducer {
             case .money:
                 return .none
 
+            case .projectsTapped:
+                @Dependency(\.analytics) var analytics
+                analytics.log("projects_opened")
+                state.projects = ProjectsReducer.State()
+                return .none
+
+            case .projects:
+                return .none
+
             case .scanDismissed:
                 state.showScan = false
                 // Refresh the cellar so a just-scanned bottle appears.
@@ -239,6 +255,9 @@ public struct ListsReducer {
         }
         .ifLet(\.$money, action: \.money) {
             MoneyReducer()
+        }
+        .ifLet(\.$projects, action: \.projects) {
+            ProjectsReducer()
         }
     }
 }
@@ -321,6 +340,30 @@ public struct ListsView: View {
                 }
                 .accessibilityIdentifier("money-row")
                 .tabEntrance(.slideLeading, index: 2)
+
+                // Sibling pinned row: Projects — family initiative workspaces.
+                Button {
+                    store.send(.projectsTapped)
+                } label: {
+                    HStack {
+                        Label {
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text("Projects").foregroundStyle(Color.ink)
+                                Text("Pool, school & big undertakings")
+                                    .font(.caption)
+                                    .foregroundStyle(Color.inkSoft)
+                            }
+                        } icon: {
+                            Image(systemName: "square.stack.3d.up.fill").foregroundStyle(Color.marigold)
+                        }
+                        Spacer()
+                        Image(systemName: "chevron.right")
+                            .font(.footnote.weight(.semibold))
+                            .foregroundStyle(.tertiary)
+                    }
+                }
+                .accessibilityIdentifier("projects-row")
+                .tabEntrance(.slideLeading, index: 3)
             }
             .listRowBackground(Color.familySurface)
 
@@ -345,7 +388,7 @@ public struct ListsView: View {
                                     .foregroundStyle(Color(red: rgb.red, green: rgb.green, blue: rgb.blue))
                             }
                         }
-                        .tabEntrance(.slideLeading, index: 3 + index)
+                        .tabEntrance(.slideLeading, index: 4 + index)
                     }
                     .onDelete { store.send(.deleteLists($0)) }
                 }
@@ -394,6 +437,11 @@ public struct ListsView: View {
             item: $store.scope(state: \.money, action: \.money)
         ) { moneyStore in
             MoneyView(store: moneyStore)
+        }
+        .navigationDestination(
+            item: $store.scope(state: \.projects, action: \.projects)
+        ) { projectsStore in
+            ProjectsView(store: projectsStore)
         }
         .fullScreenCover(
             isPresented: Binding(

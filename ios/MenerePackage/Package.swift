@@ -20,6 +20,7 @@ let package = Package(
         .library(name: "TodayFeature", targets: ["TodayFeature"]),
         .library(name: "MemoriesFeature", targets: ["MemoriesFeature"]),
         .library(name: "ListsFeature", targets: ["ListsFeature"]),
+        .library(name: "ProjectsFeature", targets: ["ProjectsFeature"]),
         .library(name: "DocsFeature", targets: ["DocsFeature"]),
         .library(name: "CalendarFeature", targets: ["CalendarFeature"]),
         .library(name: "CalendarSyncClient", targets: ["CalendarSyncClient"]),
@@ -238,8 +239,26 @@ let package = Package(
                 "WineDomain",
                 "DocsFeature",
                 "MoneyFeature",
+                // Projects PR1: the "Projects" pinned row pushes the ProjectsFeature workspace.
+                "ProjectsFeature",
                 // H2-ext: offline-first local SQLite mirror for the instant Lists paint.
                 "LocalCache",
+            ]
+        ),
+        // Projects PR1 — family initiative workspaces (the pool build, Oliver's school hunt). A
+        // Projects list + a rich workspace (inspiration board, linked Brain docs, links, tasks,
+        // notes). Reached from the Lists tab. `Document.projectIds` is the PR2 ingestion seam.
+        .target(
+            name: "ProjectsFeature",
+            dependencies: [
+                .product(name: "ComposableArchitecture", package: "swift-composable-architecture"),
+                "MenereUI",
+                "FamilyDomain",
+                "PersistenceClient",
+                "StorageClient",
+                "PhotoLibraryClient",
+                "AnalyticsClient",
+                "UserDomain",
             ]
         ),
         .target(

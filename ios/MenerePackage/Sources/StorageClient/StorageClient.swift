@@ -42,6 +42,13 @@ public struct StorageClient: Sendable {
     /// Upload one die-cut **sticker** (transparent PNG) for a memory and return its Storage path.
     /// Stored at `households/{hid}/memories/{memoryId}/sticker-{index}.png`.
     public var uploadMemorySticker: @Sendable (_ hid: String, _ memoryId: String, _ index: Int, _ data: Data) async throws -> String
+
+    // MARK: Projects — initiative workspace photos (Projects PR1)
+    /// Upload one JPEG inspiration-board / cover photo for a ``Project`` and return its **Storage
+    /// path** (member-gated, like documents/care/memories). Stored at
+    /// `households/{hid}/projects/{projectId}/photos/{fileName}.jpg` — the caller supplies a unique
+    /// `fileName` (a UUID for board photos, or `cover` for the hero) so paths never collide.
+    public var uploadProjectPhoto: @Sendable (_ hid: String, _ projectId: String, _ fileName: String, _ data: Data) async throws -> String
 }
 
 extension StorageClient: DependencyKey {
@@ -103,6 +110,14 @@ extension StorageClient: DependencyKey {
                 metadata.contentType = "image/png"
                 _ = try await ref.putDataAsync(data, metadata: metadata)
                 return path
+            },
+            uploadProjectPhoto: { hid, projectId, fileName, data in
+                let path = "households/\(hid)/projects/\(projectId)/photos/\(fileName).jpg"
+                let ref = Storage.storage().reference().child(path)
+                let metadata = StorageMetadata()
+                metadata.contentType = "image/jpeg"
+                _ = try await ref.putDataAsync(data, metadata: metadata)
+                return path
             }
         )
     }()
@@ -127,6 +142,9 @@ extension StorageClient: DependencyKey {
         },
         uploadMemorySticker: { hid, memoryId, index, _ in
             "households/\(hid)/memories/\(memoryId)/sticker-\(index).png"
+        },
+        uploadProjectPhoto: { hid, projectId, fileName, _ in
+            "households/\(hid)/projects/\(projectId)/photos/\(fileName).jpg"
         }
     )
 }
