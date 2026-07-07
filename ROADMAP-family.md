@@ -533,6 +533,21 @@ Oliver" needs our OWN on-device Vision face clustering (FL4).
   (ties to V5 ingestion), scene/content tagging.
 Sequence: FL1 foundation solo (project.yml + new module), then FL2 + FL3 parallel on top.
 
+# Care Journal (2026-07-07, Michael requested)
+Problem: watering pushes the due date so the row VANISHES right after the CTA animation — no
+persistent place to SEE/EDIT/UNDO past waterings. The `activity` log is free-text only (no
+careItemId), and CareTask keeps only `lastDoneAt` (no history). Build a real care-event history +
+a per-plant journal screen:
+- **Model:** `CareEvent {id, date, memberId}` + `CareTask.history: [CareEvent]?` (decode-safe);
+  `markDone` appends an event; helpers recompute `lastDoneAt` = latest history date + the D3
+  `streakCount` from history. Persist via existing saveCareItem (on the careItem doc). Seed/
+  backfill the single existing `lastDoneAt` as one event on first write. Cap/trim if it grows huge.
+- **Journal screen** (from plant detail; kind-agnostic so pets/house too): a concise chronological
+  list of care events — "💧 Watered · Jul 7 · Michael" — grouped/filterable by task (watering
+  front-and-center), with a summary header (count · avg cadence · 🔥 streak). Swipe-to-DELETE an
+  event (the real un-water) + tap-to-EDIT the date/who; both recompute lastDoneAt + streak. This is
+  the persistent home for edit/undo the disappearing CTA can't provide.
+
 # The Delight Layer (2026-07-07, Michael requested — "dopamine hits")
 Principle: ONE reusable CelebrationKit (MenereUI) — haptics + burst variants (droplet/confetti/
 sparkle/leaf/paw) + a reward toast + rotating micro-copy pools — flavored per moment. Tone =
