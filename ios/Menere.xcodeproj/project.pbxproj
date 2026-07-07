@@ -18,6 +18,7 @@
 		2E47B645BDB7330792826410 /* UserDomain in Frameworks */ = {isa = PBXBuildFile; productRef = 184E235FFA9B598B12C27AEE /* UserDomain */; };
 		3190C27AEFA82D6C5D888A69 /* EntityGraph.swift in Sources */ = {isa = PBXBuildFile; fileRef = C6EB724149E8DBBEAA83CA5C /* EntityGraph.swift */; };
 		3270FBAD4B1F1CB9E55608AA /* WishlistPriority.swift in Sources */ = {isa = PBXBuildFile; fileRef = D48BCE09A1E02940BDAC566C /* WishlistPriority.swift */; };
+		37C3E8FA6F304CD9A5E74FAF /* ProjectTemplate.swift in Sources */ = {isa = PBXBuildFile; fileRef = DF9D113DC10202639CD51DB6 /* ProjectTemplate.swift */; };
 		45C8DC48CB9863A7840046FD /* ShareViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = C38B98F2CC94E1718657C71A /* ShareViewController.swift */; };
 		4DFCD75384C1965A78A211F8 /* HomeKitConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = 71342489DC1663D2E7536E4C /* HomeKitConfig.swift */; };
 		50A325F691AF4CCAF39F05F8 /* SpendingInsights.swift in Sources */ = {isa = PBXBuildFile; fileRef = DCC59018088FD16C744DEF48 /* SpendingInsights.swift */; };
@@ -33,6 +34,7 @@
 		73A60D73A8F48B3ED3E6367A /* Recipe.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1D9312CCDBB55C7CC370B379 /* Recipe.swift */; };
 		741317E5025655B7BAC7C704 /* FamilyChore.swift in Sources */ = {isa = PBXBuildFile; fileRef = C8DC446C29A064C8D1FA088E /* FamilyChore.swift */; };
 		77541D4DE642D04BF7C8CFC4 /* BacanTVApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = EE9319E7D05547D92067C9F4 /* BacanTVApp.swift */; };
+		77CE924947DDBEC780071EE2 /* ProjectBrief.swift in Sources */ = {isa = PBXBuildFile; fileRef = 92F46F80C5ACEBCBB167FF13 /* ProjectBrief.swift */; };
 		78376F327D16848D92A92A5E /* FirebaseCore in Frameworks */ = {isa = PBXBuildFile; productRef = E00A7F55C77E54F7C966E111 /* FirebaseCore */; };
 		793C0D4CD2C8D59B3AF2D694 /* BudgetAlert.swift in Sources */ = {isa = PBXBuildFile; fileRef = 94DA664EF76EEF7AF26DDAFB /* BudgetAlert.swift */; };
 		7FEF216453F37B2B6733BD35 /* CareCompletion.swift in Sources */ = {isa = PBXBuildFile; fileRef = 451D12A073A1025B027A012A /* CareCompletion.swift */; };
@@ -131,6 +133,7 @@
 		82D8FFB008FE83152CB4FCD1 /* LutronConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LutronConfig.swift; sourceTree = "<group>"; };
 		8537DCF36010AB795AC5FE3E /* ChoreCompletion.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChoreCompletion.swift; sourceTree = "<group>"; };
 		8ADC640F89A0B5EBE6FF1853 /* CareItem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CareItem.swift; sourceTree = "<group>"; };
+		92F46F80C5ACEBCBB167FF13 /* ProjectBrief.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectBrief.swift; sourceTree = "<group>"; };
 		94DA664EF76EEF7AF26DDAFB /* BudgetAlert.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BudgetAlert.swift; sourceTree = "<group>"; };
 		96A60A2186B6011EABC417C3 /* HubspaceConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HubspaceConfig.swift; sourceTree = "<group>"; };
 		9A62F87CC80BC2F1C200E844 /* HueConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HueConfig.swift; sourceTree = "<group>"; };
@@ -156,6 +159,7 @@
 		D859BE5EA36D530E44BF0553 /* FamilyEvent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FamilyEvent.swift; sourceTree = "<group>"; };
 		DBE17F5D73845A434A0C052E /* MaintenanceTemplate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MaintenanceTemplate.swift; sourceTree = "<group>"; };
 		DCC59018088FD16C744DEF48 /* SpendingInsights.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpendingInsights.swift; sourceTree = "<group>"; };
+		DF9D113DC10202639CD51DB6 /* ProjectTemplate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectTemplate.swift; sourceTree = "<group>"; };
 		E4EAEEF3802AFF764408627E /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		E714E577085262D09AC5902B /* SonosConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SonosConfig.swift; sourceTree = "<group>"; };
 		EB623C56CB5FE288C452027A /* NotificationPrefs.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationPrefs.swift; sourceTree = "<group>"; };
@@ -269,7 +273,9 @@
 				57916759B4EA1587C7404406 /* PetCareKB.swift */,
 				08F285A502E1A20235564141 /* PlantCareKB.swift */,
 				0B37E0868B1C06BE161D66F0 /* Project.swift */,
+				92F46F80C5ACEBCBB167FF13 /* ProjectBrief.swift */,
 				6DE766E6C2FDC7DA1174037C /* ProjectStatus.swift */,
+				DF9D113DC10202639CD51DB6 /* ProjectTemplate.swift */,
 				1D9312CCDBB55C7CC370B379 /* Recipe.swift */,
 				9EB043CC3187116569905E74 /* SavingsGoal.swift */,
 				E714E577085262D09AC5902B /* SonosConfig.swift */,
@@ -566,7 +572,9 @@
 				A2F561060373BD62A5286909 /* PetCareKB.swift in Sources */,
 				E8A4B02A1B6298CF4C31217D /* PlantCareKB.swift in Sources */,
 				9B87B9D5DB7316254C031AAF /* Project.swift in Sources */,
+				77CE924947DDBEC780071EE2 /* ProjectBrief.swift in Sources */,
 				AAFC2791683ED6C9039999A7 /* ProjectStatus.swift in Sources */,
+				37C3E8FA6F304CD9A5E74FAF /* ProjectTemplate.swift in Sources */,
 				73A60D73A8F48B3ED3E6367A /* Recipe.swift in Sources */,
 				C865BDC48CE60ED95C1F1C5F /* RootView.swift in Sources */,
 				F74128CD918B55839FF30C50 /* SavingsGoal.swift in Sources */,
@@ -706,7 +714,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = ShareExtension/ShareExtension.entitlements;
-				CURRENT_PROJECT_VERSION = 58;
+				CURRENT_PROJECT_VERSION = 59;
 				DEVELOPMENT_TEAM = Z2FNFL3X73;
 				INFOPLIST_FILE = ShareExtension/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -714,7 +722,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 1.50.0;
+				MARKETING_VERSION = 1.51.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.copoche.menere.share;
 				PRODUCT_MODULE_NAME = BacanShareExtension;
 				PRODUCT_NAME = BacanShareExtension;
@@ -728,7 +736,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = ShareExtension/ShareExtension.entitlements;
-				CURRENT_PROJECT_VERSION = 58;
+				CURRENT_PROJECT_VERSION = 59;
 				DEVELOPMENT_TEAM = Z2FNFL3X73;
 				INFOPLIST_FILE = ShareExtension/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -736,7 +744,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 1.50.0;
+				MARKETING_VERSION = 1.51.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.copoche.menere.share;
 				PRODUCT_MODULE_NAME = BacanShareExtension;
 				PRODUCT_NAME = BacanShareExtension;
@@ -815,14 +823,14 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = App/Menere.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
-				CURRENT_PROJECT_VERSION = 58;
+				CURRENT_PROJECT_VERSION = 59;
 				DEVELOPMENT_TEAM = Z2FNFL3X73;
 				INFOPLIST_FILE = App/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.50.0;
+				MARKETING_VERSION = 1.51.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.copoche.menere;
 				SDKROOT = iphoneos;
 				SWIFT_VERSION = 5.0;
@@ -836,14 +844,14 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = App/Menere.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
-				CURRENT_PROJECT_VERSION = 58;
+				CURRENT_PROJECT_VERSION = 59;
 				DEVELOPMENT_TEAM = Z2FNFL3X73;
 				INFOPLIST_FILE = App/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.50.0;
+				MARKETING_VERSION = 1.51.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.copoche.menere;
 				SDKROOT = iphoneos;
 				SWIFT_VERSION = 5.0;
