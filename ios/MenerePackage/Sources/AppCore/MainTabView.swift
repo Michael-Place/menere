@@ -105,6 +105,11 @@ public struct MainTabReducer {
             case .today(.delegate(.openLists)):
                 state.selectedTab = .lists
                 return .none
+            // Projects PR5 — a Today project glance/deadline row → the Lists tab, opening the Projects
+            // list (family-initiative workspaces) so the tap lands on the initiatives, not a bare tab.
+            case .today(.delegate(.openProjects)):
+                state.selectedTab = .lists
+                return .send(.lists(.projectsTapped))
             case .today(.delegate(.openKitchen)):
                 state.selectedTab = .recipes
                 // "Plan dinner" lands on Kitchen's Meal Plan segment (current week).

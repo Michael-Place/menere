@@ -111,6 +111,9 @@ public struct TodayReducer {
         var documents: [FamilyDomain.Document] = []
         /// House-care items — powers the "Home care" card (due/overdue care tasks).
         var careItems: [CareItem] = []
+        /// Projects PR5 — the family's initiative workspaces (pool build, school hunt). Powers the quiet
+        /// "Projects" glance in "Around the house" and the gentle deadline nudge in "Needs you today".
+        var projects: [Project] = []
         /// D1.5 — the in-flight care completion whose celebration is still playing. On Today the care
         /// rows live in a **due-filtered** list, so applying the completion immediately would drop the
         /// row and unmount the celebration mid-burst (why Michael saw Today never celebrate). Instead we
@@ -219,6 +222,22 @@ public struct TodayReducer {
         /// ("Sprinkle's rabies") from these.
         var pets: [CareItem] { careItems.filter { $0.kind == .pet } }
 
+        /// Projects PR5 — active initiatives (anything not yet `.done`), in calmest-useful order:
+        /// nearest target date first (undated float to the bottom), then newest. Empty ⇢ the glance and
+        /// every deadline nudge hide entirely. Read-only over the loaded `projects`.
+        var activeProjects: [Project] {
+            projects
+                .filter { $0.status != .done }
+                .sorted { a, b in
+                    switch (a.targetDate, b.targetDate) {
+                    case let (l?, r?): return l < r
+                    case (_?, nil): return true
+                    case (nil, _?): return false
+                    case (nil, nil): return a.createdAt > b.createdAt
+                    }
+                }
+        }
+
         /// The Family Radar over every document + pet — the pure model behind the card and the detail
         /// list. Recomputed on demand (cheap at family scale) so it always reflects the latest docs.
         func radar(now: Date = Date()) -> FamilyRadar {
@@ -266,7 +285,7 @@ public struct TodayReducer {
         case loaded(
             events: [FamilyEvent], members: [HouseholdMember], recipes: [Recipe],
             mealPlan: [MealPlanEntry], chores: [Chore], stats: [MemberStats],
-            documents: [FamilyDomain.Document], careItems: [CareItem]
+            documents: [FamilyDomain.Document], careItems: [CareItem], projects: [Project]
         )
         /// Complete/uncomplete a chore from the Today "Chores today" card. Behaves identically to
         /// completing it in the Chores tab (shared ``ChoreCompletion`` logic).
@@ -374,6 +393,9 @@ public struct TodayReducer {
         case radarCareRowTapped(itemID: String)
         /// P17-C2 — tonight's home-cooked dinner name was tapped → open that recipe's detail in Kitchen.
         case dinnerRecipeTapped
+        /// Projects PR5 — a project row (the "Around the house" glance OR a "Needs you today" deadline
+        /// nudge) was tapped → log `today_project_opened` and route to the Projects list under Lists.
+        case projectOpenTapped(id: String)
         /// A family member card was tapped → open their day sheet (logs `today_member_tapped`).
         case memberTapped(String)
         case memberDayDismissed
@@ -411,6 +433,9 @@ public struct TodayReducer {
         case openCalendar
         case openLists
         case openKitchen
+        /// Projects PR5 — switch to the Lists tab and open the Projects list (the family-initiative
+        /// workspaces). The parent maps this to `.lists(.projectsTapped)`.
+        case openProjects
         /// P28-C2 — jump to the Memories tab and open the "capture a moment" scrapbook editor.
         case openMemories
         /// P17-C2 — switch to the Home tab (chores + house/plant/pet care live there). Used as the
@@ -507,6 +532,7 @@ public struct TodayReducer {
                         async let stats = persistence.memberStats(hid)
                         async let documents = persistence.documents(hid)
                         async let careItems = persistence.careItems(hid)
+                        async let projects = persistence.projects(hid)
                         await send(.loaded(
                             events: (try? await events) ?? [],
                             members: (try? await members) ?? [],
@@ -515,7 +541,8 @@ public struct TodayReducer {
                             chores: (try? await chores) ?? [],
                             stats: (try? await stats) ?? [],
                             documents: (try? await documents) ?? [],
-                            careItems: (try? await careItems) ?? []
+                            careItems: (try? await careItems) ?? [],
+                            projects: (try? await projects) ?? []
                         ))
                     },
                     .send(.loadBriefing(force: false)),
@@ -543,7 +570,7 @@ public struct TodayReducer {
                     }
                 )
 
-            case let .loaded(events, members, recipes, mealPlan, chores, stats, documents, careItems):
+            case let .loaded(events, members, recipes, mealPlan, chores, stats, documents, careItems, projects):
                 state.isLoading = false
                 state.events = events
                 state.members = members
@@ -553,6 +580,7 @@ public struct TodayReducer {
                 state.stats = stats
                 state.documents = documents
                 state.careItems = careItems
+                state.projects = projects
                 state.firstName = firstName(from: members)
                 // Once cards have data, fire the drive-time lookup independently (never blocks).
                 if let entry = state.tonightsEntry(), entry.hasPlace {
@@ -966,6 +994,15 @@ public struct TodayReducer {
                 }
                 analytics.log("today_card_tapped", ["card": "dinner", "destination": "kitchen_recipe"])
                 return .send(.delegate(.openRecipe(recipe)))
+
+            case let .projectOpenTapped(id):
+                // Both the glance rows and the "Needs you today" deadline nudge route here. Routing to a
+                // SPECIFIC project would need a new deeplink through Lists→Projects (off-limits for PR5),
+                // so land on the Projects list — the calm, correct place to pick the initiative back up.
+                @Dependency(\.analytics) var analytics
+                let phase = state.projects.first { $0.id == id }?.status.rawValue ?? "unknown"
+                analytics.log("today_project_opened", ["phase": phase])
+                return .send(.delegate(.openProjects))
 
             case .radarOpened:
                 @Dependency(\.analytics) var analytics

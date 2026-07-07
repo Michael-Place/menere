@@ -140,6 +140,7 @@ public struct TodayView: View {
             case overdueCare(FamilyRadar.CareRadarItem)  // an overdue house/pet/plant task
             case dueSoonCare(CareItem.CareDue)        // a not-yet-overdue care task, due within a week
             case chore(Chore)                          // a chore due today / overdue / undated
+            case projectDeadline(Project, days: Int)   // a project whose target date is approaching
         }
         let id: String
         let kind: Kind
@@ -150,6 +151,11 @@ public struct TodayView: View {
     /// The urgency cap for the compact card — the rest spill into the quiet "See all" footers so the
     /// list stays glanceable rather than a wall.
     private let needsVisibleCap = 6
+
+    /// Projects PR5 — a project's target date only earns a "Needs you today" nudge when it's genuinely
+    /// approaching: within this many days AND not already past. One soft row per project, at most — so
+    /// the list never floods with distant targets or per-task noise.
+    private let projectDeadlineWindow = 30
 
     /// Build the merged, urgency-sorted "needs you" list. Overdue care comes from the radar (which
     /// summarizes the 32-plant watering flood into one row); due-soon-but-not-overdue care comes from
@@ -187,6 +193,12 @@ public struct TodayView: View {
                 bucket: days < 0 ? 2 : 3, tiebreak: Double(days)
             ))
         }
+        // Projects (bucket 5, soft): one gentle nudge per active project whose target date is within the
+        // window and not yet past — sorted just AFTER same-day document alerts (tiebreak +0.3) so an
+        // upcoming deadline reads as the calm, low-urgency item it is.
+        for row in projectDeadlineRows() {
+            rows.append(row)
+        }
         return rows.sorted { ($0.bucket, $0.tiebreak) < ($1.bucket, $1.tiebreak) }
     }
 
@@ -194,6 +206,22 @@ public struct TodayView: View {
     private func choreDaysUntil(_ chore: Chore) -> Int {
         guard let due = chore.dueDate else { return 0 }
         return cal.dateComponents([.day], from: cal.startOfDay(for: now), to: cal.startOfDay(for: due)).day ?? 0
+    }
+
+    /// Projects PR5 — the soft "Needs you today" deadline nudges. One row per active project whose
+    /// target date lands within `projectDeadlineWindow` days and is not yet past (`0…window`). Kept
+    /// deliberately sparse: no per-task rows, no distant targets — just an approaching finish line.
+    private func projectDeadlineRows() -> [NeedRow] {
+        let today = cal.startOfDay(for: now)
+        return store.activeProjects.compactMap { project in
+            guard let target = project.targetDate else { return nil }
+            let days = cal.dateComponents([.day], from: today, to: cal.startOfDay(for: target)).day ?? 0
+            guard days >= 0, days <= projectDeadlineWindow else { return nil }
+            return NeedRow(
+                id: "project-\(project.id)", kind: .projectDeadline(project, days: days),
+                bucket: 5, tiebreak: Double(days) + 0.3
+            )
+        }
     }
 
     /// The consolidated card. With work to do → a counted, prioritized list capped at `needsVisibleCap`
@@ -259,6 +287,10 @@ public struct TodayView: View {
             )
         case let .chore(chore):
             choreRow(chore)
+        case let .projectDeadline(project, days):
+            ProjectDeadlineRow(project: project, days: days) {
+                store.send(.projectOpenTapped(id: project.id))
+            }
         }
     }
 
@@ -271,7 +303,12 @@ public struct TodayView: View {
         let hiddenHome = hidden.filter { row in
             switch row.kind { case .chore, .dueSoonCare: return true; default: return false }
         }.count
-        let hiddenRadar = hidden.count - hiddenHome
+        // Project-deadline rows belong to neither the Home tab nor Family Radar — exclude them so a
+        // spilled project nudge never inflates (and mislabels) the "See all in Family Radar" footer.
+        let hiddenProjects = hidden.filter { row in
+            if case .projectDeadline = row.kind { return true }; return false
+        }.count
+        let hiddenRadar = hidden.count - hiddenHome - hiddenProjects
         let radar = store.state.radar(now: now)
         if hiddenHome > 0 {
             footerLink(
@@ -813,10 +850,70 @@ public struct TodayView: View {
     private var glancesSection: some View {
         VStack(alignment: .leading, spacing: 14) {
             sectionLabel("Around the house")
+            projectsCard
             houseCard
             familyCard
             shortcutsRow
         }
+    }
+
+    // MARK: Projects glance (PR5)
+
+    /// A calm glance at the family's active initiatives (pool build, school hunt) — one quiet card that
+    /// lists each project with its cover, phase, and a hint. Hidden entirely when nothing's active, so
+    /// it never nags an empty-handed family. Tapping a row lands on the Projects list under Lists.
+    @ViewBuilder
+    private var projectsCard: some View {
+        let projects = store.activeProjects
+        if !projects.isEmpty {
+            card {
+                cardHeader("Projects", symbol: "hammer.fill")
+                VStack(spacing: 12) {
+                    ForEach(projects) { project in
+                        ProjectGlanceRow(project: project, hint: projectHint(project)) {
+                            store.send(.projectOpenTapped(id: project.id))
+                        }
+                    }
+                }
+            }
+            .accessibilityIdentifier("today-projects")
+        }
+    }
+
+    /// The one-line hint under a project's name, in usefulness order: the next open task ("Next: Call
+    /// three builders"), else an approaching/known target-date countdown, else a plain task count, else
+    /// a soft phase nudge. Kept to a single glanceable line.
+    private func projectHint(_ project: Project) -> String {
+        if let next = (project.tasks ?? []).first(where: { !$0.isDone }) {
+            let title = next.title.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !title.isEmpty { return "Next: \(title)" }
+        }
+        if let target = project.targetDate {
+            return "Target \(Self.targetMonth(target)) · \(targetCountdown(target))"
+        }
+        if let tasks = project.tasks, !tasks.isEmpty {
+            return tasks.count == 1 ? "1 task" : "\(tasks.count) tasks"
+        }
+        return project.status.displayName
+    }
+
+    /// "Jun 2027" — the month a target date lands in.
+    private static func targetMonth(_ date: Date) -> String {
+        let f = DateFormatter()
+        f.dateFormat = "MMM yyyy"
+        return f.string(from: date)
+    }
+
+    /// A soft relative countdown to a target date: "today", "in 9 days", "in 3 wk", "in 11 mo",
+    /// "in 2 yr", or "passed" once it's behind us. Coarsened on purpose — a glance, not a stopwatch.
+    private func targetCountdown(_ date: Date) -> String {
+        let days = cal.dateComponents([.day], from: cal.startOfDay(for: now), to: cal.startOfDay(for: date)).day ?? 0
+        if days < 0 { return "passed" }
+        if days == 0 { return "today" }
+        if days < 14 { return "in \(days) days" }
+        if days < 60 { return "in \(days / 7) wk" }
+        if days < 365 { return "in \(max(1, days / 30)) mo" }
+        return "in \(max(1, days / 365)) yr"
     }
 
     /// A slim, single row of secondary entry points — the three deep-links plus a warm "capture a
@@ -1863,3 +1960,178 @@ private struct DinnerPickerSheet: View {
         }
     }
 }
+
+// MARK: - Projects (PR5)
+
+/// A project's lifecycle tint — a calm color per phase, used by the glance chip + cover placeholder.
+private extension ProjectPhase {
+    var tint: Color {
+        switch self {
+        case .dreaming: .sky
+        case .researching, .deciding: .marigold
+        case .inProgress, .done: .bacanGreen
+        }
+    }
+}
+
+/// A small pill naming a project's phase (icon + label), tinted by the phase. Shared by the glance row.
+private struct PhaseChip: View {
+    let phase: ProjectPhase
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Image(systemName: phase.icon)
+                .font(.system(size: 9, weight: .bold))
+            Text(phase.displayName)
+                .font(.system(.caption2, design: .rounded).weight(.semibold))
+        }
+        .foregroundStyle(phase.tint)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 3)
+        .background(Capsule().fill(phase.tint.opacity(0.14)))
+    }
+}
+
+/// One row in the Today "Projects" glance (PR5): the project's cover thumb (or a phase-tinted glyph
+/// placeholder), its name, a one-line hint (next task / target countdown / task count), and a phase
+/// chip. The whole row taps through to the Projects list. Store-free so it previews on its own.
+private struct ProjectGlanceRow: View {
+    let project: Project
+    let hint: String
+    let onOpen: () -> Void
+
+    var body: some View {
+        Button(action: onOpen) {
+            HStack(spacing: 12) {
+                cover
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(project.name)
+                        .foregroundStyle(Color.ink)
+                        .lineLimit(1)
+                    Text(hint)
+                        .font(.system(.caption, design: .rounded))
+                        .foregroundStyle(Color.inkSoft)
+                        .lineLimit(1)
+                }
+                Spacer(minLength: 8)
+                PhaseChip(phase: project.status)
+                Image(systemName: "chevron.right")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(Color.inkSoft.opacity(0.5))
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.pressable)
+        .accessibilityIdentifier("today-project-\(project.id)")
+    }
+
+    private var cover: some View {
+        BacanImage(path: project.coverImagePath, targetSize: CGSize(width: 88, height: 88)) {
+            ZStack {
+                Rectangle().fill(project.status.tint.opacity(0.14))
+                Image(systemName: project.status.icon)
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(project.status.tint)
+            }
+        }
+        .frame(width: 44, height: 44)
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+    }
+}
+
+/// A soft "Needs you today" deadline nudge (PR5): a project whose target date is approaching. A muted
+/// marigold flag + name + a "Target date in 3 weeks" chip; the whole row taps through to Projects. It
+/// carries NO inline action — a deadline is a gentle heads-up, not a checkbox. Store-free for previews.
+private struct ProjectDeadlineRow: View {
+    let project: Project
+    let days: Int
+    let onOpen: () -> Void
+
+    var body: some View {
+        Button(action: onOpen) {
+            HStack(spacing: 12) {
+                Image(systemName: "flag.checkered")
+                    .font(.subheadline)
+                    .foregroundStyle(Color.marigold)
+                    .frame(width: 22)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(project.name)
+                        .foregroundStyle(Color.ink)
+                        .lineLimit(1)
+                    deadlineChip
+                }
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.right")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(Color.inkSoft.opacity(0.5))
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.pressable)
+        .accessibilityIdentifier("today-project-deadline-\(project.id)")
+    }
+
+    private var deadlineChip: some View {
+        Text(phrase)
+            .font(.system(.caption2, design: .rounded).weight(.semibold))
+            .foregroundStyle(Color.marigold)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+            .background(Capsule().fill(Color.marigold.opacity(0.14)))
+    }
+
+    /// "Target date today / tomorrow / in N days / in N weeks" — coarsened so it reads calm, not tense.
+    private var phrase: String {
+        switch days {
+        case ..<0: return "Target date passed"
+        case 0: return "Target date today"
+        case 1: return "Target date tomorrow"
+        case 2..<14: return "Target date in \(days) days"
+        default: return "Target date in \(max(1, Int((Double(days) / 7).rounded()))) weeks"
+        }
+    }
+}
+
+#if DEBUG
+#Preview("Projects glance") {
+    let pool = Project(
+        name: "Backyard pool",
+        status: .researching,
+        targetDate: Calendar.current.date(byAdding: .month, value: 11, to: Date()),
+        tasks: [
+            ProjectTask(title: "Set a budget", isDone: true),
+            ProjectTask(title: "Call three pool builders"),
+        ]
+    )
+    let school = Project(
+        name: "Oliver's big-kid school",
+        status: .deciding,
+        tasks: [ProjectTask(title: "Tour the Montessori open house")]
+    )
+    let reno = Project(name: "Kitchen refresh", status: .dreaming)
+    return ScrollView {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Projects").familyTitle(.headline).foregroundStyle(Color.ink)
+            ProjectGlanceRow(project: pool, hint: "Next: Call three pool builders") {}
+            ProjectGlanceRow(project: school, hint: "Next: Tour the Montessori open house") {}
+            ProjectGlanceRow(project: reno, hint: "Dreaming") {}
+        }
+        .padding(16)
+        .background(RoundedRectangle(cornerRadius: 18, style: .continuous).fill(Color.familySurface))
+        .padding()
+    }
+    .background(Color.familyCanvas)
+}
+
+#Preview("Project deadline — Needs you today") {
+    VStack(spacing: 12) {
+        ProjectDeadlineRow(project: Project(name: "Backyard pool", status: .inProgress), days: 21) {}
+        ProjectDeadlineRow(project: Project(name: "Oliver's school decision", status: .deciding), days: 5) {}
+        ProjectDeadlineRow(project: Project(name: "Trip to Chile", status: .researching), days: 0) {}
+    }
+    .padding(16)
+    .background(RoundedRectangle(cornerRadius: 18, style: .continuous).fill(Color.familySurface))
+    .padding()
+    .background(Color.familyCanvas)
+}
+#endif
