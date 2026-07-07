@@ -145,11 +145,13 @@ public struct ProjectsReducer {
                 }
                 let coverData = state.newCoverData
                 let templateId = template?.isBlank == false ? template?.id : nil
+                // Immutable snapshot so the concurrently-executing `.run` closure doesn't capture a `var`.
+                let seededBase = base
                 return .run { send in
                     @Dependency(\.persistence) var persistence
                     @Dependency(\.storage) var storage
                     @Dependency(\.analytics) var analytics
-                    var project = base
+                    var project = seededBase
                     if let coverData,
                        let path = try? await storage.uploadProjectPhoto(hid, project.id, "cover", coverData) {
                         project.coverImagePath = path

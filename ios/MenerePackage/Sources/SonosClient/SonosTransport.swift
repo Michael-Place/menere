@@ -70,7 +70,7 @@ enum SonosTransport {
             let resumed = SonosLockedFlag()
             let found = FoundEndpoints()
 
-            func finish() {
+            @Sendable func finish() {
                 guard resumed.setIfUnset() else { return }
                 browser.cancel()
                 continuation.resume(returning: found.all())
@@ -97,7 +97,7 @@ enum SonosTransport {
         let connection = NWConnection(to: endpoint, using: .tcp)
         return await withCheckedContinuation { (cont: CheckedContinuation<String?, Never>) in
             let resumed = SonosLockedFlag()
-            func finish(_ ip: String?) {
+            @Sendable func finish(_ ip: String?) {
                 guard resumed.setIfUnset() else { return }
                 connection.cancel()
                 cont.resume(returning: ip)

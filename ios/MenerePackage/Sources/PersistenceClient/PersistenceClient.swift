@@ -277,8 +277,8 @@ extension PersistenceClient: DependencyKey {
     public static let liveValue: PersistenceClient = {
         let db = { Firestore.firestore() }
 
-        func wines() -> CollectionReference { db().collection("wines") }
-        func households() -> CollectionReference { db().collection("households") }
+        @Sendable func wines() -> CollectionReference { db().collection("wines") }
+        @Sendable func households() -> CollectionReference { db().collection("households") }
 
         return PersistenceClient(
             wine: { key in

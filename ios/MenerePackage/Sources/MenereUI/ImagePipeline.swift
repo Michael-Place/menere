@@ -211,7 +211,6 @@ private actor FetchCoordinator {
 /// shape map to a safe filename. Storage-path entries never expire; http entries honour a TTL.
 private struct DiskStore: Sendable {
     let directory: URL
-    private let fm = FileManager.default
 
     init(directory: URL) {
         self.directory = directory
@@ -228,9 +227,9 @@ private struct DiskStore: Sendable {
         let url = fileURL(for: key)
         guard let data = try? Data(contentsOf: url) else { return nil }
         if let ttl {
-            let modified = (try? fm.attributesOfItem(atPath: url.path)[.modificationDate] as? Date) ?? nil
+            let modified = (try? FileManager.default.attributesOfItem(atPath: url.path)[.modificationDate] as? Date) ?? nil
             if let modified, Date().timeIntervalSince(modified) > ttl {
-                try? fm.removeItem(at: url)
+                try? FileManager.default.removeItem(at: url)
                 return nil
             }
         }

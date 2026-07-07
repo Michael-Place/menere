@@ -333,7 +333,7 @@ final class HomeKitCoordinator: NSObject {
     }
 }
 
-extension HomeKitCoordinator: HMHomeManagerDelegate {
+extension HomeKitCoordinator: @preconcurrency HMHomeManagerDelegate {
     func homeManagerDidUpdateHomes(_ manager: HMHomeManager) {
         homesLoaded = true
         resumeWaiters()

@@ -23,7 +23,7 @@ enum LutronDiscovery {
             let resumed = LockedFlag()
             let found = FoundBridges()
 
-            func finish() {
+            @Sendable func finish() {
                 guard resumed.setIfUnset() else { return }
                 browser.cancel()
                 continuation.resume(returning: found.sorted())
