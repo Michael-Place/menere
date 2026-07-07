@@ -17,10 +17,12 @@
 		2E47B645BDB7330792826410 /* UserDomain in Frameworks */ = {isa = PBXBuildFile; productRef = 184E235FFA9B598B12C27AEE /* UserDomain */; };
 		3190C27AEFA82D6C5D888A69 /* EntityGraph.swift in Sources */ = {isa = PBXBuildFile; fileRef = C6EB724149E8DBBEAA83CA5C /* EntityGraph.swift */; };
 		3270FBAD4B1F1CB9E55608AA /* WishlistPriority.swift in Sources */ = {isa = PBXBuildFile; fileRef = D48BCE09A1E02940BDAC566C /* WishlistPriority.swift */; };
+		45C8DC48CB9863A7840046FD /* ShareViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = C38B98F2CC94E1718657C71A /* ShareViewController.swift */; };
 		4DFCD75384C1965A78A211F8 /* HomeKitConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = 71342489DC1663D2E7536E4C /* HomeKitConfig.swift */; };
 		50A325F691AF4CCAF39F05F8 /* SpendingInsights.swift in Sources */ = {isa = PBXBuildFile; fileRef = DCC59018088FD16C744DEF48 /* SpendingInsights.swift */; };
 		548702A4AE23FB8E40CD4807 /* HomeHealthCalculator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 021B13671F3612A8DDCC1CB0 /* HomeHealthCalculator.swift */; };
 		59A989753E33298A5CCAF988 /* Document.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10637CAB4F7D384F2C095E15 /* Document.swift */; };
+		5A01EF97446D78C9754F9888 /* SharedCapture in Frameworks */ = {isa = PBXBuildFile; productRef = 95452BC972E2CE4C2EE3AD6B /* SharedCapture */; };
 		60A2F888F0B3D7681710F26C /* FamilyList.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5020C88778BC0E0532035851 /* FamilyList.swift */; };
 		63FA397AA0AC35766AD48E98 /* HouseholdMember.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4FF2D02E07BEC169ECCAC059 /* HouseholdMember.swift */; };
 		648FDE618FE8F611C029E33C /* AuthenticationDomain in Frameworks */ = {isa = PBXBuildFile; productRef = 813A2C97EC3F910E3722B866 /* AuthenticationDomain */; };
@@ -54,6 +56,7 @@
 		D67202FB4F17D7E20DB4C1D1 /* PackingCategory.swift in Sources */ = {isa = PBXBuildFile; fileRef = C4E649F0A8E24B7C799A68C5 /* PackingCategory.swift */; };
 		D6D6DD5375B8F4FDACD72A4B /* HueConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A62F87CC80BC2F1C200E844 /* HueConfig.swift */; };
 		D873F53591BAAA5A1FED7190 /* GroceryItemDB.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD4DDDEEABEB97183E417753 /* GroceryItemDB.swift */; };
+		DF1CBB22F62B7DA3FCF9584F /* BacanShareExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = D50642C7F53641938E8AB627 /* BacanShareExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		E3099CA9B1854EF675E2B75D /* ChoreCompletion.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8537DCF36010AB795AC5FE3E /* ChoreCompletion.swift */; };
 		E62B93DB7041355BD0FDAAD9 /* ActivityItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6F5697E62607583A613F5851 /* ActivityItem.swift */; };
 		E896483BAB372C92AEF8B271 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = F1F82D1E332018877AB38374 /* Assets.xcassets */; };
@@ -67,6 +70,30 @@
 		FC7D726B0021F2A1866D5239 /* SharedCapture in Frameworks */ = {isa = PBXBuildFile; productRef = 4DE11F7984D82B8C559DA374 /* SharedCapture */; };
 		FD89FCD802AC010C28418F7C /* MaintenanceTemplate.swift in Sources */ = {isa = PBXBuildFile; fileRef = DBE17F5D73845A434A0C052E /* MaintenanceTemplate.swift */; };
 /* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		44E73A24A7E2EC35D6648FEE /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 5A5BF4AA6D0FFB2C7299350A /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 31799D7D27EFA99CFB0CBDF6;
+			remoteInfo = BacanShareExtension;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		0A9091F08756AD7CB496C67E /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				DF1CBB22F62B7DA3FCF9584F /* BacanShareExtension.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
 		021B13671F3612A8DDCC1CB0 /* HomeHealthCalculator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeHealthCalculator.swift; sourceTree = "<group>"; };
@@ -84,6 +111,7 @@
 		42607674240C3E636E3ED575 /* BacanTV.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = BacanTV.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		437B8BDC48401261A9D61B3D /* MaintenanceKnowledgeBase.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MaintenanceKnowledgeBase.swift; sourceTree = "<group>"; };
 		451D12A073A1025B027A012A /* CareCompletion.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CareCompletion.swift; sourceTree = "<group>"; };
+		47DC4CCC2B381D8114CAA987 /* ShareExtension.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = ShareExtension.entitlements; sourceTree = "<group>"; };
 		4FF2D02E07BEC169ECCAC059 /* HouseholdMember.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HouseholdMember.swift; sourceTree = "<group>"; };
 		5020C88778BC0E0532035851 /* FamilyList.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FamilyList.swift; sourceTree = "<group>"; };
 		57916759B4EA1587C7404406 /* PetCareKB.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PetCareKB.swift; sourceTree = "<group>"; };
@@ -106,6 +134,7 @@
 		A86F6C5A08C8B2EFB09E51CE /* GroceryCostEstimator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroceryCostEstimator.swift; sourceTree = "<group>"; };
 		AE647A48F30BEEF1FDD3BE02 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		B756050AEC9BD011CFF8E023 /* FamilyRadar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FamilyRadar.swift; sourceTree = "<group>"; };
+		C38B98F2CC94E1718657C71A /* ShareViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShareViewController.swift; sourceTree = "<group>"; };
 		C43C2065489A7E12F0415208 /* WishlistIdea.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WishlistIdea.swift; sourceTree = "<group>"; };
 		C4E649F0A8E24B7C799A68C5 /* PackingCategory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PackingCategory.swift; sourceTree = "<group>"; };
 		C558772F68276B6C1023D04D /* Expense.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Expense.swift; sourceTree = "<group>"; };
@@ -116,10 +145,12 @@
 		CE603AB6159CFD1A772999AF /* ScrapbookModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScrapbookModel.swift; sourceTree = "<group>"; };
 		D088E8D29C70A2AE7708A589 /* NestConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NestConfig.swift; sourceTree = "<group>"; };
 		D48BCE09A1E02940BDAC566C /* WishlistPriority.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WishlistPriority.swift; sourceTree = "<group>"; };
+		D50642C7F53641938E8AB627 /* BacanShareExtension.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = BacanShareExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		D8082FA48B10881E53F1A32C /* GoogleService-Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = "GoogleService-Info.plist"; sourceTree = "<group>"; };
 		D859BE5EA36D530E44BF0553 /* FamilyEvent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FamilyEvent.swift; sourceTree = "<group>"; };
 		DBE17F5D73845A434A0C052E /* MaintenanceTemplate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MaintenanceTemplate.swift; sourceTree = "<group>"; };
 		DCC59018088FD16C744DEF48 /* SpendingInsights.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpendingInsights.swift; sourceTree = "<group>"; };
+		E4EAEEF3802AFF764408627E /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		E714E577085262D09AC5902B /* SonosConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SonosConfig.swift; sourceTree = "<group>"; };
 		EB623C56CB5FE288C452027A /* NotificationPrefs.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationPrefs.swift; sourceTree = "<group>"; };
 		EE9319E7D05547D92067C9F4 /* BacanTVApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BacanTVApp.swift; sourceTree = "<group>"; };
@@ -136,6 +167,14 @@
 			files = (
 				B1219F3E745CD74AB628792D /* FirebaseAuth in Frameworks */,
 				8F32233B05205413D8FE7C8C /* FirebaseFirestore in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		24C94F39CC126F5EE711E361 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				5A01EF97446D78C9754F9888 /* SharedCapture in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -161,6 +200,7 @@
 				61E66C21EA97DE23685BFFC2 /* AppTV */,
 				6637136731A111C3A471A682 /* FamilyDomain */,
 				F31556813E8EAA5131B0E49B /* Packages */,
+				9B7358DEAB92487D4700132F /* ShareExtension */,
 				DA5411190BF2750293984BE8 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -242,9 +282,20 @@
 			path = App;
 			sourceTree = "<group>";
 		};
+		9B7358DEAB92487D4700132F /* ShareExtension */ = {
+			isa = PBXGroup;
+			children = (
+				E4EAEEF3802AFF764408627E /* Info.plist */,
+				47DC4CCC2B381D8114CAA987 /* ShareExtension.entitlements */,
+				C38B98F2CC94E1718657C71A /* ShareViewController.swift */,
+			);
+			path = ShareExtension;
+			sourceTree = "<group>";
+		};
 		DA5411190BF2750293984BE8 /* Products */ = {
 			isa = PBXGroup;
 			children = (
+				D50642C7F53641938E8AB627 /* BacanShareExtension.appex */,
 				42607674240C3E636E3ED575 /* BacanTV.app */,
 				1C2F6A8682CB53C5580F79D7 /* Menere.app */,
 			);
@@ -262,6 +313,25 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
+		31799D7D27EFA99CFB0CBDF6 /* BacanShareExtension */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 52043DB4BC6DF8A3EE93ECAC /* Build configuration list for PBXNativeTarget "BacanShareExtension" */;
+			buildPhases = (
+				5823B08CB33A95ADB0E07118 /* Sources */,
+				24C94F39CC126F5EE711E361 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = BacanShareExtension;
+			packageProductDependencies = (
+				95452BC972E2CE4C2EE3AD6B /* SharedCapture */,
+			);
+			productName = BacanShareExtension;
+			productReference = D50642C7F53641938E8AB627 /* BacanShareExtension.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
 		4596A44AF2BE1BFECD555F11 /* Menere */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = 647C3441C976B9DDABE7731F /* Build configuration list for PBXNativeTarget "Menere" */;
@@ -269,11 +339,13 @@
 				A6F0218A6BB9BE0EAECD83EB /* Sources */,
 				ADFEE21CEF4F20D2BED80B9E /* Resources */,
 				BD21A8F7F82D0F96B6F60B5B /* Frameworks */,
+				0A9091F08756AD7CB496C67E /* Embed Foundation Extensions */,
 				08E1039BB54F4B7ED38B83D1 /* Copy GoogleService-Info.plist */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				0DCA71548705F214EC252FDF /* PBXTargetDependency */,
 			);
 			name = Menere;
 			packageProductDependencies = (
@@ -318,6 +390,9 @@
 				BuildIndependentTargetsInParallel = YES;
 				LastUpgradeCheck = 1600;
 				TargetAttributes = {
+					31799D7D27EFA99CFB0CBDF6 = {
+						DevelopmentTeam = Z2FNFL3X73;
+					};
 					4596A44AF2BE1BFECD555F11 = {
 						DevelopmentTeam = Z2FNFL3X73;
 					};
@@ -344,6 +419,7 @@
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
+				31799D7D27EFA99CFB0CBDF6 /* BacanShareExtension */,
 				BC4D992661C0568F5EBE8A7D /* BacanTV */,
 				4596A44AF2BE1BFECD555F11 /* Menere */,
 			);
@@ -467,6 +543,14 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		5823B08CB33A95ADB0E07118 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				45C8DC48CB9863A7840046FD /* ShareViewController.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		A6F0218A6BB9BE0EAECD83EB /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -476,6 +560,14 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		0DCA71548705F214EC252FDF /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 31799D7D27EFA99CFB0CBDF6 /* BacanShareExtension */;
+			targetProxy = 44E73A24A7E2EC35D6648FEE /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		02D690BFF59A4C23CF12F2C2 /* Debug */ = {
@@ -574,6 +666,50 @@
 			};
 			name = Release;
 		};
+		7C886B6D637207E5F189D604 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = ShareExtension/ShareExtension.entitlements;
+				CURRENT_PROJECT_VERSION = 46;
+				DEVELOPMENT_TEAM = Z2FNFL3X73;
+				INFOPLIST_FILE = ShareExtension/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.38.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.copoche.menere.share;
+				PRODUCT_MODULE_NAME = BacanShareExtension;
+				PRODUCT_NAME = BacanShareExtension;
+				SDKROOT = iphoneos;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		7D1EE9A62C63FF80DFD36C51 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = ShareExtension/ShareExtension.entitlements;
+				CURRENT_PROJECT_VERSION = 46;
+				DEVELOPMENT_TEAM = Z2FNFL3X73;
+				INFOPLIST_FILE = ShareExtension/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.38.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.copoche.menere.share;
+				PRODUCT_MODULE_NAME = BacanShareExtension;
+				PRODUCT_NAME = BacanShareExtension;
+				SDKROOT = iphoneos;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
 		8723A516B62664D86FF5C74C /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -643,14 +779,14 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = App/Menere.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
-				CURRENT_PROJECT_VERSION = 45;
+				CURRENT_PROJECT_VERSION = 46;
 				DEVELOPMENT_TEAM = Z2FNFL3X73;
 				INFOPLIST_FILE = App/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.37.0;
+				MARKETING_VERSION = 1.38.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.copoche.menere;
 				SDKROOT = iphoneos;
 				SWIFT_VERSION = 5.0;
@@ -664,14 +800,14 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = App/Menere.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
-				CURRENT_PROJECT_VERSION = 45;
+				CURRENT_PROJECT_VERSION = 46;
 				DEVELOPMENT_TEAM = Z2FNFL3X73;
 				INFOPLIST_FILE = App/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.37.0;
+				MARKETING_VERSION = 1.38.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.copoche.menere;
 				SDKROOT = iphoneos;
 				SWIFT_VERSION = 5.0;
@@ -682,6 +818,15 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
+		52043DB4BC6DF8A3EE93ECAC /* Build configuration list for PBXNativeTarget "BacanShareExtension" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				7D1EE9A62C63FF80DFD36C51 /* Debug */,
+				7C886B6D637207E5F189D604 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
 		647C3441C976B9DDABE7731F /* Build configuration list for PBXNativeTarget "Menere" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
@@ -754,6 +899,10 @@
 		813A2C97EC3F910E3722B866 /* AuthenticationDomain */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = AuthenticationDomain;
+		};
+		95452BC972E2CE4C2EE3AD6B /* SharedCapture */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = SharedCapture;
 		};
 		D461E863DC40D0B3F29AF895 /* FirebaseAuth */ = {
 			isa = XCSwiftPackageProductDependency;
