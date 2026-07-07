@@ -1,4 +1,5 @@
 import ComposableArchitecture
+import FamilyDomain
 import MenereUI
 import PhotosUI
 import SwiftUI
@@ -246,6 +247,11 @@ public struct CaptureView: View {
                     }
                 }
 
+                // PR2 — offer to tag a Brain-bound capture onto a family project as it comes in.
+                if store.selected == .brain, !store.activeProjects.isEmpty {
+                    projectPicker
+                }
+
                 Button { store.send(.fileTapped) } label: {
                     HStack(spacing: 8) {
                         Image(systemName: store.selected?.symbol ?? "tray.and.arrow.down.fill")
@@ -314,6 +320,49 @@ public struct CaptureView: View {
         }
         .buttonStyle(.pressable)
         .accessibilityIdentifier("capture-dest-\(dest.rawValue)")
+    }
+
+    // MARK: - Project picker (PR2 — tag it to a project as it comes in)
+
+    /// A horizontal row of selectable project chips shown when a capture is headed to the Family Brain.
+    /// Optional by design — tapping a chip tags the doc onto that project (`projectIds`); tapping the
+    /// selected chip again clears it. Hidden entirely when the family has no active projects.
+    private var projectPicker: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label("Add to a project", systemImage: "folder.fill")
+                .font(.system(.subheadline, design: .rounded).weight(.semibold))
+                .foregroundStyle(Color.ink)
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(store.activeProjects) { project in
+                        projectChip(project)
+                    }
+                }
+                .padding(.vertical, 2)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityIdentifier("capture-project-picker")
+    }
+
+    private func projectChip(_ project: Project) -> some View {
+        let isSelected = store.selectedProjectId == project.id
+        return Button { store.send(.selectProject(project.id)) } label: {
+            HStack(spacing: 6) {
+                Image(systemName: isSelected ? "checkmark.circle.fill" : project.status.icon)
+                    .font(.caption)
+                Text(project.name)
+                    .font(.system(.subheadline, design: .rounded).weight(.semibold))
+                    .lineLimit(1)
+            }
+            .foregroundStyle(isSelected ? .white : Color.ink)
+            .padding(.horizontal, 14).padding(.vertical, 9)
+            .background(
+                Capsule().fill(isSelected ? Color.terracotta : Color.familySurface)
+            )
+        }
+        .buttonStyle(.pressable)
+        .accessibilityIdentifier("capture-project-\(project.id)")
     }
 
     /// The resolved-link card shown at the top of confirm for a URL import: title + summary + host.

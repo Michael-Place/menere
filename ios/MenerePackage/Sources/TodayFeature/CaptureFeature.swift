@@ -149,6 +149,23 @@ public struct CaptureReducer {
         // Loaded context so filing can target the right list + tag groceries.
         var lists: [FamilyList] = []
         var members: [HouseholdMember] = []
+        /// Active family projects (PR2) — offered as an optional "Add to a project" chip on the confirm
+        /// step when a capture is headed to the Family Brain. Empty when there are no projects yet, in
+        /// which case the chip row simply doesn't render.
+        var projects: [Project] = []
+        /// The project the user tags this capture onto (PR2). Applied to the created document's
+        /// `projectIds` when filing to the Brain. Pre-selected from ``suggestedProjectId`` if the AI
+        /// guessed one (rare at capture, but possible via a routed import).
+        var selectedProjectId: String?
+        /// An AI-guessed project id carried into capture (e.g. from a routed import). Pre-selects the
+        /// chip so the family confirms rather than hunts.
+        var suggestedProjectId: String?
+
+        /// The active (not-done) projects, newest first — the set the "Add to a project" chip offers.
+        var activeProjects: [Project] {
+            projects.filter { $0.status != .done }
+                .sorted { $0.createdAt > $1.createdAt }
+        }
 
         // Result surface.
         var receipt: String?
@@ -176,6 +193,9 @@ public struct CaptureReducer {
         /// compose surface.
         case handoffLoaded(PendingShare, jpeg: Data?, thumbnail: Data?, pdf: Data?)
         case contextLoaded(lists: [FamilyList], members: [HouseholdMember])
+        case projectsLoaded([Project])
+        /// Tag / untag the capture onto a project (PR2) — a toggle: tapping the selected chip clears it.
+        case selectProject(String?)
         /// A photo finished processing in the view (downscaled JPEG + preview thumbnail).
         case photoProcessed(jpeg: Data, thumbnail: Data)
         case clearPhoto
@@ -228,10 +248,12 @@ public struct CaptureReducer {
                     .run { send in
                         async let lists = persistence.lists(hid)
                         async let members = persistence.members(hid)
+                        async let projects = persistence.projects(hid)
                         await send(.contextLoaded(
                             lists: (try? await lists) ?? [],
                             members: (try? await members) ?? []
                         ))
+                        await send(.projectsLoaded((try? await projects) ?? []))
                     }
                 )
 
@@ -306,6 +328,21 @@ public struct CaptureReducer {
             case let .contextLoaded(lists, members):
                 state.lists = lists
                 state.members = members
+                return .none
+
+            case let .projectsLoaded(projects):
+                state.projects = projects
+                // Pre-select an AI-guessed project (if any) so the family confirms with one tap.
+                if state.selectedProjectId == nil,
+                   let guess = state.suggestedProjectId,
+                   projects.contains(where: { $0.id == guess }) {
+                    state.selectedProjectId = guess
+                }
+                return .none
+
+            case let .selectProject(id):
+                // Toggle: tapping the already-selected chip clears the tag.
+                state.selectedProjectId = (state.selectedProjectId == id) ? nil : id
                 return .none
 
             case let .photoProcessed(jpeg, thumbnail):
@@ -394,15 +431,22 @@ public struct CaptureReducer {
                 let plantHint = state.plantHint
                 let list = Self.targetList(state.lists)
                 let input = pdfData != nil ? "pdf" : (jpeg != nil ? "photo" : "text")
+                // A project tag only rides along when the capture is headed to the Brain (PR2).
+                let projectIds: [String]? = (dest == .brain)
+                    ? state.selectedProjectId.map { [$0] }
+                    : nil
                 analytics.log("smart_capture_routed", [
                     "destination": dest.rawValue,
                     "input": input,
                 ])
+                if projectIds != nil {
+                    analytics.log("doc_project_tagged", ["source": "capture"])
+                }
                 return .run { send in
                     do {
                         let receipt = try await Self.file(
                             dest: dest, hid: hid, uid: uid, text: text, jpeg: jpeg, pdfData: pdfData,
-                            plantHint: plantHint, list: list,
+                            plantHint: plantHint, list: list, projectIds: projectIds,
                             persistence: persistence, storage: storage, docs: docs
                         )
                         await send(.filed(receipt: receipt, destination: dest))
@@ -505,6 +549,7 @@ public struct CaptureReducer {
         pdfData: Data? = nil,
         plantHint: PlantHint?,
         list: FamilyList?,
+        projectIds: [String]? = nil,
         persistence: PersistenceClient,
         storage: StorageClient,
         docs: DocsClient
@@ -529,6 +574,7 @@ public struct CaptureReducer {
                 id: docId,
                 title: title,
                 type: .other,
+                projectIds: projectIds,
                 pagePaths: pagePaths,
                 notes: text.isEmpty ? nil : text,
                 uploadedBy: uid,

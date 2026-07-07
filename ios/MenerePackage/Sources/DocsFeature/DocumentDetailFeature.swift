@@ -47,8 +47,14 @@ public struct DocumentDetailReducer {
         /// Project-list items (items inside `.project` FamilyLists), each tagged with its list title,
         /// for the "Link to…" flow's project picker + the Related display (Act V V1-A).
         var projectItems: [LinkableProjectItem] = []
+        /// The family's initiative **project workspaces** (PR2) — the set the "Add to a project" picker
+        /// offers and the source of the linked / suggested project names. Distinct from ``projectItems``
+        /// (deck-list items); these are `Project` docs under `households/{hid}/projects`.
+        var projects: [Project] = []
         /// Drives the "Link to…" sheet (Act V V1-A).
         var showLinkSheet = false
+        /// Drives the PR2 "Add to a project" picker sheet.
+        var showProjectPicker = false
         /// The full document set + expenses, loaded so the "Related" card can compute cross-links (P24).
         var allDocuments: [FamilyDomain.Document] = []
         var expenses: [Expense] = []
@@ -114,6 +120,26 @@ public struct DocumentDetailReducer {
             return projectItems.filter { ids.contains($0.id) }
         }
 
+        /// The project **workspaces** this doc is tagged onto (PR2), for the "In project: …" row.
+        var linkedProjects: [Project] {
+            let ids = Set(doc.projectIds ?? [])
+            return projects.filter { ids.contains($0.id) }
+        }
+
+        /// The active (not-done) projects, newest first — the set the "Add to a project" picker offers.
+        var activeProjects: [Project] {
+            projects.filter { $0.status != .done }
+                .sorted { $0.createdAt > $1.createdAt }
+        }
+
+        /// The AI-guessed project (PR2), resolved to a real `Project` for the confirm banner — nil when
+        /// there's no guess, the guess doesn't resolve, or it's already been confirmed into `projectIds`.
+        var suggestedProject: Project? {
+            guard let guess = doc.suggestedProjectId,
+                  !(doc.projectIds ?? []).contains(guess) else { return nil }
+            return projects.first { $0.id == guess }
+        }
+
         /// Whether an all-day event with this doc's title already sits on the `dueDate` day.
         var onCalendar: Bool {
             guard let due = doc.dueDate else { return false }
@@ -132,6 +158,15 @@ public struct DocumentDetailReducer {
         case petsLoaded([CareItem])
         case plantsLoaded([CareItem])
         case projectItemsLoaded([LinkableProjectItem])
+        case projectsLoaded([Project])
+        /// PR2 — open the "Add to a project" picker.
+        case addToProjectTapped
+        /// PR2 — tag / untag this doc onto a project workspace (`projectIds`).
+        case projectToggled(String)
+        /// PR2 — accept the AI's project guess: move `suggestedProjectId` into `projectIds`, clear it.
+        case confirmSuggestedProject
+        /// PR2 — dismiss the AI's project guess: clear `suggestedProjectId` without tagging.
+        case dismissSuggestedProject
         case allDocumentsLoaded([FamilyDomain.Document])
         case expensesLoaded([Expense])
         case relatedDocTapped(FamilyDomain.Document)
@@ -201,6 +236,7 @@ public struct DocumentDetailReducer {
                     async let documents = persistence.documents(hid)
                     async let expenses = persistence.expenses(hid)
                     async let lists = persistence.lists(hid)
+                    async let projects = persistence.projects(hid)
                     await send(.eventsLoaded((try? await events) ?? []))
                     await send(.membersLoaded((try? await members) ?? []))
                     let care = (try? await careItems) ?? []
@@ -219,6 +255,7 @@ public struct DocumentDetailReducer {
                         })
                     }
                     await send(.projectItemsLoaded(projectItems))
+                    await send(.projectsLoaded((try? await projects) ?? []))
                     var loaded: [String: Data] = [:]
                     for path in pagePaths {
                         if let data = try? await storage.downloadData(path) {
@@ -252,6 +289,56 @@ public struct DocumentDetailReducer {
             case let .projectItemsLoaded(items):
                 state.projectItems = items
                 return .none
+
+            case let .projectsLoaded(projects):
+                state.projects = projects
+                return .none
+
+            case .addToProjectTapped:
+                state.showProjectPicker = true
+                return .none
+
+            case let .projectToggled(projectID):
+                guard let hid = hid() else { return .none }
+                var ids = state.doc.projectIds ?? []
+                let tagging: Bool
+                if let idx = ids.firstIndex(of: projectID) {
+                    ids.remove(at: idx)
+                    tagging = false
+                } else {
+                    ids.append(projectID)
+                    tagging = true
+                }
+                state.doc.projectIds = ids.isEmpty ? nil : ids
+                if tagging { analytics.log("doc_project_tagged", ["source": "doc_detail"]) }
+                let doc = state.doc
+                return .run { send in
+                    try await persistence.saveDocument(hid, doc)
+                    await send(.delegate(.didChange(doc)))
+                }
+
+            case .confirmSuggestedProject:
+                guard let hid = hid(), let guess = state.doc.suggestedProjectId else { return .none }
+                var ids = state.doc.projectIds ?? []
+                if !ids.contains(guess) { ids.append(guess) }
+                state.doc.projectIds = ids
+                state.doc.suggestedProjectId = nil
+                analytics.log("doc_project_suggestion_confirmed", ["accepted": "1"])
+                let doc = state.doc
+                return .run { send in
+                    try await persistence.saveDocument(hid, doc)
+                    await send(.delegate(.didChange(doc)))
+                }
+
+            case .dismissSuggestedProject:
+                guard let hid = hid(), state.doc.suggestedProjectId != nil else { return .none }
+                state.doc.suggestedProjectId = nil
+                analytics.log("doc_project_suggestion_confirmed", ["accepted": "0"])
+                let doc = state.doc
+                return .run { send in
+                    try await persistence.saveDocument(hid, doc)
+                    await send(.delegate(.didChange(doc)))
+                }
 
             case let .allDocumentsLoaded(documents):
                 state.allDocuments = documents
@@ -444,6 +531,9 @@ public struct DocumentDetailView: View {
             VStack(alignment: .leading, spacing: 18) {
                 pagesSection
                 headerSection
+                if store.suggestedProject != nil {
+                    suggestionBanner
+                }
                 if let expiry = doc.expiryDate {
                     DocumentDateChip(date: expiry, kind: .expiry)
                 }
@@ -451,6 +541,7 @@ public struct DocumentDetailView: View {
                     calendarAction
                 }
                 fieldsSection
+                projectsSection
                 notesSection
                 relatedSection
                 if doc.processingState != .processed {
@@ -495,6 +586,13 @@ public struct DocumentDetailView: View {
                             .accessibilityIdentifier("detail-link-to")
                     }
 
+                    if !store.activeProjects.isEmpty {
+                        Button {
+                            store.send(.addToProjectTapped)
+                        } label: { Label("Add to a project", systemImage: "folder.badge.plus") }
+                            .accessibilityIdentifier("detail-add-to-project")
+                    }
+
                     Button(role: .destructive) {
                         store.send(.deleteTapped)
                     } label: { Label("Delete", systemImage: "trash") }
@@ -522,6 +620,96 @@ public struct DocumentDetailView: View {
         }
         .sheet(isPresented: $store.showLinkSheet) {
             DocumentLinkSheet(store: store)
+        }
+        .sheet(isPresented: $store.showProjectPicker) {
+            DocumentProjectPickerSheet(store: store)
+        }
+    }
+
+    // MARK: Project suggestion + linkage (PR2)
+
+    /// The gentle "Looks like this is for {Project} — add it?" banner shown when the ingestion pipeline
+    /// guessed a project (`suggestedProjectId`). Add confirms (→ `projectIds`); Dismiss clears the guess.
+    @ViewBuilder
+    private var suggestionBanner: some View {
+        if let project = store.suggestedProject {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(spacing: 10) {
+                    Image(systemName: "sparkles")
+                        .font(.system(size: 18, weight: .semibold))
+                        .foregroundStyle(Color.terracotta)
+                    Text("Looks like this is for \(project.name) — add it?")
+                        .font(.system(.subheadline, design: .rounded).weight(.semibold))
+                        .foregroundStyle(Color.ink)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                HStack(spacing: 10) {
+                    Button {
+                        store.send(.confirmSuggestedProject)
+                    } label: {
+                        Text("Add")
+                            .font(.system(.subheadline, design: .rounded).weight(.semibold))
+                            .foregroundStyle(.white)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 10)
+                            .background(Color.terracotta, in: Capsule(style: .continuous))
+                    }
+                    .buttonStyle(.pressable)
+                    .accessibilityIdentifier("detail-suggestion-add")
+                    Button {
+                        store.send(.dismissSuggestedProject)
+                    } label: {
+                        Text("Dismiss")
+                            .font(.system(.subheadline, design: .rounded).weight(.semibold))
+                            .foregroundStyle(Color.inkSoft)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 10)
+                            .background(Color.inkSoft.opacity(0.12), in: Capsule(style: .continuous))
+                    }
+                    .buttonStyle(.pressable)
+                    .accessibilityIdentifier("detail-suggestion-dismiss")
+                }
+            }
+            .padding(16)
+            .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Color.terracotta.opacity(0.10)))
+            .accessibilityIdentifier("detail-suggestion-banner")
+        }
+    }
+
+    /// The "In project: …" row(s) — the project workspaces this doc is tagged onto (PR2). Hidden when
+    /// none. Tapping opens the picker so the family can add/remove tags.
+    @ViewBuilder
+    private var projectsSection: some View {
+        let linked = store.linkedProjects
+        if !linked.isEmpty {
+            Button {
+                store.send(.addToProjectTapped)
+            } label: {
+                HStack(spacing: 10) {
+                    Image(systemName: "folder.fill")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(Color.terracotta)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(linked.count == 1 ? "In project" : "In projects")
+                            .font(.caption).textCase(.uppercase)
+                            .foregroundStyle(Color.inkSoft)
+                        Text(linked.map(\.name).joined(separator: " · "))
+                            .font(.system(.subheadline, design: .rounded).weight(.semibold))
+                            .foregroundStyle(Color.ink)
+                            .multilineTextAlignment(.leading)
+                    }
+                    Spacer(minLength: 0)
+                    Image(systemName: "chevron.right")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.tertiary)
+                }
+                .padding(16)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Color.familySurface))
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("detail-in-project")
         }
     }
 
@@ -1164,6 +1352,60 @@ struct DocumentLinkSheet: View {
     }
 }
 
+/// The PR2 "Add to a project" picker — tag this Brain document onto one or more family project
+/// workspaces (`Document.projectIds`). A toggle list of the active projects; a filled check reflects
+/// the tagged state. Selections persist immediately through the document save path.
+struct DocumentProjectPickerSheet: View {
+    @Bindable var store: StoreOf<DocumentDetailReducer>
+
+    private var taggedIds: Set<String> { Set(store.doc.projectIds ?? []) }
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section {
+                    ForEach(store.activeProjects) { project in
+                        Button {
+                            store.send(.projectToggled(project.id))
+                        } label: {
+                            HStack(spacing: 12) {
+                                ZStack {
+                                    Circle().fill(Color.terracotta.opacity(0.16)).frame(width: 32, height: 32)
+                                    Image(systemName: project.status.icon)
+                                        .font(.system(size: 13, weight: .semibold))
+                                        .foregroundStyle(Color.terracotta)
+                                }
+                                VStack(alignment: .leading, spacing: 1) {
+                                    Text(project.name).font(.subheadline).foregroundStyle(Color.ink).lineLimit(1)
+                                    Text(project.status.displayName)
+                                        .font(.caption2).foregroundStyle(Color.inkSoft)
+                                }
+                                Spacer(minLength: 0)
+                                Image(systemName: taggedIds.contains(project.id) ? "checkmark.circle.fill" : "circle")
+                                    .font(.system(size: 20))
+                                    .foregroundStyle(taggedIds.contains(project.id) ? Color.terracotta : Color.inkSoft.opacity(0.5))
+                            }
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityIdentifier("pick-project-\(project.id)")
+                    }
+                } footer: {
+                    Text("Tag this to a family project so it gathers in one place.")
+                }
+            }
+            .navigationTitle("Add to a project")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { store.send(.binding(.set(\.showProjectPicker, false))) }
+                        .accessibilityIdentifier("project-picker-done")
+                }
+            }
+        }
+    }
+}
+
 /// Simple wrapping tag row (no scrolling needed at family scale).
 struct FlowTags: View {
     let tags: [String]
@@ -1178,4 +1420,59 @@ struct FlowTags: View {
                 .foregroundStyle(tint)
         }
     }
+}
+
+// MARK: - Previews (PR2 — project suggestion + picker)
+
+private extension Project {
+    static var pr2Samples: [Project] {
+        [
+            Project(id: "proj-pool", name: "Backyard pool", status: .researching,
+                    summary: "Gunite pool + patio.", createdAt: Date()),
+            Project(id: "proj-school", name: "Oliver's school hunt", status: .deciding,
+                    createdAt: Date().addingTimeInterval(-86_400)),
+            Project(id: "proj-reno", name: "Kitchen reno", status: .dreaming,
+                    createdAt: Date().addingTimeInterval(-172_800)),
+        ]
+    }
+}
+
+private func pr2PreviewStore(suggested: Bool, tagged: Bool) -> StoreOf<DocumentDetailReducer> {
+    let doc = FamilyDomain.Document(
+        id: "doc-1",
+        title: "Blue Haven pool quote",
+        type: .receipt,
+        projectIds: tagged ? ["proj-pool"] : nil,
+        suggestedProjectId: suggested ? "proj-pool" : nil,
+        amount: 48_500,
+        vendor: "Blue Haven Pools",
+        summary: "Gunite pool + spa, initial estimate.",
+        uploadedBy: "u1",
+        processingState: .processed
+    )
+    return Store(
+        initialState: {
+            var s = DocumentDetailReducer.State(doc: doc)
+            s.projects = Project.pr2Samples
+            return s
+        }()
+    ) {
+        DocumentDetailReducer()
+    }
+}
+
+#Preview("Detail — project suggestion banner") {
+    NavigationStack {
+        DocumentDetailView(store: pr2PreviewStore(suggested: true, tagged: false))
+    }
+}
+
+#Preview("Detail — tagged to a project") {
+    NavigationStack {
+        DocumentDetailView(store: pr2PreviewStore(suggested: false, tagged: true))
+    }
+}
+
+#Preview("Project picker sheet") {
+    DocumentProjectPickerSheet(store: pr2PreviewStore(suggested: false, tagged: true))
 }
