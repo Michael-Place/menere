@@ -83,6 +83,13 @@ class AppDelegate: NSObject, UIApplicationDelegate {
     ) -> Bool {
         FirebaseApp.configure()
 
+        // DIRECT-TO-CLOUD share: store the auth token in the SHARED keychain access group so the
+        // Bacán Share Extension (a separate process) can restore the signed-in session and write
+        // straight to Firebase — no app-open handoff. The group string is team-prefixed; it must
+        // match the extension's `useUserAccessGroup(_:)` + `keychain-access-groups` entitlement.
+        // (TeamID Z2FNFL3X73; Firebase accepts the literal team-prefixed group.)
+        try? Auth.auth().useUserAccessGroup("Z2FNFL3X73.com.copoche.menere.firebase")
+
         // Make Firestore offline persistence explicit (it's on by default, but pin it so cellar /
         // home / scan reads serve from the local cache when the device is offline). Must be set
         // before any Firestore access.

@@ -11,6 +11,7 @@
 		04509125F3E415BB649C00DB /* GoogleService-Info.plist in Resources */ = {isa = PBXBuildFile; fileRef = D8082FA48B10881E53F1A32C /* GoogleService-Info.plist */; };
 		0A7EB476A4C27377EA6C176D /* LutronConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = 82D8FFB008FE83152CB4FCD1 /* LutronConfig.swift */; };
 		1292A3324FAD670B7D1A87C5 /* MoneyRollup.swift in Sources */ = {isa = PBXBuildFile; fileRef = A258E8EED101D5C5DC9213C4 /* MoneyRollup.swift */; };
+		18892CE663728068D7B61BCA /* FirebaseAuth in Frameworks */ = {isa = PBXBuildFile; productRef = 63AD22BB833D6855935C40E4 /* FirebaseAuth */; };
 		1E5D6BB849848A59978B4173 /* FamilyRadar.swift in Sources */ = {isa = PBXBuildFile; fileRef = B756050AEC9BD011CFF8E023 /* FamilyRadar.swift */; };
 		28859264F47C1B35ACE31F5B /* NotificationPrefs.swift in Sources */ = {isa = PBXBuildFile; fileRef = EB623C56CB5FE288C452027A /* NotificationPrefs.swift */; };
 		2C005B58CEC0745584034C16 /* Memory.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A41C4500EEED76CCCB94F31 /* Memory.swift */; };
@@ -32,6 +33,7 @@
 		73A60D73A8F48B3ED3E6367A /* Recipe.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1D9312CCDBB55C7CC370B379 /* Recipe.swift */; };
 		741317E5025655B7BAC7C704 /* FamilyChore.swift in Sources */ = {isa = PBXBuildFile; fileRef = C8DC446C29A064C8D1FA088E /* FamilyChore.swift */; };
 		77541D4DE642D04BF7C8CFC4 /* BacanTVApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = EE9319E7D05547D92067C9F4 /* BacanTVApp.swift */; };
+		78376F327D16848D92A92A5E /* FirebaseCore in Frameworks */ = {isa = PBXBuildFile; productRef = E00A7F55C77E54F7C966E111 /* FirebaseCore */; };
 		793C0D4CD2C8D59B3AF2D694 /* BudgetAlert.swift in Sources */ = {isa = PBXBuildFile; fileRef = 94DA664EF76EEF7AF26DDAFB /* BudgetAlert.swift */; };
 		7FEF216453F37B2B6733BD35 /* CareCompletion.swift in Sources */ = {isa = PBXBuildFile; fileRef = 451D12A073A1025B027A012A /* CareCompletion.swift */; };
 		850949D7257324BE8AC1F868 /* CommandCenterView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10C75C49A04F868236585DC6 /* CommandCenterView.swift */; };
@@ -48,6 +50,7 @@
 		B58EB23EE800218F2B85EAC0 /* CareItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8ADC640F89A0B5EBE6FF1853 /* CareItem.swift */; };
 		B8C06A33F89C25D303527248 /* SlideshowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1C48D4656BE53CF3C6515603 /* SlideshowView.swift */; };
 		BC99A36FC11ACFA3A8B177E5 /* GroceryCostEstimator.swift in Sources */ = {isa = PBXBuildFile; fileRef = A86F6C5A08C8B2EFB09E51CE /* GroceryCostEstimator.swift */; };
+		C5D5705B5376FF0EA096C9BE /* FirebaseStorage in Frameworks */ = {isa = PBXBuildFile; productRef = 3C66ABBE7D2EDE7AD538ACF8 /* FirebaseStorage */; };
 		C865BDC48CE60ED95C1F1C5F /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 41055B2C0C280352A5BA0E26 /* RootView.swift */; };
 		CA8A07DBF98E4F679CB92FAB /* MaintenanceKnowledgeBase.swift in Sources */ = {isa = PBXBuildFile; fileRef = 437B8BDC48401261A9D61B3D /* MaintenanceKnowledgeBase.swift */; };
 		CA9C8AE4E3E9C87EF9860EFD /* WishlistIdea.swift in Sources */ = {isa = PBXBuildFile; fileRef = C43C2065489A7E12F0415208 /* WishlistIdea.swift */; };
@@ -69,6 +72,7 @@
 		F74128CD918B55839FF30C50 /* SavingsGoal.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9EB043CC3187116569905E74 /* SavingsGoal.swift */; };
 		FC7D726B0021F2A1866D5239 /* SharedCapture in Frameworks */ = {isa = PBXBuildFile; productRef = 4DE11F7984D82B8C559DA374 /* SharedCapture */; };
 		FD89FCD802AC010C28418F7C /* MaintenanceTemplate.swift in Sources */ = {isa = PBXBuildFile; fileRef = DBE17F5D73845A434A0C052E /* MaintenanceTemplate.swift */; };
+		FFB666084BDCA9574538DD5B /* FirebaseFirestore in Frameworks */ = {isa = PBXBuildFile; productRef = 6DF43BB8D0816ED0184973E9 /* FirebaseFirestore */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -175,6 +179,10 @@
 			buildActionMask = 2147483647;
 			files = (
 				5A01EF97446D78C9754F9888 /* SharedCapture in Frameworks */,
+				78376F327D16848D92A92A5E /* FirebaseCore in Frameworks */,
+				18892CE663728068D7B61BCA /* FirebaseAuth in Frameworks */,
+				FFB666084BDCA9574538DD5B /* FirebaseFirestore in Frameworks */,
+				C5D5705B5376FF0EA096C9BE /* FirebaseStorage in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -319,6 +327,7 @@
 			buildPhases = (
 				5823B08CB33A95ADB0E07118 /* Sources */,
 				24C94F39CC126F5EE711E361 /* Frameworks */,
+				7C86D2CCFBAD686CE4626EAF /* Copy GoogleService-Info.plist */,
 			);
 			buildRules = (
 			);
@@ -327,6 +336,10 @@
 			name = BacanShareExtension;
 			packageProductDependencies = (
 				95452BC972E2CE4C2EE3AD6B /* SharedCapture */,
+				E00A7F55C77E54F7C966E111 /* FirebaseCore */,
+				63AD22BB833D6855935C40E4 /* FirebaseAuth */,
+				6DF43BB8D0816ED0184973E9 /* FirebaseFirestore */,
+				3C66ABBE7D2EDE7AD538ACF8 /* FirebaseStorage */,
 			);
 			productName = BacanShareExtension;
 			productReference = D50642C7F53641938E8AB627 /* BacanShareExtension.appex */;
@@ -465,6 +478,25 @@
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
 			shellScript = "if [ -f \"${PROJECT_DIR}/App/GoogleService-Info.plist\" ]; then\n  cp \"${PROJECT_DIR}/App/GoogleService-Info.plist\" \"${BUILT_PRODUCTS_DIR}/${PRODUCT_NAME}.app/GoogleService-Info.plist\"\nfi\n";
+		};
+		7C86D2CCFBAD686CE4626EAF /* Copy GoogleService-Info.plist */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Copy GoogleService-Info.plist";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "if [ -f \"${PROJECT_DIR}/App/GoogleService-Info.plist\" ]; then\n  cp \"${PROJECT_DIR}/App/GoogleService-Info.plist\" \"${BUILT_PRODUCTS_DIR}/${CONTENTS_FOLDER_PATH}/GoogleService-Info.plist\"\nfi\n";
 		};
 		B0CD07472D78B4E2EF0D9D20 /* Copy GoogleService-Info.plist */ = {
 			isa = PBXShellScriptBuildPhase;
@@ -884,6 +916,11 @@
 			package = 34B3727FBAC3E79A7C83E86C /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
 			productName = FirebaseFirestore;
 		};
+		3C66ABBE7D2EDE7AD538ACF8 /* FirebaseStorage */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 34B3727FBAC3E79A7C83E86C /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseStorage;
+		};
 		49A38D276C70CB617ECD07C5 /* AppCore */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = AppCore;
@@ -895,6 +932,16 @@
 		531FAB6065D639546B0EAF29 /* PushClient */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = PushClient;
+		};
+		63AD22BB833D6855935C40E4 /* FirebaseAuth */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 34B3727FBAC3E79A7C83E86C /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseAuth;
+		};
+		6DF43BB8D0816ED0184973E9 /* FirebaseFirestore */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 34B3727FBAC3E79A7C83E86C /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseFirestore;
 		};
 		813A2C97EC3F910E3722B866 /* AuthenticationDomain */ = {
 			isa = XCSwiftPackageProductDependency;
@@ -908,6 +955,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 34B3727FBAC3E79A7C83E86C /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
 			productName = FirebaseAuth;
+		};
+		E00A7F55C77E54F7C966E111 /* FirebaseCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 34B3727FBAC3E79A7C83E86C /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseCore;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

@@ -59,8 +59,10 @@ targets:
 
   # ---------------------------------------------------------------------------------------------
   # BacanShareExtension — the V5 ingestion front door (system share sheet → "Bacán"). Accepts
-  # URLs / text / images / PDFs, writes a `PendingShare` into the app-group container. Lightweight:
-  # links ONLY the Foundation-only `SharedCapture` bridge (no Firebase / app UI).
+  # URLs / text / images / PDFs. DIRECT-TO-CLOUD: PDF/file/image shares write STRAIGHT to Firebase
+  # (Storage + a pending `documents/{id}`) using the signed-in session restored from the shared
+  # keychain group — no app-open. URL/text shares still hand off via the app-group inbox (they need
+  # in-app AI routing). Links Firebase (Auth/Firestore/Storage) + the Foundation-only `SharedCapture`.
   # ---------------------------------------------------------------------------------------------
   BacanShareExtension:
     type: app-extension
@@ -82,6 +84,22 @@ targets:
     dependencies:
       - package: MenerePackage
         product: SharedCapture
+      # DIRECT-TO-CLOUD — write shared PDFs/files/images straight to the family's Firebase.
+      - package: Firebase
+        product: FirebaseCore
+      - package: Firebase
+        product: FirebaseAuth
+      - package: Firebase
+        product: FirebaseFirestore
+      - package: Firebase
+        product: FirebaseStorage
+    postBuildScripts:
+      - name: "Copy GoogleService-Info.plist"
+        script: |
+          if [ -f "${PROJECT_DIR}/App/GoogleService-Info.plist" ]; then
+            cp "${PROJECT_DIR}/App/GoogleService-Info.plist" "${BUILT_PRODUCTS_DIR}/${CONTENTS_FOLDER_PATH}/GoogleService-Info.plist"
+          fi
+        basedOnDependencyAnalysis: false
 
   # ---------------------------------------------------------------------------------------------
   # BacanTV — the living-room Apple TV app (P27-T2). Shares the Firebase backend + the pure
