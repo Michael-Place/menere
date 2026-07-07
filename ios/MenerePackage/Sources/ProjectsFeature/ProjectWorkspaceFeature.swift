@@ -42,6 +42,17 @@ public struct ProjectWorkspaceReducer {
         // Documents picker.
         var showDocPicker = false
 
+        // Contacts.
+        var showContactEditor = false
+        /// The working copy the editor binds to; `editingContactId == nil` means we're adding a new one.
+        var contactDraft = ProjectContact(name: "")
+        var editingContactId: String?
+
+        // Budget.
+        var showBudgetEditor = false
+        /// The text the budget field binds to (dollars, no cents) while editing.
+        var budgetDraft = ""
+
         public init(project: Project) {
             self.project = project
         }
@@ -66,6 +77,51 @@ public struct ProjectWorkspaceReducer {
             documents
                 .filter { $0.suggestedProjectId == project.id && !($0.projectIds ?? []).contains(project.id) }
                 .sorted { $0.createdAt > $1.createdAt }
+        }
+
+        /// The linked docs that carry a real dollar `amount` — the raw material for the quote
+        /// comparison. Sorted cheapest → priciest so the first is the low bid.
+        var quoteDocuments: [FamilyDomain.Document] {
+            linkedDocuments
+                .filter { ($0.amount ?? 0) > 0 }
+                .sorted { ($0.amount ?? 0) < ($1.amount ?? 0) }
+        }
+
+        /// A tiny, decode-free rollup of the gathered quotes (count + range + cheapest id) — nil when
+        /// no linked doc has an amount. All the money math the Budget section needs.
+        var quoteStats: QuoteStats? {
+            let quotes = quoteDocuments
+            guard let low = quotes.first?.amount, let high = quotes.last?.amount else { return nil }
+            return QuoteStats(count: quotes.count, low: low, high: high, cheapestDocId: quotes.first?.id)
+        }
+    }
+
+    /// A pure summary of a project's gathered quotes — the Budget section's model. Kept in the feature
+    /// (not `FamilyDomain`) so the money math stays local to the workspace, per PR3's "keep it light".
+    public struct QuoteStats: Equatable, Sendable {
+        public var count: Int
+        public var low: Double
+        public var high: Double
+        public var cheapestDocId: String?
+
+        /// "3 quotes · $48k–$71k" (single quote → just the one price). Compact k-formatting.
+        public var headline: String {
+            let noun = count == 1 ? "quote" : "quotes"
+            if count == 1 || low == high {
+                return "\(count) \(noun) · \(Self.compact(low))"
+            }
+            return "\(count) \(noun) · \(Self.compact(low))–\(Self.compact(high))"
+        }
+
+        /// $48,000 → "$48k"; $1,250 → "$1,250"; keeps it glanceable on a card.
+        static func compact(_ value: Double) -> String {
+            if value >= 1_000 {
+                let k = value / 1_000
+                let rounded = (k * 10).rounded() / 10
+                let stem = rounded == rounded.rounded() ? String(Int(rounded)) : String(rounded)
+                return "$\(stem)k"
+            }
+            return value.formatted(.currency(code: "USD").precision(.fractionLength(0)))
         }
     }
 
@@ -112,6 +168,19 @@ public struct ProjectWorkspaceReducer {
         case acceptSuggestion(FamilyDomain.Document)
         case dismissSuggestion(FamilyDomain.Document)
 
+        // Contacts
+        case addContactTapped
+        case editContactTapped(ProjectContact)
+        case saveContact
+        case deleteContact(String)
+        case dismissContactEditor
+
+        // Budget
+        case setBudgetTapped
+        case saveBudget
+        case clearBudget
+        case dismissBudgetEditor
+
         // Whole-project lifecycle
         case deleteProjectTapped
 
@@ -131,6 +200,17 @@ public struct ProjectWorkspaceReducer {
     private func hid() -> String? {
         @Shared(.user) var user
         return user?.householdId
+    }
+
+    /// Forgiving budget parse: "$48,000" / "48000" / "48k" / "48.5k" → a Double, else nil (blank clears).
+    static func parseBudget(_ raw: String) -> Double? {
+        var s = raw.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !s.isEmpty else { return nil }
+        var multiplier = 1.0
+        if s.hasSuffix("k") { multiplier = 1_000; s.removeLast() }
+        let filtered = s.filter { $0.isNumber || $0 == "." }
+        guard let value = Double(filtered), value > 0 else { return nil }
+        return value * multiplier
     }
 
     /// Persist the current project and echo it up to the list. The single write path for every edit.
@@ -390,6 +470,93 @@ public struct ProjectWorkspaceReducer {
                     try await persistence.saveDocument(hid, dismissed)
                     analytics.log("project_suggestion_dismissed")
                 }
+
+            // MARK: Contacts
+            case .addContactTapped:
+                state.editingContactId = nil
+                state.contactDraft = ProjectContact(name: "")
+                state.showContactEditor = true
+                return .none
+
+            case let .editContactTapped(contact):
+                state.editingContactId = contact.id
+                state.contactDraft = contact
+                state.showContactEditor = true
+                return .none
+
+            case .saveContact:
+                var draft = state.contactDraft
+                draft.name = draft.name.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !draft.name.isEmpty else { return .none }
+                // Normalise blank optionals back to nil so rows/links don't render empty fields.
+                func clean(_ s: String?) -> String? {
+                    let t = s?.trimmingCharacters(in: .whitespacesAndNewlines)
+                    return (t?.isEmpty == false) ? t : nil
+                }
+                draft.role = clean(draft.role)
+                draft.company = clean(draft.company)
+                draft.phone = clean(draft.phone)
+                draft.email = clean(draft.email)
+                draft.notes = clean(draft.notes)
+
+                var contacts = state.project.contacts ?? []
+                let isNew: Bool
+                if let id = state.editingContactId, let idx = contacts.firstIndex(where: { $0.id == id }) {
+                    contacts[idx] = draft
+                    isNew = false
+                } else {
+                    contacts.append(draft)
+                    isNew = true
+                }
+                state.project.contacts = contacts
+                state.showContactEditor = false
+                state.editingContactId = nil
+                if isNew {
+                    @Dependency(\.analytics) var analytics
+                    analytics.log("project_contact_added")
+                }
+                return persist(state.project)
+
+            case let .deleteContact(id):
+                state.project.contacts?.removeAll { $0.id == id }
+                if state.project.contacts?.isEmpty == true { state.project.contacts = nil }
+                return persist(state.project)
+
+            case .dismissContactEditor:
+                state.showContactEditor = false
+                state.editingContactId = nil
+                return .none
+
+            // MARK: Budget
+            case .setBudgetTapped:
+                // Prefill with the current target (dollars, no cents) if one is set.
+                if let target = state.project.budgetTarget {
+                    state.budgetDraft = String(Int(target.rounded()))
+                } else {
+                    state.budgetDraft = ""
+                }
+                state.showBudgetEditor = true
+                return .none
+
+            case .saveBudget:
+                // Parse a forgiving "$48,000" / "48000" / "48k" into a Double.
+                let value = Self.parseBudget(state.budgetDraft)
+                state.project.budgetTarget = value
+                state.showBudgetEditor = false
+                if value != nil {
+                    @Dependency(\.analytics) var analytics
+                    analytics.log("project_budget_set")
+                }
+                return persist(state.project)
+
+            case .clearBudget:
+                state.project.budgetTarget = nil
+                state.showBudgetEditor = false
+                return persist(state.project)
+
+            case .dismissBudgetEditor:
+                state.showBudgetEditor = false
+                return .none
 
             // MARK: Lifecycle
             case .deleteProjectTapped:

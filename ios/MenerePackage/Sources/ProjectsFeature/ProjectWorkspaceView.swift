@@ -25,6 +25,8 @@ public struct ProjectWorkspaceView: View {
                 inspirationSection
                 suggestionsSection
                 documentsSection
+                budgetSection
+                contactsSection
                 linksSection
                 tasksSection
                 notesSection
@@ -51,6 +53,8 @@ public struct ProjectWorkspaceView: View {
         }
         .sheet(isPresented: $store.showAddLink) { addLinkSheet }
         .sheet(isPresented: $store.showDocPicker) { docPickerSheet }
+        .sheet(isPresented: $store.showContactEditor) { contactEditorSheet }
+        .sheet(isPresented: $store.showBudgetEditor) { budgetEditorSheet }
         .fullScreenCover(
             isPresented: Binding(
                 get: { store.viewingPhotoPath != nil },
@@ -281,6 +285,124 @@ public struct ProjectWorkspaceView: View {
         }
     }
 
+    // MARK: Budget / Quotes
+
+    /// A comparison built from the project's linked Brain docs that carry an `amount` (vendor +
+    /// price, cheapest highlighted), plus an editable `budgetTarget` and a plain-language readout of
+    /// the low quote vs. the target. All the money math lives in `QuoteStats` — this stays a readout.
+    private var budgetSection: some View {
+        SectionCard(title: "Budget & quotes", systemImage: "dollarsign.circle.fill", accent: .bacanGreen) {
+            let stats = store.quoteStats
+            let target = store.project.budgetTarget
+
+            // Budget target row (tap to set / edit).
+            Button { store.send(.setBudgetTapped) } label: {
+                HStack(spacing: 10) {
+                    Image(systemName: "target").foregroundStyle(Color.bacanGreen)
+                    if let target {
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text("Budget")
+                                .font(.caption).foregroundStyle(Color.inkSoft)
+                            Text(target, format: .currency(code: "USD").precision(.fractionLength(0)))
+                                .font(.system(.title3, design: .rounded).weight(.bold))
+                                .foregroundStyle(Color.ink)
+                        }
+                    } else {
+                        Text("Set a budget")
+                            .font(.system(.subheadline, design: .rounded).weight(.semibold))
+                            .foregroundStyle(Color.bacanGreen)
+                    }
+                    Spacer()
+                    Image(systemName: "pencil")
+                        .font(.footnote.weight(.semibold))
+                        .foregroundStyle(.tertiary)
+                }
+                .padding(12)
+                .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color.familyCanvas))
+            }
+            .buttonStyle(.pressable)
+            .accessibilityIdentifier("set-project-budget")
+
+            if let stats {
+                // Headline: "3 quotes · $48k–$71k".
+                HStack(spacing: 8) {
+                    Image(systemName: "chart.bar.doc.horizontal").foregroundStyle(Color.sky)
+                    Text(stats.headline)
+                        .font(.system(.subheadline, design: .rounded).weight(.bold))
+                        .foregroundStyle(Color.ink)
+                    Spacer()
+                }
+                .padding(.top, 4)
+
+                // Plain-language readout: low quote vs. target.
+                if let readout = budgetReadout(stats: stats, target: target) {
+                    Text(readout)
+                        .font(.system(.caption, design: .rounded))
+                        .foregroundStyle(readout.contains("over") ? Color.terracotta : Color.inkSoft)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                // The quotes, cheapest highlighted.
+                VStack(spacing: 8) {
+                    ForEach(store.quoteDocuments) { doc in
+                        QuoteRow(doc: doc, isCheapest: doc.id == stats.cheapestDocId)
+                    }
+                }
+                .padding(.top, 2)
+            } else {
+                emptyHint("Link quotes to this project (Documents above) and the price comparison shows up here — cheapest bid highlighted. 💸")
+            }
+        }
+    }
+
+    /// "Low quote is $23k under budget" / "$4k over budget" / a neutral range when there's no target.
+    private func budgetReadout(stats: ProjectWorkspaceReducer.QuoteStats, target: Double?) -> String? {
+        guard let target, target > 0 else { return nil }
+        let delta = target - stats.low
+        let amount = ProjectWorkspaceReducer.QuoteStats.compact(abs(delta))
+        if abs(delta) < 1 {
+            return "Low quote is right at budget."
+        } else if delta > 0 {
+            return "Low quote is \(amount) under budget. 🎉"
+        } else {
+            return "Low quote is \(amount) over budget."
+        }
+    }
+
+    // MARK: Contacts
+
+    /// The people the family is talking to — contractors, admissions offices, realtors. Rows show
+    /// name + role/company with tappable call/email buttons; tap the row to edit.
+    private var contactsSection: some View {
+        SectionCard(title: "Contacts", systemImage: "person.2.fill", accent: .terracotta) {
+            Button { store.send(.addContactTapped) } label: {
+                Label("Add contact", systemImage: "person.crop.circle.badge.plus")
+                    .font(.system(.subheadline, design: .rounded).weight(.semibold))
+            }
+            .buttonStyle(.pressable)
+            .foregroundStyle(Color.bacanGreen)
+            .padding(.bottom, 4)
+            .accessibilityIdentifier("add-project-contact")
+
+            let contacts = store.project.contacts ?? []
+            if contacts.isEmpty {
+                emptyHint("Add the contractors or schools you're talking to — with phone, email, and their quote. 📇")
+            } else {
+                VStack(spacing: 8) {
+                    ForEach(contacts) { contact in
+                        ContactRow(
+                            contact: contact,
+                            onEdit: { store.send(.editContactTapped(contact)) },
+                            onCall: { if let url = contact.phoneURL { openURL(url) } },
+                            onEmail: { if let url = contact.emailURL { openURL(url) } },
+                            onDelete: { store.send(.deleteContact(contact.id)) }
+                        )
+                    }
+                }
+            }
+        }
+    }
+
     // MARK: Links
 
     private var linksSection: some View {
@@ -466,6 +588,114 @@ public struct ProjectWorkspaceView: View {
         }
     }
 
+    private var contactEditorSheet: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    TextField("Name", text: $store.contactDraft.name)
+                        .accessibilityIdentifier("contact-name-field")
+                    TextField("Role (Contractor, Admissions…)", text: optionalText($store.contactDraft.role))
+                    TextField("Company / school", text: optionalText($store.contactDraft.company))
+                }
+                .listRowBackground(Color.familySurface)
+
+                Section("Reach them") {
+                    TextField("Phone", text: optionalText($store.contactDraft.phone))
+                        .keyboardType(.phonePad)
+                    TextField("Email", text: optionalText($store.contactDraft.email))
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .keyboardType(.emailAddress)
+                }
+                .listRowBackground(Color.familySurface)
+
+                // Optionally pin this contact to one of the project's quote documents.
+                let quotes = store.linkedDocuments
+                if !quotes.isEmpty {
+                    Section("Their quote") {
+                        Picker("Linked document", selection: $store.contactDraft.linkedDocId) {
+                            Text("None").tag(String?.none)
+                            ForEach(quotes) { doc in
+                                Text(doc.title.isEmpty ? doc.type.displayName : doc.title)
+                                    .tag(Optional(doc.id))
+                            }
+                        }
+                    }
+                    .listRowBackground(Color.familySurface)
+                }
+
+                Section("Notes") {
+                    TextField("Anything to remember…", text: optionalText($store.contactDraft.notes), axis: .vertical)
+                        .lineLimit(1...4)
+                }
+                .listRowBackground(Color.familySurface)
+            }
+            .scrollContentBackground(.hidden)
+            .background(Color.familyCanvas)
+            .navigationTitle(store.editingContactId == nil ? "Add contact" : "Edit contact")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { store.send(.dismissContactEditor) }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save") { store.send(.saveContact) }
+                        .disabled(store.contactDraft.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        .accessibilityIdentifier("save-contact-button")
+                }
+            }
+        }
+    }
+
+    /// Bridge a `Binding<String?>` (the model's optional fields) to the `Binding<String>` a Form
+    /// TextField wants — empty text reads/writes as `nil`. The reducer re-trims on save.
+    private func optionalText(_ source: Binding<String?>) -> Binding<String> {
+        Binding(
+            get: { source.wrappedValue ?? "" },
+            set: { source.wrappedValue = $0.isEmpty ? nil : $0 }
+        )
+    }
+
+    private var budgetEditorSheet: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    HStack {
+                        Text("$").foregroundStyle(Color.inkSoft)
+                        TextField("48,000", text: $store.budgetDraft)
+                            .keyboardType(.numbersAndPunctuation)
+                            .accessibilityIdentifier("budget-target-field")
+                    }
+                } footer: {
+                    Text("What you're hoping to spend. We'll compare it against the quotes you've gathered.")
+                }
+                .listRowBackground(Color.familySurface)
+
+                if store.project.budgetTarget != nil {
+                    Section {
+                        Button(role: .destructive) { store.send(.clearBudget) } label: {
+                            Label("Clear budget", systemImage: "trash")
+                        }
+                    }
+                    .listRowBackground(Color.familySurface)
+                }
+            }
+            .scrollContentBackground(.hidden)
+            .background(Color.familyCanvas)
+            .navigationTitle("Budget")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { store.send(.dismissBudgetEditor) }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save") { store.send(.saveBudget) }
+                        .accessibilityIdentifier("save-budget-button")
+                }
+            }
+        }
+    }
+
     private var photoViewer: some View {
         ZStack {
             Color.black.ignoresSafeArea()
@@ -564,6 +794,130 @@ struct DocumentRow: View {
     }
 }
 
+// MARK: - Contact row
+
+/// One project contact: name + role/company, with tap-to-call / tap-to-email buttons and a quote
+/// chip when linked. Tapping the body opens the editor; the phone/email glyphs act independently.
+struct ContactRow: View {
+    let contact: ProjectContact
+    let onEdit: () -> Void
+    let onCall: () -> Void
+    let onEmail: () -> Void
+    let onDelete: () -> Void
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Button(action: onEdit) {
+                HStack(spacing: 10) {
+                    ZStack {
+                        Circle().fill(Color.terracotta.opacity(0.16)).frame(width: 34, height: 34)
+                        Text(initials)
+                            .font(.system(.caption, design: .rounded).weight(.bold))
+                            .foregroundStyle(Color.terracotta)
+                    }
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(contact.name)
+                            .font(.system(.subheadline, design: .rounded).weight(.semibold))
+                            .foregroundStyle(Color.ink)
+                            .lineLimit(1)
+                        if !contact.subtitle.isEmpty {
+                            Text(contact.subtitle)
+                                .font(.caption)
+                                .foregroundStyle(Color.inkSoft)
+                                .lineLimit(1)
+                        }
+                    }
+                    Spacer(minLength: 0)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            if contact.phoneURL != nil {
+                Button(action: onCall) {
+                    Image(systemName: "phone.fill")
+                        .font(.footnote.weight(.semibold))
+                        .foregroundStyle(Color.bacanGreen)
+                        .frame(width: 34, height: 34)
+                        .background(Circle().fill(Color.bacanGreen.opacity(0.12)))
+                }
+                .buttonStyle(.pressable)
+                .accessibilityIdentifier("contact-call")
+            }
+            if contact.emailURL != nil {
+                Button(action: onEmail) {
+                    Image(systemName: "envelope.fill")
+                        .font(.footnote.weight(.semibold))
+                        .foregroundStyle(Color.sky)
+                        .frame(width: 34, height: 34)
+                        .background(Circle().fill(Color.sky.opacity(0.12)))
+                }
+                .buttonStyle(.pressable)
+                .accessibilityIdentifier("contact-email")
+            }
+        }
+        .padding(12)
+        .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color.familyCanvas))
+        .contextMenu {
+            Button(action: onEdit) { Label("Edit", systemImage: "pencil") }
+            Button(role: .destructive, action: onDelete) { Label("Delete contact", systemImage: "trash") }
+        }
+    }
+
+    private var initials: String {
+        let parts = contact.name.split(separator: " ").prefix(2)
+        let letters = parts.compactMap { $0.first }.map(String.init).joined()
+        return letters.isEmpty ? "?" : letters.uppercased()
+    }
+}
+
+// MARK: - Quote row
+
+/// One quote in the Budget comparison: vendor/title + amount, with a "Low bid" badge on the cheapest.
+struct QuoteRow: View {
+    let doc: FamilyDomain.Document
+    let isCheapest: Bool
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: isCheapest ? "trophy.fill" : "doc.text")
+                .foregroundStyle(isCheapest ? Color.marigold : Color.sky)
+                .frame(width: 24)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(vendorLabel)
+                    .font(.system(.subheadline, design: .rounded).weight(.medium))
+                    .foregroundStyle(Color.ink)
+                    .lineLimit(1)
+                if isCheapest {
+                    Text("Low bid")
+                        .font(.system(.caption2, design: .rounded).weight(.bold))
+                        .foregroundStyle(Color.marigold)
+                }
+            }
+            Spacer(minLength: 8)
+            if let amount = doc.amount {
+                Text(amount, format: .currency(code: "USD").precision(.fractionLength(0)))
+                    .font(.system(.subheadline, design: .rounded).weight(.bold))
+                    .foregroundStyle(Color.ink)
+            }
+        }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(isCheapest ? Color.marigold.opacity(0.12) : Color.familyCanvas)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .strokeBorder(isCheapest ? Color.marigold.opacity(0.4) : .clear, lineWidth: 1)
+        )
+    }
+
+    private var vendorLabel: String {
+        if let vendor = doc.vendor, !vendor.isEmpty { return vendor }
+        return doc.title.isEmpty ? doc.type.displayName : doc.title
+    }
+}
+
 // MARK: - Suggestion row
 
 /// One suggested doc in the inbox: title/vendor/amount + **Add** (confirm) and **Dismiss** (wave off).
@@ -635,6 +989,38 @@ struct SuggestionRow: View {
             store: Store(
                 initialState: ProjectWorkspaceReducer.State(project: Project.previewSamples[0])
             ) {
+                ProjectWorkspaceReducer()
+            } withDependencies: {
+                $0.storage = .previewValue
+            }
+        )
+    }
+}
+
+#Preview("Budget & contacts") {
+    var project = Project.previewSamples[0]
+    project.budgetTarget = 60_000
+    project.contacts = [
+        ProjectContact(
+            name: "Dave Rivera", role: "Contractor", company: "Blue Haven Pools",
+            phone: "512-555-0148", email: "dave@bluehaven.example"
+        ),
+        ProjectContact(
+            name: "Maria Chen", role: "Sales", company: "Aqua Dreams",
+            phone: "512-555-0199", email: "maria@aquadreams.example"
+        ),
+        ProjectContact(name: "Sun Pools front desk", role: "Contractor"),
+    ]
+    var state = ProjectWorkspaceReducer.State(project: project)
+    // Three linked quote docs at different prices → the comparison + cheapest highlight.
+    state.documents = [
+        FamilyDomain.Document(title: "Blue Haven quote", type: .receipt, projectIds: [project.id], amount: 71_000, vendor: "Blue Haven Pools", uploadedBy: "preview"),
+        FamilyDomain.Document(title: "Aqua Dreams quote", type: .receipt, projectIds: [project.id], amount: 48_500, vendor: "Aqua Dreams", uploadedBy: "preview"),
+        FamilyDomain.Document(title: "Sun Pools quote", type: .receipt, projectIds: [project.id], amount: 63_200, vendor: "Sun Pools", uploadedBy: "preview"),
+    ]
+    return NavigationStack {
+        ProjectWorkspaceView(
+            store: Store(initialState: state) {
                 ProjectWorkspaceReducer()
             } withDependencies: {
                 $0.storage = .previewValue

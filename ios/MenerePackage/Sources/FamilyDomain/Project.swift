@@ -87,6 +87,85 @@ public struct ProjectLink: Codable, Equatable, Identifiable, Sendable {
     }
 }
 
+/// A **person the family is talking to** on a project — a pool contractor, a school's admissions
+/// office, an architect. Rows show name + role/company; phone/email are tappable (`tel:`/`mailto:`),
+/// and `linkedDocId` can pin the contact to one of the project's quote documents. Decode-safe
+/// Codable so older/partial docs still resolve.
+public struct ProjectContact: Codable, Equatable, Identifiable, Sendable {
+    public var id: String
+    public var name: String
+    /// What they are to us — "Contractor", "Admissions", "Architect", "Realtor".
+    public var role: String?
+    public var company: String?
+    public var phone: String?
+    public var email: String?
+    public var notes: String?
+    /// Optional `Document.id` of the quote/brochure this contact is tied to (from the project's docs).
+    public var linkedDocId: String?
+
+    public init(
+        id: String = UUID().uuidString,
+        name: String,
+        role: String? = nil,
+        company: String? = nil,
+        phone: String? = nil,
+        email: String? = nil,
+        notes: String? = nil,
+        linkedDocId: String? = nil
+    ) {
+        self.id = id
+        self.name = name
+        self.role = role
+        self.company = company
+        self.phone = phone
+        self.email = email
+        self.notes = notes
+        self.linkedDocId = linkedDocId
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decodeIfPresent(String.self, forKey: .id) ?? UUID().uuidString
+        name = try c.decodeIfPresent(String.self, forKey: .name) ?? ""
+        role = try c.decodeIfPresent(String.self, forKey: .role)
+        company = try c.decodeIfPresent(String.self, forKey: .company)
+        phone = try c.decodeIfPresent(String.self, forKey: .phone)
+        email = try c.decodeIfPresent(String.self, forKey: .email)
+        notes = try c.decodeIfPresent(String.self, forKey: .notes)
+        linkedDocId = try c.decodeIfPresent(String.self, forKey: .linkedDocId)
+    }
+
+    /// The best secondary line for a row: "Contractor · Blue Haven", role, company (else empty).
+    public var subtitle: String {
+        let r = role?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let co = company?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let role = (r?.isEmpty == false) ? r : nil
+        let company = (co?.isEmpty == false) ? co : nil
+        switch (role, company) {
+        case let (role?, company?): return "\(role) · \(company)"
+        case let (role?, nil): return role
+        case let (nil, company?): return company
+        default: return ""
+        }
+    }
+
+    /// A `tel:` URL for the phone, digits only (keeps a leading `+`), or nil.
+    public var phoneURL: URL? {
+        guard let phone, !phone.trimmingCharacters(in: .whitespaces).isEmpty else { return nil }
+        let digits = phone.filter { $0.isNumber || $0 == "+" }
+        guard !digits.isEmpty else { return nil }
+        return URL(string: "tel:\(digits)")
+    }
+
+    /// A `mailto:` URL for the email, or nil.
+    public var emailURL: URL? {
+        guard let email else { return nil }
+        let trimmed = email.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.contains("@") else { return nil }
+        return URL(string: "mailto:\(trimmed)")
+    }
+}
+
 /// One checklist item on a project ("Call three pool builders", "Tour Montessori open house").
 public struct ProjectTask: Codable, Equatable, Identifiable, Sendable {
     public var id: String
@@ -134,6 +213,12 @@ public struct Project: Codable, Equatable, Identifiable, Sendable {
     public var notes: String?
     /// Storage paths of the inspiration-board photos, in order.
     public var photoPaths: [String]?
+    /// The people the family is talking to on this project (contractors, admissions, realtors).
+    /// PR3 — decode-safe optional so older projects still resolve.
+    public var contacts: [ProjectContact]?
+    /// An optional budget the family is working toward — compared against the gathered quotes in the
+    /// workspace's Budget section. PR3 — decode-safe optional.
+    public var budgetTarget: Double?
 
     public init(
         id: String = UUID().uuidString,
@@ -146,7 +231,9 @@ public struct Project: Codable, Equatable, Identifiable, Sendable {
         links: [ProjectLink]? = nil,
         tasks: [ProjectTask]? = nil,
         notes: String? = nil,
-        photoPaths: [String]? = nil
+        photoPaths: [String]? = nil,
+        contacts: [ProjectContact]? = nil,
+        budgetTarget: Double? = nil
     ) {
         self.id = id
         self.name = name
@@ -159,6 +246,8 @@ public struct Project: Codable, Equatable, Identifiable, Sendable {
         self.tasks = tasks
         self.notes = notes
         self.photoPaths = photoPaths
+        self.contacts = contacts
+        self.budgetTarget = budgetTarget
     }
 
     public init(from decoder: Decoder) throws {
@@ -175,6 +264,8 @@ public struct Project: Codable, Equatable, Identifiable, Sendable {
         tasks = try c.decodeIfPresent([ProjectTask].self, forKey: .tasks)
         notes = try c.decodeIfPresent(String.self, forKey: .notes)
         photoPaths = try c.decodeIfPresent([String].self, forKey: .photoPaths)
+        contacts = try c.decodeIfPresent([ProjectContact].self, forKey: .contacts)
+        budgetTarget = try c.decodeIfPresent(Double.self, forKey: .budgetTarget)
     }
 
     /// The phase (kept as a computed twin of the decode fallback for call-site symmetry).
