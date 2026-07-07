@@ -60,6 +60,12 @@ public struct CareTask: Codable, Equatable, Identifiable, Sendable {
     /// hand-added tasks. Lets ``HomeHealthCalculator`` recognize a materialized maintenance task,
     /// find its category + interval, and score it in its frequency window. Decode-safe additive field.
     public var maintenanceTemplateID: String?
+    /// A "not yet — the soil's still damp" snooze (D1.5, Michael feedback): a manual push-out of the
+    /// next-due date WITHOUT marking the task done. When set to a **future** date, the effective due
+    /// becomes the *later* of the scheduled due and this — so a snoozed task reads as "snoozed · due
+    /// {date}", not overdue, until `snoozedUntil` arrives (then normal cadence resumes). Kind-agnostic
+    /// (any care can snooze). A past `snoozedUntil` is stale and ignored. Decode-safe additive field.
+    public var snoozedUntil: Date?
 
     public init(
         id: String = UUID().uuidString,
@@ -68,7 +74,8 @@ public struct CareTask: Codable, Equatable, Identifiable, Sendable {
         lastDoneAt: Date? = nil,
         lastDoneBy: String? = nil,
         firstDueAt: Date? = nil,
-        maintenanceTemplateID: String? = nil
+        maintenanceTemplateID: String? = nil,
+        snoozedUntil: Date? = nil
     ) {
         self.id = id
         self.title = title
@@ -77,6 +84,7 @@ public struct CareTask: Codable, Equatable, Identifiable, Sendable {
         self.lastDoneBy = lastDoneBy
         self.firstDueAt = firstDueAt
         self.maintenanceTemplateID = maintenanceTemplateID
+        self.snoozedUntil = snoozedUntil
     }
 
     public init(from decoder: Decoder) throws {
@@ -88,6 +96,7 @@ public struct CareTask: Codable, Equatable, Identifiable, Sendable {
         lastDoneBy = try c.decodeIfPresent(String.self, forKey: .lastDoneBy)
         firstDueAt = try c.decodeIfPresent(Date.self, forKey: .firstDueAt)
         maintenanceTemplateID = try c.decodeIfPresent(String.self, forKey: .maintenanceTemplateID)
+        snoozedUntil = try c.decodeIfPresent(Date.self, forKey: .snoozedUntil)
     }
 
     /// `true` when there's no cadence — seasonal / manual.
@@ -95,13 +104,35 @@ public struct CareTask: Codable, Equatable, Identifiable, Sendable {
 
     /// Computed next-due date. `lastDoneAt + intervalDays` once done; otherwise the `firstDueAt`
     /// anchor when set; `nil` for a manual task or an un-anchored never-done task (see
-    /// `daysUntilDue` for the never-done "due today" convention).
+    /// `daysUntilDue` for the never-done "due today" convention). A **future** ``snoozedUntil`` pushes
+    /// the due date out to the later of the two — "not yet, the soil's still damp".
     public var dueAt: Date? {
+        let scheduled = scheduledDueAt
+        // A future snooze defers the due date to the later of scheduled-due and the snooze anchor.
+        if let snoozedUntil {
+            let base = scheduled ?? .distantPast   // nil scheduled = "due now" → snooze wins
+            if snoozedUntil > base { return snoozedUntil }
+        }
+        return scheduled
+    }
+
+    /// The next-due date **before** any snooze — the raw cadence anchor. `nil` for a manual task or an
+    /// un-anchored never-done interval task (which reads as "due today").
+    public var scheduledDueAt: Date? {
         guard let intervalDays else { return nil }   // manual: never auto-due
         if let lastDoneAt {
             return Calendar.current.date(byAdding: .day, value: intervalDays, to: lastDoneAt)
         }
         return firstDueAt   // never done → explicit anchor, or nil ⇒ "due today" in daysUntilDue
+    }
+
+    /// `true` when a future ``snoozedUntil`` is currently deferring this task (the row shows
+    /// "snoozed · due {date}" instead of due/overdue). Drives snooze-aware row copy.
+    public func isSnoozed(now: Date = Date()) -> Bool {
+        guard let snoozedUntil, snoozedUntil > now else { return false }
+        // Only "snoozed" when the snooze is actually what's holding it back (later than the schedule).
+        let base = scheduledDueAt ?? .distantPast
+        return snoozedUntil > base
     }
 
     /// Whole days until due: `> 0` future, `0` due today, `< 0` overdue. `nil` for manual tasks.

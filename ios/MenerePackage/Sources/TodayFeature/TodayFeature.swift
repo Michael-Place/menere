@@ -111,6 +111,24 @@ public struct TodayReducer {
         var documents: [FamilyDomain.Document] = []
         /// House-care items — powers the "Home care" card (due/overdue care tasks).
         var careItems: [CareItem] = []
+        /// D1.5 — the in-flight care completion whose celebration is still playing. On Today the care
+        /// rows live in a **due-filtered** list, so applying the completion immediately would drop the
+        /// row and unmount the celebration mid-burst (why Michael saw Today never celebrate). Instead we
+        /// keep `careItems` untouched, hold the completion here, and COMMIT it (drop the row) after the
+        /// ~1.6s celebration window — which also gives the toast/tap an Undo target. Nil = idle.
+        var careCelebration: CareCelebrationSignal?
+
+        /// A pending care completion held during its celebration window (see ``careCelebration``).
+        struct CareCelebrationSignal: Equatable, Sendable {
+            var itemID: String
+            var taskID: String
+            /// The pre-completion item, restored verbatim on Undo.
+            var prior: CareItem
+            /// The optimistic activity id written by the completion, deleted on Undo.
+            var activityID: String?
+            /// Bumped per completion so an overlapping tap restarts the commit timer cleanly.
+            var nonce: Int
+        }
         /// One-shot leaderboard stats (the live stream stays Chores-tab machinery).
         var stats: [MemberStats] = []
         /// The signed-in member's first name (first whitespace token), or nil if unknown.
@@ -256,6 +274,15 @@ public struct TodayReducer {
         /// Mark a care task done from the Today "Home care" card. Behaves identically to the Home
         /// tab (shared ``CareCompletion`` logic + best-effort activity log).
         case markCareTaskDone(itemID: String, taskID: String)
+        /// D1.5 — apply the held completion after its celebration window (drops the now-done row). Carries
+        /// the outcome so overlapping completions each commit their own, not just the latest signal.
+        case commitCareDone(CareCompletion.Outcome, taskID: String)
+        /// D1.5 — reverse an accidental care completion: restore the prior stamp + delete its activity,
+        /// and cancel the pending commit (the celebration toast's Undo + the tap-to-toggle both route here).
+        case undoCareTaskDone(itemID: String, taskID: String)
+        /// D1.5 — "not yet, the soil's still damp": push this care task's next-due out `days` without
+        /// marking it done (kind-agnostic snooze via ``CareCompletion/snoozed(item:taskID:days:now:)``).
+        case snoozeCareTask(itemID: String, taskID: String, days: Int)
         /// Load/refresh the AI briefing. `force` bypasses the per-day server cache (refresh button).
         case loadBriefing(force: Bool)
         case briefingResponse(DailyBriefing?)
@@ -403,7 +430,7 @@ public struct TodayReducer {
 
     public init() {}
 
-    private enum CancelID { case briefing, drive, house, photoNudge, photoNudgeObserver }
+    private enum CancelID: Hashable { case briefing, drive, house, photoNudge, photoNudgeObserver, careCommit(String) }
 
     /// FL2 — the persisted "last acknowledged newest photo" watermark (epoch seconds). Everything
     /// created at-or-before it is considered already-seen, so a batch never re-nags after dismiss/act.
@@ -597,13 +624,79 @@ public struct TodayReducer {
                           item: state.careItems[i], taskID: taskID, byMemberID: uid, members: state.members
                       )
                 else { return .none }
-                // Same shared care-completion path as the Home tab (stamps who-did-it-last + a
-                // best-effort activity entry). Marking done recomputes the task's due date, so the
-                // row drops off this card immediately.
-                state.careItems[i] = outcome.updated
-                return .run { [outcome] _ in
+                // Same shared care-completion path as the Home tab (stamps who-did-it-last + a best-
+                // effort activity entry) AND persist it now. But DON'T mutate `careItems` yet: these rows
+                // live in a due-filtered list, so dropping the row now would unmount the celebration mid-
+                // burst (Michael's "Today doesn't celebrate"). Hold the completion and commit it after the
+                // ~1.6s window — the row stays mounted to celebrate, and the toast/tap get an Undo target.
+                let prior = state.careItems[i]
+                state.careCelebration = State.CareCelebrationSignal(
+                    itemID: itemID, taskID: taskID, prior: prior,
+                    activityID: outcome.activity?.id, nonce: (state.careCelebration?.nonce ?? 0) + 1
+                )
+                let key = "\(itemID)/\(taskID)"
+                return .merge(
+                    .run { [outcome] _ in
+                        @Dependency(\.persistence) var persistence
+                        try await persistence.writeCareDone(hid: hid, outcome)
+                    },
+                    .run { [outcome] send in
+                        try await Task.sleep(for: .milliseconds(1600))
+                        await send(.commitCareDone(outcome, taskID: taskID))
+                    }
+                    .cancellable(id: CancelID.careCommit(key), cancelInFlight: true)
+                )
+
+            case let .commitCareDone(outcome, taskID):
+                // The celebration window elapsed — now apply the stamped item so the done row drops off
+                // the due-filtered card (its next-due is in the future).
+                let itemID = outcome.updated.id
+                if let i = state.careItems.firstIndex(where: { $0.id == itemID }) {
+                    state.careItems[i] = outcome.updated
+                }
+                // Clear the signal only if it's still the one we just committed (a newer tap owns it).
+                if state.careCelebration?.itemID == itemID, state.careCelebration?.taskID == taskID {
+                    state.careCelebration = nil
+                }
+                return .none
+
+            case let .undoCareTaskDone(itemID, taskID):
+                guard let (hid, _) = ctx(), let signal = state.careCelebration,
+                      signal.itemID == itemID, signal.taskID == taskID else { return .none }
+                @Dependency(\.analytics) var analytics
+                analytics.log("care_marked_done_undone", ["surface": "today"])
+                // We never mutated `careItems`, so local state already shows the un-done item; just restore
+                // it verbatim to be safe, cancel the pending commit, and reverse the Firestore write.
+                if let i = state.careItems.firstIndex(where: { $0.id == itemID }) {
+                    state.careItems[i] = signal.prior
+                }
+                let prior = signal.prior
+                let activityID = signal.activityID
+                state.careCelebration = nil
+                let key = "\(itemID)/\(taskID)"
+                return .merge(
+                    .cancel(id: CancelID.careCommit(key)),
+                    .run { _ in
+                        @Dependency(\.persistence) var persistence
+                        try await persistence.saveCareItem(hid, prior)
+                        if let activityID { try? await persistence.deleteActivity(hid, activityID) }
+                    }
+                )
+
+            case let .snoozeCareTask(itemID, taskID, days):
+                guard let (hid, _) = ctx(),
+                      let i = state.careItems.firstIndex(where: { $0.id == itemID }),
+                      let updated = CareCompletion.snoozed(
+                          item: state.careItems[i], taskID: taskID, days: days
+                      )
+                else { return .none }
+                @Dependency(\.analytics) var analytics
+                analytics.log("care_snoozed", ["surface": "today", "days": String(days)])
+                // Snoozing pushes the next-due out, so the row leaves the due card — no celebration.
+                state.careItems[i] = updated
+                return .run { [updated] _ in
                     @Dependency(\.persistence) var persistence
-                    try await persistence.writeCareDone(hid: hid, outcome)
+                    try await persistence.saveCareItem(hid, updated)
                 }
 
             case let .loadBriefing(force):

@@ -59,6 +59,9 @@ public struct ChoresReducer {
             var taskTitle: String
             var priorLastDoneAt: Date?
             var priorLastDoneBy: String?
+            /// Prior "soil's still damp" snooze, so an undo restores the exact pre-completion task (a
+            /// completion clears the snooze — undo must put it back). Decode-safe additive capture.
+            var priorSnoozedUntil: Date?
             /// The optimistic activity entry inserted by the mark-done, popped back out on Undo.
             var activityID: String?
             /// Bumped per mark-done so the banner re-animates and restarts its auto-dismiss timer.
@@ -127,6 +130,9 @@ public struct ChoresReducer {
         case undoCareTaskDone
         /// P28 — dismiss the care-undo banner without reversing (tap-away / auto-timeout).
         case dismissCareUndo
+        /// D1.5 — "not yet, the soil's still damp": push this care task's next-due out `days` without
+        /// marking it done (kind-agnostic snooze via ``CareCompletion/snoozed(item:taskID:days:now:)``).
+        case snoozeCareTask(itemID: String, taskID: String, days: Int)
         /// P19-C2 — batch "water this room": mark the due Water task done for every plant in `location`
         /// (nil ⇒ the "no room yet" bucket) whose water is due, each via the shared ``CareCompletion``/
         /// `writeCareDone` path (server-consistent, one activity entry per plant).
@@ -452,6 +458,7 @@ public struct ChoresReducer {
                 // truly restore it (not just re-toggle to "now").
                 let priorAt = state.careItems[i].tasks[ti].lastDoneAt
                 let priorBy = state.careItems[i].tasks[ti].lastDoneBy
+                let priorSnooze = state.careItems[i].tasks[ti].snoozedUntil
                 let taskTitle = state.careItems[i].tasks[ti].title
                 let itemName = state.careItems[i].name
                 analytics.log("care_marked_done", ["kind": kind.rawValue])
@@ -465,23 +472,23 @@ public struct ChoresReducer {
                         try await persistence.writeCareDone(hid: hid, outcome)
                     }
                 ]
-                // The Home pets/plants ROSTER offers a one-tap mark-done; back it with a labeled Undo
-                // banner (legibility + reversibility). House/zone upkeep isn't rostered that way — leave
-                // it be so its behavior is unchanged.
-                if kind == .plant || kind == .pet {
-                    state.careUndo = State.CareUndo(
-                        itemID: itemID, taskID: taskID, itemName: itemName, taskTitle: taskTitle,
-                        priorLastDoneAt: priorAt, priorLastDoneBy: priorBy,
-                        activityID: outcome.activity?.id, nonce: (state.careUndo?.nonce ?? 0) + 1
-                    )
-                    effects.append(
-                        .run { send in
-                            try await Task.sleep(for: .seconds(6))
-                            await send(.dismissCareUndo)
-                        }
-                        .cancellable(id: CancelID.careUndo, cancelInFlight: true)
-                    )
-                }
+                // Arm a reversible-undo window for EVERY kind (D1.5 — Michael wants "unmark if I tapped
+                // it by accident" everywhere, so the celebration toast's Undo + the tap-to-toggle work on
+                // house/zone too). The pets/plants rosters also render a labeled Undo BANNER off this
+                // state (`.careUndoBanner`); house/zone screens don't attach the banner, so nothing new
+                // surfaces there — they just gain the toast/tap undo.
+                state.careUndo = State.CareUndo(
+                    itemID: itemID, taskID: taskID, itemName: itemName, taskTitle: taskTitle,
+                    priorLastDoneAt: priorAt, priorLastDoneBy: priorBy, priorSnoozedUntil: priorSnooze,
+                    activityID: outcome.activity?.id, nonce: (state.careUndo?.nonce ?? 0) + 1
+                )
+                effects.append(
+                    .run { send in
+                        try await Task.sleep(for: .seconds(6))
+                        await send(.dismissCareUndo)
+                    }
+                    .cancellable(id: CancelID.careUndo, cancelInFlight: true)
+                )
                 return .merge(effects)
 
             case .undoCareTaskDone:
@@ -497,6 +504,7 @@ public struct ChoresReducer {
                 // the restored item back through the same `saveCareItem` path the completion used.
                 state.careItems[i].tasks[ti].lastDoneAt = undo.priorLastDoneAt
                 state.careItems[i].tasks[ti].lastDoneBy = undo.priorLastDoneBy
+                state.careItems[i].tasks[ti].snoozedUntil = undo.priorSnoozedUntil
                 let undoneActivityID = undo.activityID
                 if let aid = undoneActivityID { state.activity.removeAll { $0.id == aid } }
                 let restored = state.careItems[i]
@@ -517,6 +525,22 @@ public struct ChoresReducer {
             case .dismissCareUndo:
                 state.careUndo = nil
                 return .cancel(id: CancelID.careUndo)
+
+            case let .snoozeCareTask(itemID, taskID, days):
+                guard let (hid, _) = ctx(),
+                      let i = state.careItems.firstIndex(where: { $0.id == itemID }),
+                      let updated = CareCompletion.snoozed(
+                          item: state.careItems[i], taskID: taskID, days: days
+                      )
+                else { return .none }
+                analytics.log("care_snoozed", ["kind": state.careItems[i].kind.rawValue, "days": String(days)])
+                // Snoozing pushes the next-due out without completing — the row re-sorts to "snoozed ·
+                // due {date}". Any pending undo banner for a *different* just-completed task is left alone.
+                state.careItems[i] = updated
+                return .run { [updated] _ in
+                    @Dependency(\.persistence) var persistence
+                    try await persistence.saveCareItem(hid, updated)
+                }
 
             case let .waterRoomDone(location):
                 guard let (hid, uid) = ctx() else { return .none }

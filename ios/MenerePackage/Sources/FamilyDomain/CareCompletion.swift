@@ -31,11 +31,28 @@ public enum CareCompletion {
         var updated = item
         updated.tasks[t].lastDoneAt = now
         updated.tasks[t].lastDoneBy = uid
+        // Actually doing the task clears any "soil's still damp" snooze so the normal cadence resumes
+        // from this completion (a snooze longer than the interval shouldn't outlive the real care).
+        updated.tasks[t].snoozedUntil = nil
         let actorName = members.first { $0.id == uid }?.name
         let activity = ActivityItem.careDone(
             item: item.name, task: item.tasks[t].title,
             by: actorName, actorID: uid, symbol: item.iconSymbol
         )
         return Outcome(updated: updated, activity: activity)
+    }
+
+    /// "Not yet — the soil's still damp" (D1.5): push the task's next-due out by `days` WITHOUT marking
+    /// it done. Sets ``CareTask/snoozedUntil`` to `days` from now; leaves `lastDoneAt`/`lastDoneBy`
+    /// untouched (no completion, no XP, no activity). Kind-agnostic — any care can snooze. Returns the
+    /// updated ``CareItem`` to persist via the usual `saveCareItem` path, or `nil` if the task is gone.
+    public static func snoozed(
+        item: CareItem, taskID: String, days: Int, now: Date = Date()
+    ) -> CareItem? {
+        guard let t = item.tasks.firstIndex(where: { $0.id == taskID }) else { return nil }
+        var updated = item
+        let target = Calendar.current.date(byAdding: .day, value: days, to: now) ?? now
+        updated.tasks[t].snoozedUntil = target
+        return updated
     }
 }

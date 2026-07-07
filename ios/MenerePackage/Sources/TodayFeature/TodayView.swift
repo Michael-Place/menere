@@ -797,11 +797,15 @@ public struct TodayView: View {
                     cardHeader("Care due", symbol: "checklist.checked")
                     VStack(spacing: 12) {
                         ForEach(Array(due.prefix(3))) { item in
-                            TodayCareRow(due: item) {
-                                store.send(.careRowTapped(itemID: item.item.id))
-                            } onMarkDone: {
-                                store.send(.markCareTaskDone(itemID: item.item.id, taskID: item.task.id))
-                            }
+                            TodayCareRow(
+                                due: item,
+                                isJustDone: store.careCelebration?.itemID == item.item.id
+                                    && store.careCelebration?.taskID == item.task.id,
+                                onOpen: { store.send(.careRowTapped(itemID: item.item.id)) },
+                                onMarkDone: { store.send(.markCareTaskDone(itemID: item.item.id, taskID: item.task.id)) },
+                                onUndo: { store.send(.undoCareTaskDone(itemID: item.item.id, taskID: item.task.id), animation: .snappy) },
+                                onSnooze: { days in store.send(.snoozeCareTask(itemID: item.item.id, taskID: item.task.id, days: days), animation: .snappy) }
+                            )
                         }
                     }
                 }
@@ -1155,9 +1159,16 @@ public struct TodayView: View {
 /// replays on each tap — same affordance as the Home tab's `CareRow`.
 private struct TodayCareRow: View {
     let due: CareItem.CareDue
+    /// D1.5 — this row's completion is still in its celebration/undo window (the reducer is holding it).
+    /// While true, a tap on the done glyph REVERSES it (toggle-to-undo) instead of re-completing.
+    var isJustDone: Bool = false
     /// Tap the row body → drill into the Home tab (where the plant/pet/upkeep item lives).
     let onOpen: () -> Void
     let onMarkDone: () -> Void
+    /// D1.5 — reverse an accidental completion (toast Undo + tap-to-toggle both call this).
+    var onUndo: () -> Void = {}
+    /// D1.5 — "not yet, the soil's still damp": push the next-due out N days without completing.
+    var onSnooze: (Int) -> Void = { _ in }
 
     /// Bumps on each mark-done tap → flavored burst + glyph morph + leading-icon bounce.
     @State private var careTrigger = 0
@@ -1188,15 +1199,34 @@ private struct TodayCareRow: View {
             }
             .buttonStyle(.pressable)
             Button {
-                onMarkDone()
-                careTrigger += 1
-                MenereHaptics.celebrate(style)
+                if isJustDone {
+                    // Toggle-to-undo: a second tap during the celebration window reverses the completion.
+                    MenereHaptics.softTap()
+                    onUndo()
+                } else {
+                    onMarkDone()
+                    careTrigger += 1
+                    MenereHaptics.celebrate(style)
+                }
             } label: {
                 CelebrationGlyph(trigger: careTrigger, style: style, size: 20)
             }
             .buttonStyle(.pressable)
-            .careCelebration(trigger: careTrigger, style: style, name: due.item.name)
-            .accessibilityLabel("Mark \(due.item.name) done")
+            .careCelebration(trigger: careTrigger, style: style, name: due.item.name, onUndo: onUndo)
+            .contextMenu {
+                Button { onSnooze(3) } label: {
+                    Label("Not yet — soil's still damp (+3 days)", systemImage: "moon.zzz")
+                }
+                Button { onSnooze(7) } label: {
+                    Label("Snooze a week", systemImage: "moon.zzz.fill")
+                }
+                if isJustDone {
+                    Button(role: .destructive) { onUndo() } label: {
+                        Label("Undo", systemImage: "arrow.uturn.backward")
+                    }
+                }
+            }
+            .accessibilityLabel(isJustDone ? "Undo \(due.item.name)" : "Mark \(due.item.name) done")
             .accessibilityIdentifier("today-care-mark-done-\(due.item.id)")
         }
     }
@@ -1356,17 +1386,40 @@ private struct CareRadarRow: View {
             .disabled(item.careItemID == nil)
             .accessibilityIdentifier("today-radar-care-open-\(item.id)")
             if item.isActionable, let careItemID = item.careItemID, let taskID = item.taskID {
+                let isJustDone = store.careCelebration?.itemID == careItemID
+                    && store.careCelebration?.taskID == taskID
                 Button {
-                    store.send(.radarCareItemMarkedDone(itemID: careItemID, taskID: taskID))
-                    careTrigger += 1
-                    MenereHaptics.celebrate(style)
+                    if isJustDone {
+                        MenereHaptics.softTap()
+                        store.send(.undoCareTaskDone(itemID: careItemID, taskID: taskID), animation: .snappy)
+                    } else {
+                        store.send(.radarCareItemMarkedDone(itemID: careItemID, taskID: taskID))
+                        careTrigger += 1
+                        MenereHaptics.celebrate(style)
+                    }
                 } label: {
                     CelebrationGlyph(trigger: careTrigger, style: style, size: 21)
                         .frame(width: 30, height: 30)
                 }
                 .buttonStyle(.pressable)
-                .careCelebration(trigger: careTrigger, style: style, name: item.label)
-                .accessibilityLabel(item.category == .plant ? "Water" : "Mark done")
+                .careCelebration(
+                    trigger: careTrigger, style: style, name: item.label,
+                    onUndo: { store.send(.undoCareTaskDone(itemID: careItemID, taskID: taskID), animation: .snappy) }
+                )
+                .contextMenu {
+                    Button { store.send(.snoozeCareTask(itemID: careItemID, taskID: taskID, days: 3), animation: .snappy) } label: {
+                        Label("Not yet — soil's still damp (+3 days)", systemImage: "moon.zzz")
+                    }
+                    Button { store.send(.snoozeCareTask(itemID: careItemID, taskID: taskID, days: 7), animation: .snappy) } label: {
+                        Label("Snooze a week", systemImage: "moon.zzz.fill")
+                    }
+                    if isJustDone {
+                        Button(role: .destructive) { store.send(.undoCareTaskDone(itemID: careItemID, taskID: taskID), animation: .snappy) } label: {
+                            Label("Undo", systemImage: "arrow.uturn.backward")
+                        }
+                    }
+                }
+                .accessibilityLabel(isJustDone ? "Undo" : (item.category == .plant ? "Water" : "Mark done"))
                 .accessibilityIdentifier("today-radar-care-done-\(item.id)")
             }
         }

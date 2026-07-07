@@ -264,6 +264,9 @@ private struct CareCelebration: ViewModifier {
     let trigger: Int
     let style: CelebrationStyle
     let name: String?
+    /// D1.5 — when provided, the reward toast grows a tappable **Undo** chip during its window, so an
+    /// accidental "watered" tap is reversible without hunting for a menu. `nil` ⇒ no undo affordance.
+    let onUndo: (() -> Void)?
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var toastText: String?
@@ -281,21 +284,38 @@ private struct CareCelebration: ViewModifier {
             // wide line grows leftward and can't run off the right screen edge.
             .overlay(alignment: .topTrailing) {
                 if let toastText {
-                    Text(toastText)
-                        .font(.system(.caption, design: .rounded).weight(.semibold))
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, 11)
-                        .padding(.vertical, 6)
-                        .background(
-                            Capsule(style: .continuous).fill(style.tint)
-                                .shadow(color: style.tint.opacity(0.35), radius: 6, y: 2)
-                        )
-                        .fixedSize()
-                        .offset(y: -34)
-                        .allowsHitTesting(false)
-                        .accessibilityHidden(true)
-                        .id(toastNonce)
-                        .transition(.scale(scale: 0.6, anchor: .bottomTrailing).combined(with: .opacity))
+                    HStack(spacing: 7) {
+                        Text(toastText)
+                            .accessibilityHidden(true)
+                        if onUndo != nil {
+                            // A hairline divider + a tappable Undo — the accidental-tap escape hatch.
+                            Rectangle().fill(.white.opacity(0.4)).frame(width: 1, height: 12)
+                            Button {
+                                withAnimation(.easeOut(duration: 0.2)) { self.toastText = nil }
+                                toastNonce += 1   // invalidate the pending auto-dismiss
+                                onUndo?()
+                            } label: {
+                                Text("Undo").underline()
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel("Undo")
+                            .accessibilityIdentifier("celebration-undo")
+                        }
+                    }
+                    .font(.system(.caption, design: .rounded).weight(.semibold))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 11)
+                    .padding(.vertical, 6)
+                    .background(
+                        Capsule(style: .continuous).fill(style.tint)
+                            .shadow(color: style.tint.opacity(0.35), radius: 6, y: 2)
+                    )
+                    .fixedSize()
+                    .offset(y: -34)
+                    // Hit-testable only when there's an Undo to tap; otherwise stays inert over the button.
+                    .allowsHitTesting(onUndo != nil)
+                    .id(toastNonce)
+                    .transition(.scale(scale: 0.6, anchor: .bottomTrailing).combined(with: .opacity))
                 }
             }
             .onChange(of: trigger) { _, newValue in
@@ -407,8 +427,10 @@ public extension View {
     /// on each advance of `trigger`. `style` picks the flavor; pass `name` so the toast can say
     /// "{first name} says thanks!". Pair with `MenereHaptics.celebrate(style)` in the button action and
     /// `CelebrationGlyph(trigger:style:)` for the icon. See ``CelebrationStyle`` / ``CelebrationBurst``.
-    func careCelebration(trigger: Int, style: CelebrationStyle, name: String? = nil) -> some View {
-        modifier(CareCelebration(trigger: trigger, style: style, name: name))
+    func careCelebration(
+        trigger: Int, style: CelebrationStyle, name: String? = nil, onUndo: (() -> Void)? = nil
+    ) -> some View {
+        modifier(CareCelebration(trigger: trigger, style: style, name: name, onUndo: onUndo))
     }
 
     /// A happy spring bounce for the cared-for thing's row/thumbnail. Drive with the same `trigger`

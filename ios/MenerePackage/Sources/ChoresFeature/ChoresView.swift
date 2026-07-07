@@ -41,12 +41,23 @@ private struct CelebrationMarkDonePill: View {
     let accessibilityText: String
     let identifier: String
     let onTap: () -> Void
+    /// D1.5 — completion still in its undo window: the pill flips to "Undo" and a tap reverses it.
+    var isJustDone: Bool = false
+    var onUndo: () -> Void = {}
+    var onSnooze: (Int) -> Void = { _ in }
 
     var body: some View {
-        Button(action: onTap) {
+        Button {
+            if isJustDone {
+                MenereHaptics.softTap()
+                onUndo()
+            } else {
+                onTap()
+            }
+        } label: {
             HStack(spacing: 5) {
                 CelebrationGlyph(trigger: trigger, style: style, size: 15)
-                Text(title)
+                Text(isJustDone ? "Undo" : title)
             }
             .font(.system(.footnote, design: .rounded).weight(.semibold))
             .foregroundStyle(style.tint)
@@ -55,9 +66,37 @@ private struct CelebrationMarkDonePill: View {
             .background(Capsule(style: .continuous).fill(style.tint.opacity(0.14)))
         }
         .buttonStyle(.pressable)
-        .careCelebration(trigger: trigger, style: style, name: name)
-        .accessibilityLabel(accessibilityText)
+        .careDoneAffordances(
+            trigger: trigger, style: style, name: name,
+            isJustDone: isJustDone, onUndo: onUndo, onSnooze: onSnooze
+        )
+        .accessibilityLabel(isJustDone ? "Undo \(accessibilityText)" : accessibilityText)
         .accessibilityIdentifier(identifier)
+    }
+}
+
+private extension View {
+    /// D1.5 — the shared interactivity every care mark-done control wears: the celebration toast's
+    /// **Undo** chip (reverse an accidental tap), a **snooze** context menu ("Not yet — soil's still
+    /// damp"), and an **Undo** menu entry while the completion is still in its window. Kind-agnostic.
+    func careDoneAffordances(
+        trigger: Int, style: CelebrationStyle, name: String?,
+        isJustDone: Bool, onUndo: @escaping () -> Void, onSnooze: @escaping (Int) -> Void
+    ) -> some View {
+        careCelebration(trigger: trigger, style: style, name: name, onUndo: onUndo)
+            .contextMenu {
+                Button { onSnooze(3) } label: {
+                    Label("Not yet — soil's still damp (+3 days)", systemImage: "moon.zzz")
+                }
+                Button { onSnooze(7) } label: {
+                    Label("Snooze a week", systemImage: "moon.zzz.fill")
+                }
+                if isJustDone {
+                    Button(role: .destructive, action: onUndo) {
+                        Label("Undo", systemImage: "arrow.uturn.backward")
+                    }
+                }
+            }
     }
 }
 
@@ -893,7 +932,10 @@ private struct HouseCareDetailView: View {
                             members: store.members,
                             onMarkDone: { taskID in
                                 store.send(.markCareTaskDone(itemID: item.id, taskID: taskID))
-                            }
+                            },
+                            isJustDone: store.careUndo?.itemID == item.id,
+                            onUndo: { store.send(.undoCareTaskDone, animation: .snappy) },
+                            onSnooze: { taskID, days in store.send(.snoozeCareTask(itemID: item.id, taskID: taskID, days: days), animation: .snappy) }
                         )
                     }
                 }
@@ -1301,7 +1343,10 @@ private struct PlantsDetailView: View {
                                 photo: item.photoPath.flatMap { store.carePhotos[$0] },
                                 onMarkDone: { taskID in
                                     store.send(.markCareTaskDone(itemID: item.id, taskID: taskID))
-                                }
+                                },
+                                undoingTaskID: store.careUndo?.itemID == item.id ? store.careUndo?.taskID : nil,
+                                onUndo: { store.send(.undoCareTaskDone, animation: .snappy) },
+                                onSnooze: { taskID, days in store.send(.snoozeCareTask(itemID: item.id, taskID: taskID, days: days), animation: .snappy) }
                             )
                         }
                     } header: {
@@ -1711,7 +1756,10 @@ private struct PlantDetailView: View {
                             members: store.members,
                             onMarkDone: {
                                 store.send(.markCareTaskDone(itemID: plant.id, taskID: task.id))
-                            }
+                            },
+                            isJustDone: store.careUndo?.itemID == plant.id && store.careUndo?.taskID == task.id,
+                            onUndo: { store.send(.undoCareTaskDone, animation: .snappy) },
+                            onSnooze: { days in store.send(.snoozeCareTask(itemID: plant.id, taskID: task.id, days: days), animation: .snappy) }
                         )
                     }
                 }
@@ -2068,6 +2116,12 @@ private struct PlantTaskRow: View {
     let plantName: String
     let members: [HouseholdMember]
     let onMarkDone: () -> Void
+    /// D1.5 — this task's completion is still in its 6s undo window (tap the glyph again to reverse).
+    var isJustDone: Bool = false
+    /// D1.5 — reverse an accidental completion (toast Undo + tap-to-toggle + context menu).
+    var onUndo: () -> Void = {}
+    /// D1.5 — "not yet, the soil's still damp": push the next-due out N days without completing.
+    var onSnooze: (Int) -> Void = { _ in }
 
     /// Bumps on each mark-done tap → flavored burst + glyph morph + the leading-glyph bounce.
     @State private var careTrigger = 0
@@ -2094,15 +2148,23 @@ private struct PlantTaskRow: View {
             // Every plant task now fires the flavored CelebrationKit celebration (water → droplets,
             // fertilize → leaf pop, re-pot → earth, etc.); the glyph morphs its flavor symbol → check.
             Button {
-                onMarkDone()
-                careTrigger += 1
-                MenereHaptics.celebrate(style)
+                if isJustDone {
+                    MenereHaptics.softTap()
+                    onUndo()
+                } else {
+                    onMarkDone()
+                    careTrigger += 1
+                    MenereHaptics.celebrate(style)
+                }
             } label: {
                 CelebrationGlyph(trigger: careTrigger, style: style, size: 20)
             }
             .buttonStyle(.pressable)
-            .careCelebration(trigger: careTrigger, style: style, name: plantName)
-            .accessibilityLabel("\(task.title) \(plantName)")
+            .careDoneAffordances(
+                trigger: careTrigger, style: style, name: plantName,
+                isJustDone: isJustDone, onUndo: onUndo, onSnooze: onSnooze
+            )
+            .accessibilityLabel(isJustDone ? "Undo \(task.title) \(plantName)" : "\(task.title) \(plantName)")
             .accessibilityIdentifier("plant-task-done-\(task.id)")
         }
     }
@@ -2111,7 +2173,10 @@ private struct PlantTaskRow: View {
     @ViewBuilder
     private var dueLine: some View {
         let days = task.daysUntilDue()
-        if let d = days, d < 0 {
+        if task.isSnoozed(), let until = task.snoozedUntil {
+            Label("Snoozed · due \(until.formatted(.dateTime.month(.abbreviated).day()))", systemImage: "moon.zzz.fill")
+                .font(.caption).foregroundStyle(Color.inkSoft)
+        } else if let d = days, d < 0 {
             Text("Overdue by \(-d) day\(-d == 1 ? "" : "s")")
                 .font(.caption).fontWeight(.semibold).foregroundStyle(Color.terracotta)
         } else if days == 0 {
@@ -2217,6 +2282,10 @@ private struct CareDetailTaskRow: View {
     /// The item's name, so the reward toast can say "{Name} says thanks!". `nil` ⇒ generic voice.
     var name: String? = nil
     let onMarkDone: () -> Void
+    /// D1.5 — completion still in its undo window (tap the glyph again to reverse).
+    var isJustDone: Bool = false
+    var onUndo: () -> Void = {}
+    var onSnooze: (Int) -> Void = { _ in }
 
     /// Bumps on each mark-done tap → flavored burst + glyph morph + leading-glyph bounce.
     @State private var careTrigger = 0
@@ -2238,15 +2307,23 @@ private struct CareDetailTaskRow: View {
             Spacer(minLength: 4)
 
             Button {
-                onMarkDone()
-                careTrigger += 1
-                MenereHaptics.celebrate(style)
+                if isJustDone {
+                    MenereHaptics.softTap()
+                    onUndo()
+                } else {
+                    onMarkDone()
+                    careTrigger += 1
+                    MenereHaptics.celebrate(style)
+                }
             } label: {
                 CelebrationGlyph(trigger: careTrigger, style: style, size: 20)
             }
             .buttonStyle(.pressable)
-            .careCelebration(trigger: careTrigger, style: style, name: name)
-            .accessibilityLabel("Mark \(task.title) done")
+            .careDoneAffordances(
+                trigger: careTrigger, style: style, name: name,
+                isJustDone: isJustDone, onUndo: onUndo, onSnooze: onSnooze
+            )
+            .accessibilityLabel(isJustDone ? "Undo \(task.title)" : "Mark \(task.title) done")
             .accessibilityIdentifier("care-detail-task-done-\(task.id)")
         }
     }
@@ -2254,7 +2331,10 @@ private struct CareDetailTaskRow: View {
     @ViewBuilder
     private var dueLine: some View {
         let days = task.daysUntilDue()
-        if days == nil {
+        if task.isSnoozed(), let until = task.snoozedUntil {
+            Label("Snoozed · due \(until.formatted(.dateTime.month(.abbreviated).day()))", systemImage: "moon.zzz.fill")
+                .font(.caption).foregroundStyle(Color.inkSoft)
+        } else if days == nil {
             // Seasonal / manual (no cadence).
             if task.lastDoneAt != nil {
                 Text(doneText).font(.caption).foregroundStyle(Color.inkSoft)
@@ -2568,7 +2648,10 @@ private struct PetDetailView: View {
                             name: pet.name,
                             onMarkDone: {
                                 store.send(.markCareTaskDone(itemID: pet.id, taskID: task.id))
-                            }
+                            },
+                            isJustDone: store.careUndo?.itemID == pet.id && store.careUndo?.taskID == task.id,
+                            onUndo: { store.send(.undoCareTaskDone, animation: .snappy) },
+                            onSnooze: { days in store.send(.snoozeCareTask(itemID: pet.id, taskID: task.id, days: days), animation: .snappy) }
                         )
                     }
                 }
@@ -2942,7 +3025,10 @@ private struct CareItemDetailView: View {
                             name: item.name,
                             onMarkDone: {
                                 store.send(.markCareTaskDone(itemID: item.id, taskID: task.id))
-                            }
+                            },
+                            isJustDone: store.careUndo?.itemID == item.id && store.careUndo?.taskID == task.id,
+                            onUndo: { store.send(.undoCareTaskDone, animation: .snappy) },
+                            onSnooze: { days in store.send(.snoozeCareTask(itemID: item.id, taskID: task.id, days: days), animation: .snappy) }
                         )
                     }
                 }
@@ -2984,7 +3070,10 @@ private struct YardDetailView: View {
                         members: store.members,
                         onMarkDone: { taskID in
                             store.send(.markCareTaskDone(itemID: item.id, taskID: taskID))
-                        }
+                        },
+                        isJustDone: store.careUndo?.itemID == item.id,
+                        onUndo: { store.send(.undoCareTaskDone, animation: .snappy) },
+                        onSnooze: { taskID, days in store.send(.snoozeCareTask(itemID: item.id, taskID: taskID, days: days), animation: .snappy) }
                     )
                 }
                 if !remainingYardStarters.isEmpty, !store.yardSuggestionsDismissed {
@@ -3165,7 +3254,10 @@ private struct PetsDetailView: View {
                         expiringDoc: expiringDoc(for: item),
                         onMarkDone: { taskID in
                             store.send(.markCareTaskDone(itemID: item.id, taskID: taskID))
-                        }
+                        },
+                        undoingTaskID: store.careUndo?.itemID == item.id ? store.careUndo?.taskID : nil,
+                        onUndo: { store.send(.undoCareTaskDone, animation: .snappy) },
+                        onSnooze: { taskID, days in store.send(.snoozeCareTask(itemID: item.id, taskID: taskID, days: days), animation: .snappy) }
                     )
                 }
                 if !remainingPackStarters.isEmpty, !store.petSuggestionsDismissed {
@@ -3487,11 +3579,25 @@ private struct PlantRow: View {
     /// Cached photo bytes for `item.photoPath`, if loaded. `nil` ⇒ leaf fallback.
     let photo: Data?
     let onMarkDone: (_ taskID: String) -> Void
+    /// D1.5 — the task id currently inside its 6s undo window for THIS item (nil ⇒ none). Keeps the
+    /// mark-done pill mounted (as "Undo") through the celebration + undo window instead of vanishing the
+    /// instant the task's due date recomputes (which was cutting the roster celebration short).
+    var undoingTaskID: String? = nil
+    var onUndo: () -> Void = {}
+    var onSnooze: (_ taskID: String, _ days: Int) -> Void = { _, _ in }
 
     /// Bumps on each mark-done tap → drives the flavored burst, the glyph morph, and the thumbnail bounce.
     @State private var careTrigger = 0
 
     private var soonest: CareTask? { item.soonestDueTask() }
+
+    /// The task the mark-done pill acts on: the soonest actionable one, or — during its undo window —
+    /// the just-completed task (so the pill/celebration stay mounted long enough to play + be undone).
+    private var pillTask: CareTask? {
+        if let s = soonest, (s.daysUntilDue() ?? 0) <= 0, !s.isSnoozed() { return s }
+        if let id = undoingTaskID { return item.tasks.first { $0.id == id } }
+        return nil
+    }
 
     var body: some View {
         HStack(spacing: 12) {
@@ -3517,7 +3623,7 @@ private struct PlantRow: View {
             // Legibility (P28): a LABELED pill — not a bare glyph — shown only when the soonest task is
             // actionable. The label names the exact task the tap completes (matched preset verb); the
             // CelebrationKit flavors the burst by that verb (water → droplets, fertilize → leaf, etc.).
-            if let task = soonest, (task.daysUntilDue() ?? 0) <= 0 {
+            if let task = pillTask {
                 let preset = PlantCarePreset.matching(task.title)
                 let style = CelebrationStyle.forCare(kind: .plant, taskTitle: task.title)
                 CelebrationMarkDonePill(
@@ -3531,7 +3637,10 @@ private struct PlantRow: View {
                         onMarkDone(task.id)
                         careTrigger += 1
                         MenereHaptics.celebrate(style)
-                    }
+                    },
+                    isJustDone: undoingTaskID == task.id,
+                    onUndo: onUndo,
+                    onSnooze: { days in onSnooze(task.id, days) }
                 )
             }
         }
@@ -3580,7 +3689,10 @@ private struct PlantRow: View {
     private var dueLine: some View {
         if let task = soonest {
             let days = task.daysUntilDue()
-            if let d = days, d < 0 {
+            if task.isSnoozed(), let until = task.snoozedUntil {
+                Label("\(task.title) snoozed · due \(until.formatted(.dateTime.month(.abbreviated).day()))", systemImage: "moon.zzz.fill")
+                    .font(.caption).foregroundStyle(Color.inkSoft)
+            } else if let d = days, d < 0 {
                 Text("\(task.title) overdue by \(-d) day\(-d == 1 ? "" : "s")")
                     .font(.caption).fontWeight(.semibold).foregroundStyle(Color.terracotta)
             } else if days == 0 {
@@ -3639,11 +3751,23 @@ private struct PetRow: View {
     /// The soonest linked Family-Brain doc expiring within 30 days (P10) — shows a terracotta chip.
     let expiringDoc: FamilyDomain.Document?
     let onMarkDone: (_ taskID: String) -> Void
+    /// D1.5 — the task id in its undo window for THIS pet (keeps the pill mounted as "Undo").
+    var undoingTaskID: String? = nil
+    var onUndo: () -> Void = {}
+    var onSnooze: (_ taskID: String, _ days: Int) -> Void = { _, _ in }
 
     /// Bumps on each mark-done tap → paw burst + glyph morph + the pet's thumbnail bounce.
     @State private var careTrigger = 0
 
     private var soonest: CareTask? { item.soonestDueTask() }
+
+    /// The task the pill acts on: the soonest actionable one, or the just-completed task during its
+    /// undo window (so the celebration + Undo stay mounted rather than vanishing on the due recompute).
+    private var pillTask: CareTask? {
+        if let s = soonest, (s.daysUntilDue() ?? 0) <= 0, !s.isSnoozed() { return s }
+        if let id = undoingTaskID { return item.tasks.first { $0.id == id } }
+        return nil
+    }
 
     var body: some View {
         HStack(spacing: 12) {
@@ -3675,7 +3799,7 @@ private struct PetRow: View {
             // Legibility (P28): a LABELED "Mark done" pill instead of a bare check, shown only when the
             // soonest task is actually actionable (due/overdue/manual). The row's due-line names the
             // task ("Flea & tick due today"); this pill names the action, tying the two together.
-            if let task = soonest, (task.daysUntilDue() ?? 0) <= 0 {
+            if let task = pillTask {
                 CelebrationMarkDonePill(
                     style: .pet,
                     title: "Mark done",
@@ -3687,7 +3811,10 @@ private struct PetRow: View {
                         onMarkDone(task.id)
                         careTrigger += 1
                         MenereHaptics.celebrate(.pet)
-                    }
+                    },
+                    isJustDone: undoingTaskID == task.id,
+                    onUndo: onUndo,
+                    onSnooze: { days in onSnooze(task.id, days) }
                 )
             }
         }
@@ -3713,7 +3840,10 @@ private struct PetRow: View {
     private var dueLine: some View {
         if let task = soonest {
             let days = task.daysUntilDue()
-            if days == nil {
+            if task.isSnoozed(), let until = task.snoozedUntil {
+                Label("\(task.title) snoozed · due \(until.formatted(.dateTime.month(.abbreviated).day()))", systemImage: "moon.zzz.fill")
+                    .font(.caption).foregroundStyle(Color.inkSoft)
+            } else if days == nil {
                 if task.lastDoneAt != nil {
                     Text(doneText(task)).font(.caption).foregroundStyle(Color.inkSoft)
                 } else {
@@ -3756,6 +3886,10 @@ private struct CareRow: View {
     let item: CareItem
     let members: [HouseholdMember]
     let onMarkDone: (_ taskID: String) -> Void
+    /// D1.5 — the soonest task's completion is still in its undo window.
+    var isJustDone: Bool = false
+    var onUndo: () -> Void = {}
+    var onSnooze: (_ taskID: String, _ days: Int) -> Void = { _, _ in }
 
     /// Bumps on each mark-done tap → wrench burst + glyph morph + the leading-icon bounce.
     @State private var careTrigger = 0
@@ -3793,15 +3927,23 @@ private struct CareRow: View {
 
             if let task = soonest {
                 Button {
-                    onMarkDone(task.id)
-                    careTrigger += 1
-                    MenereHaptics.celebrate(style)
+                    if isJustDone {
+                        MenereHaptics.softTap()
+                        onUndo()
+                    } else {
+                        onMarkDone(task.id)
+                        careTrigger += 1
+                        MenereHaptics.celebrate(style)
+                    }
                 } label: {
                     CelebrationGlyph(trigger: careTrigger, style: style, size: 22)
                 }
                 .buttonStyle(.pressable)
-                .careCelebration(trigger: careTrigger, style: style, name: item.name)
-                .accessibilityLabel("Mark done")
+                .careDoneAffordances(
+                    trigger: careTrigger, style: style, name: item.name,
+                    isJustDone: isJustDone, onUndo: onUndo, onSnooze: { days in onSnooze(task.id, days) }
+                )
+                .accessibilityLabel(isJustDone ? "Undo" : "Mark done")
                 .accessibilityIdentifier("care-mark-done-\(item.id)")
             }
         }
@@ -3812,7 +3954,10 @@ private struct CareRow: View {
     private var dueLine: some View {
         if let task = soonest {
             let days = task.daysUntilDue()
-            if days == nil {
+            if task.isSnoozed(), let until = task.snoozedUntil {
+                Label("Snoozed · due \(until.formatted(.dateTime.month(.abbreviated).day()))", systemImage: "moon.zzz.fill")
+                    .font(.caption).foregroundStyle(Color.inkSoft)
+            } else if days == nil {
                 // Seasonal / manual.
                 if task.lastDoneAt != nil {
                     Text(doneText(task)).font(.caption).foregroundStyle(Color.inkSoft)
