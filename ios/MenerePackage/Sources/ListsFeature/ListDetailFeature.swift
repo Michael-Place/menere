@@ -16,6 +16,23 @@ public struct ListDetailReducer {
         var isLoading = false
         var newItemTitle = ""
 
+        // Delight Layer (D2) — bumped by `.toggle` ONLY on the check that flips the whole list to
+        // all-complete (never on a re-render of an already-done list). Drives the "list done!"
+        // ConfettiBurst + banner in the view via `.listDoneCelebration(trigger:flavor:)`.
+        var listDoneTrigger = 0
+
+        /// Maps the list's kind → the celebration flavor (copy + confetti color). Check-off lists
+        /// (grocery/packing/gift/wishlist/standard) can complete via the check button; projects
+        /// complete via status so this is effectively inert for them.
+        var doneFlavor: ListDoneFlavor {
+            if list.isGrocery { .grocery }
+            else if list.isPacking { .packing }
+            else if list.isGift { .gift }
+            else if list.isProject { .project }
+            else if list.isWishlist { .wishlist }
+            else { .standard }
+        }
+
         // Grocery specialization (P30) — only used when `list.isGrocery`.
         /// Live aisle guess for the item being typed (shown as a hint under the field).
         var suggestedCategory: GroceryCategory?
@@ -341,8 +358,21 @@ public struct ListDetailReducer {
 
             case let .toggle(item):
                 guard let hid = hid(), let idx = state.items.firstIndex(where: { $0.id == item.id }) else { return .none }
+                // Was the whole list already done before this tap? (Guards the celebration so it fires
+                // ONLY on the check that completes the list — never re-checking within an already-done list.)
+                let wasAllComplete = !state.items.isEmpty && state.items.allSatisfy(\.isCompleted)
                 state.items[idx].isCompleted.toggle()
                 let updated = state.items[idx]
+                let nowAllComplete = !state.items.isEmpty && state.items.allSatisfy(\.isCompleted)
+                @Dependency(\.analytics) var analytics
+                if updated.isCompleted {
+                    analytics.log("list_item_checked")
+                    // Delight: this checking tap just flipped the list to all-done → fire "list done!".
+                    if nowAllComplete && !wasAllComplete {
+                        state.listDoneTrigger += 1
+                        analytics.log("list_completed")
+                    }
+                }
                 let listTitle = state.list.title
                 @Shared(.user) var user
                 let actorID = user?.id
@@ -441,6 +471,9 @@ public struct ListDetailView: View {
         }
         .scrollContentBackground(.hidden)
         .background(Color.familyCanvas)
+        // Delight Layer (D2) — the whole-list "list done!" celebration (confetti + warm banner +
+        // success haptic), fired only on the check that completes the list. See ListDoneCelebration.
+        .listDoneCelebration(trigger: store.listDoneTrigger, flavor: store.doneFlavor)
         .navigationTitle(store.list.title)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
@@ -492,6 +525,8 @@ public struct ListDetailView: View {
             }
             .listRowBackground(Color.familySurface)
         }
+        // Delight (D2) — animate the strike-through + fade as an item flips completed.
+        .animation(.snappy(duration: 0.3), value: store.items.map(\.isCompleted))
     }
 
     // MARK: - Grocery (aisle-grouped)
