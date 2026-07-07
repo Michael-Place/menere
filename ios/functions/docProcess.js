@@ -21,7 +21,13 @@ const admin = require("firebase-admin");
 
 const TZ = "America/New_York";
 const MODEL = "claude-sonnet-5"; // user-chosen for extraction accuracy; do NOT downgrade
+// Cheap secondary pass that guesses which family Project a freshly-extracted doc belongs to.
+// Extraction stays on Sonnet; this routing decision matches the app's other lightweight classifiers.
+const PROJECT_MATCH_MODEL = "claude-haiku-4-5-20251001";
 const STORAGE_BUCKET = "menere.firebasestorage.app";
+
+/** Project phases that are still "active" (worth suggesting docs into). Only `done` is excluded. */
+const ACTIVE_PROJECT_PHASES = new Set(["dreaming", "researching", "deciding", "inProgress"]);
 
 /** The 7 Document.type raw values (must mirror FamilyDomain.DocumentType). */
 const DOC_TYPES = ["receipt", "medical", "school", "pet", "tax", "manual", "other"];
@@ -175,6 +181,135 @@ async function callClaude(apiKey, contentBlocks, memberNames, petNames) {
   throw new Error("Claude returned no record_document tool call");
 }
 
+// ---------------------------------------------------------------------------
+// Project auto-tagging (PR2-A): suggest which active Project a doc belongs to.
+// ---------------------------------------------------------------------------
+
+const PROJECT_MATCH_TOOL = {
+  name: "match_project",
+  description: "Pick which family project (if any) a scanned document most likely belongs to.",
+  input_schema: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      projectId: {
+        type: ["string", "null"],
+        description:
+          "The id of the SINGLE best-matching project, copied exactly from the provided list. " +
+          "Use null when no project is a clear, confident match — most documents belong to no project.",
+      },
+      confidence: {
+        type: "string",
+        enum: ["low", "medium", "high"],
+        description: "How confident you are that this document belongs to the chosen project.",
+      },
+    },
+    required: ["projectId", "confidence"],
+  },
+};
+
+const PROJECT_MATCH_SYSTEM = `You file a scanned family document against the family's ongoing "projects" (big undertakings like building a pool or moving a kid to a new school).
+
+You are given a numbered list of active projects (id, name, summary) and a summary of one document (title, type, vendor, tags, summary, and some text). Decide which ONE project the document most likely belongs to, if any.
+
+Rules:
+- Return projectId ONLY when the document clearly relates to that project (e.g. a pool-builder quote → the "Pool" project). Copy the id EXACTLY from the list.
+- Most documents belong to NO project. When there is no obvious, confident fit, return projectId=null.
+- Never guess to be helpful. A generic grocery receipt, a routine medical bill, or an unrelated manual belongs to no project.
+- Match on real signal: vendor/company, subject matter, and named things — not superficial word overlap.`;
+
+/**
+ * Truncate a string to a byte-ish budget of characters (defensive, keeps the match prompt small).
+ */
+function clip(value, max) {
+  const s = String(value || "").trim();
+  return s.length > max ? s.slice(0, max) : s;
+}
+
+/**
+ * Best-effort project suggestion. Reads active projects, asks Claude (haiku) for the single best
+ * confident match, and sets `document.suggestedProjectId` when there is one. NEVER throws — a failure
+ * here must not fail the (already-succeeded) extraction, and NEVER writes `projectIds` (that is the
+ * user's in-app confirm). Idempotent: skips entirely if the doc already has confirmed `projectIds`.
+ *
+ * @returns {Promise<string|null>} the suggested project id that was written, or null if none.
+ */
+async function suggestProjectForDocument({ db, hid, docRef, existing, fields, apiKey }) {
+  try {
+    // Never touch a user-confirmed doc: if it's already filed into a project, leave it alone.
+    if (Array.isArray(existing.projectIds) && existing.projectIds.length > 0) return null;
+
+    const projectsSnap = await db.collection("households").doc(hid).collection("projects").get();
+    const projects = [];
+    projectsSnap.forEach((p) => {
+      const data = p.data() || {};
+      const name = String(data.name || "").trim();
+      if (!name) return;
+      const phase = String(data.status || "dreaming");
+      if (!ACTIVE_PROJECT_PHASES.has(phase)) return; // skip finished projects
+      projects.push({ id: p.id, name, summary: String(data.summary || "").trim() });
+    });
+    if (projects.length === 0) return null; // nothing to match against
+
+    // Compose a compact document signal from the just-extracted fields (+ the stored title).
+    const title = clip(fields.title || existing.title, 200);
+    const docText =
+      `Title: ${title || "(none)"}\n` +
+      `Type: ${fields.type || "other"}\n` +
+      `Vendor: ${clip(fields.vendor, 200) || "(none)"}\n` +
+      `Tags: ${(Array.isArray(fields.tags) ? fields.tags : []).join(", ") || "(none)"}\n` +
+      `Summary: ${clip(fields.summary, 800) || "(none)"}\n` +
+      `Text: ${clip(fields.extractedText, 2000) || "(none)"}`;
+
+    const projectList = projects
+      .map((p, i) => `${i + 1}. id="${p.id}" name="${p.name}"${p.summary ? ` — ${p.summary}` : ""}`)
+      .join("\n");
+
+    const client = new Anthropic({ apiKey });
+    const response = await client.messages.create({
+      model: PROJECT_MATCH_MODEL,
+      max_tokens: 256,
+      system: PROJECT_MATCH_SYSTEM,
+      tools: [PROJECT_MATCH_TOOL],
+      tool_choice: { type: "tool", name: PROJECT_MATCH_TOOL.name },
+      messages: [
+        {
+          role: "user",
+          content: [
+            {
+              type: "text",
+              text: `Active projects:\n${projectList}\n\nDocument:\n${docText}\n\nWhich project (if any) does this document belong to?`,
+            },
+          ],
+        },
+      ],
+    });
+
+    let out = null;
+    for (const block of response.content) {
+      if (block.type === "tool_use" && block.name === PROJECT_MATCH_TOOL.name) {
+        out = block.input || {};
+        break;
+      }
+    }
+    if (!out) return null;
+
+    const matchedId = typeof out.projectId === "string" ? out.projectId.trim() : "";
+    const confidence = String(out.confidence || "low");
+    const isActiveMatch = projects.some((p) => p.id === matchedId);
+    // Confidence gate: only a medium/high match to a real active project is written.
+    if (!matchedId || !isActiveMatch || confidence === "low") return null;
+
+    await docRef.set({ suggestedProjectId: matchedId }, { merge: true });
+    console.log(`[docs] suggested project ${matchedId} for ${docRef.id} (confidence=${confidence})`);
+    return matchedId;
+  } catch (err) {
+    // Best-effort only: never fail the document over a suggestion miss.
+    console.error(`[docs] project-match skipped for ${docRef.id}: ${err.message}`);
+    return null;
+  }
+}
+
 /**
  * Process one document: download pages → Claude → write fields + processingState.
  * @returns {Promise<{ processed: true, type: string }>}
@@ -294,6 +429,12 @@ async function processDocument({ db, hid, docId, apiKey }) {
 
     await docRef.set(update, { merge: true });
     console.log(`[docs] processed ${docId} type=${type} pets=${linkedPetIds.length}`);
+
+    // Additive PR2-A step: after extraction, suggest which active Project this doc belongs to.
+    // Best-effort + non-throwing — a suggestion miss never affects the (already-written) extraction.
+    // Only sets `suggestedProjectId`; never `projectIds` (the user's in-app confirm).
+    await suggestProjectForDocument({ db, hid, docRef, existing, fields: update, apiKey });
+
     return { processed: true, type };
   } catch (err) {
     // Never leave a document stuck pending.
@@ -303,4 +444,4 @@ async function processDocument({ db, hid, docId, apiKey }) {
   }
 }
 
-module.exports = { processDocument };
+module.exports = { processDocument, suggestProjectForDocument };
