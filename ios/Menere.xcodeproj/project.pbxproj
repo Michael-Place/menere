@@ -41,6 +41,7 @@
 		8EBA5033EF9B3BC1F2AE952C /* SonosConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = E714E577085262D09AC5902B /* SonosConfig.swift */; };
 		8F32233B05205413D8FE7C8C /* FirebaseFirestore in Frameworks */ = {isa = PBXBuildFile; productRef = 2EC83C04476003B3D236444F /* FirebaseFirestore */; };
 		948A18AFB934C7562390CE62 /* ScrapbookModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE603AB6159CFD1A772999AF /* ScrapbookModel.swift */; };
+		9B87B9D5DB7316254C031AAF /* Project.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0B37E0868B1C06BE161D66F0 /* Project.swift */; };
 		A2F561060373BD62A5286909 /* PetCareKB.swift in Sources */ = {isa = PBXBuildFile; fileRef = 57916759B4EA1587C7404406 /* PetCareKB.swift */; };
 		A5AD6D47683CD03037F4F5F1 /* PairingModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2EF2CFACD02341431996F7D2 /* PairingModel.swift */; };
 		AAFC2791683ED6C9039999A7 /* ProjectStatus.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6DE766E6C2FDC7DA1174037C /* ProjectStatus.swift */; };
@@ -102,6 +103,7 @@
 /* Begin PBXFileReference section */
 		021B13671F3612A8DDCC1CB0 /* HomeHealthCalculator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeHealthCalculator.swift; sourceTree = "<group>"; };
 		08F285A502E1A20235564141 /* PlantCareKB.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlantCareKB.swift; sourceTree = "<group>"; };
+		0B37E0868B1C06BE161D66F0 /* Project.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Project.swift; sourceTree = "<group>"; };
 		10637CAB4F7D384F2C095E15 /* Document.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Document.swift; sourceTree = "<group>"; };
 		10C75C49A04F868236585DC6 /* CommandCenterView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommandCenterView.swift; sourceTree = "<group>"; };
 		1214F0961F23D14C880CE37E /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
@@ -266,6 +268,7 @@
 				FB220CDC37FA24455C19B864 /* PackingTemplate.swift */,
 				57916759B4EA1587C7404406 /* PetCareKB.swift */,
 				08F285A502E1A20235564141 /* PlantCareKB.swift */,
+				0B37E0868B1C06BE161D66F0 /* Project.swift */,
 				6DE766E6C2FDC7DA1174037C /* ProjectStatus.swift */,
 				1D9312CCDBB55C7CC370B379 /* Recipe.swift */,
 				9EB043CC3187116569905E74 /* SavingsGoal.swift */,
@@ -562,6 +565,7 @@
 				A5AD6D47683CD03037F4F5F1 /* PairingModel.swift in Sources */,
 				A2F561060373BD62A5286909 /* PetCareKB.swift in Sources */,
 				E8A4B02A1B6298CF4C31217D /* PlantCareKB.swift in Sources */,
+				9B87B9D5DB7316254C031AAF /* Project.swift in Sources */,
 				AAFC2791683ED6C9039999A7 /* ProjectStatus.swift in Sources */,
 				73A60D73A8F48B3ED3E6367A /* Recipe.swift in Sources */,
 				C865BDC48CE60ED95C1F1C5F /* RootView.swift in Sources */,
@@ -702,7 +706,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = ShareExtension/ShareExtension.entitlements;
-				CURRENT_PROJECT_VERSION = 54;
+				CURRENT_PROJECT_VERSION = 55;
 				DEVELOPMENT_TEAM = Z2FNFL3X73;
 				INFOPLIST_FILE = ShareExtension/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -710,7 +714,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 1.46.0;
+				MARKETING_VERSION = 1.47.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.copoche.menere.share;
 				PRODUCT_MODULE_NAME = BacanShareExtension;
 				PRODUCT_NAME = BacanShareExtension;
@@ -724,7 +728,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = ShareExtension/ShareExtension.entitlements;
-				CURRENT_PROJECT_VERSION = 54;
+				CURRENT_PROJECT_VERSION = 55;
 				DEVELOPMENT_TEAM = Z2FNFL3X73;
 				INFOPLIST_FILE = ShareExtension/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -732,7 +736,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 1.46.0;
+				MARKETING_VERSION = 1.47.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.copoche.menere.share;
 				PRODUCT_MODULE_NAME = BacanShareExtension;
 				PRODUCT_NAME = BacanShareExtension;
@@ -811,14 +815,14 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = App/Menere.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
-				CURRENT_PROJECT_VERSION = 54;
+				CURRENT_PROJECT_VERSION = 55;
 				DEVELOPMENT_TEAM = Z2FNFL3X73;
 				INFOPLIST_FILE = App/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.46.0;
+				MARKETING_VERSION = 1.47.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.copoche.menere;
 				SDKROOT = iphoneos;
 				SWIFT_VERSION = 5.0;
@@ -832,14 +836,14 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = App/Menere.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
-				CURRENT_PROJECT_VERSION = 54;
+				CURRENT_PROJECT_VERSION = 55;
 				DEVELOPMENT_TEAM = Z2FNFL3X73;
 				INFOPLIST_FILE = App/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.46.0;
+				MARKETING_VERSION = 1.47.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.copoche.menere;
 				SDKROOT = iphoneos;
 				SWIFT_VERSION = 5.0;
