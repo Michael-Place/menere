@@ -1655,6 +1655,7 @@ private struct PlantDetailView: View {
                     ForEach(plant.tasks) { task in
                         PlantTaskRow(
                             task: task,
+                            plantName: plant.name,
                             members: store.members,
                             onMarkDone: {
                                 store.send(.markCareTaskDone(itemID: plant.id, taskID: task.id))
@@ -2011,10 +2012,15 @@ private struct PlantDetailView: View {
 /// ``CareCompletion``/`writeCareDone` path (server-consistent, logs activity with the right verb).
 private struct PlantTaskRow: View {
     let task: CareTask
+    let plantName: String
     let members: [HouseholdMember]
     let onMarkDone: () -> Void
 
     @State private var unfurlOn = false
+    /// Bumps on each water tap → droplet burst + glyph morph + the leading-glyph bounce.
+    @State private var waterTrigger = 0
+
+    private var isWater: Bool { PlantCarePreset.matching(task.title) == .water }
 
     var body: some View {
         HStack(spacing: 12) {
@@ -2024,6 +2030,7 @@ private struct PlantTaskRow: View {
                     .font(.subheadline).foregroundStyle(Color.bacanGreen)
             }
             .frame(width: 38, height: 38)
+            .plantBounce(trigger: waterTrigger) // the glyph perks up on watering
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(task.title).foregroundStyle(Color.ink)
@@ -2032,19 +2039,34 @@ private struct PlantTaskRow: View {
 
             Spacer(minLength: 4)
 
-            Button {
-                onMarkDone()
-                unfurlOn = true
-                Task { try? await Task.sleep(for: .milliseconds(800)); unfurlOn = false }
-            } label: {
-                Image(systemName: "checkmark.circle.fill")
-                    .font(.title3)
-                    .foregroundStyle(Color.bacanGreen)
-                    .leafUnfurl(isOn: unfurlOn, color: .bacanGreen)
+            if isWater {
+                // The dopamine path: watering fires the full celebration; the glyph morphs drop → check.
+                Button {
+                    onMarkDone()
+                    waterTrigger += 1
+                    MenereHaptics.water()
+                } label: {
+                    WaterGlyph(trigger: waterTrigger, size: 20, restSymbol: "drop.fill", tint: .sky)
+                }
+                .buttonStyle(.pressable)
+                .waterCelebration(trigger: waterTrigger, plantName: plantName)
+                .accessibilityLabel("Water \(plantName)")
+                .accessibilityIdentifier("plant-task-done-\(task.id)")
+            } else {
+                Button {
+                    onMarkDone()
+                    unfurlOn = true
+                    Task { try? await Task.sleep(for: .milliseconds(800)); unfurlOn = false }
+                } label: {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.title3)
+                        .foregroundStyle(Color.bacanGreen)
+                        .leafUnfurl(isOn: unfurlOn, color: .bacanGreen)
+                }
+                .buttonStyle(.pressable)
+                .accessibilityLabel("Mark \(task.title) done")
+                .accessibilityIdentifier("plant-task-done-\(task.id)")
             }
-            .buttonStyle(.pressable)
-            .accessibilityLabel("Mark \(task.title) done")
-            .accessibilityIdentifier("plant-task-done-\(task.id)")
         }
     }
 
@@ -3398,6 +3420,36 @@ private struct CareMarkDonePill: View {
     }
 }
 
+/// The plant WATER affordance (the dopamine one): a labeled sky pill whose glyph morphs drop → check,
+/// firing the full ``WaterBurst`` celebration (droplets + ripple) and a rotating cheerful toast on
+/// each tap. The parent owns `trigger` (so the plant's thumbnail can bounce off the same tap) and, in
+/// its `onTap`, bumps it + calls `MenereHaptics.water()` after routing through `markCareTaskDone`.
+private struct WaterMarkDonePill: View {
+    let title: String
+    let plantName: String
+    let trigger: Int
+    let identifier: String
+    let onTap: () -> Void
+
+    var body: some View {
+        Button(action: onTap) {
+            HStack(spacing: 5) {
+                WaterGlyph(trigger: trigger, size: 15, restSymbol: "drop.fill", tint: .sky)
+                Text(title)
+            }
+            .font(.system(.footnote, design: .rounded).weight(.semibold))
+            .foregroundStyle(Color.sky)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 7)
+            .background(Capsule(style: .continuous).fill(Color.sky.opacity(0.14)))
+        }
+        .buttonStyle(.pressable)
+        .waterCelebration(trigger: trigger, plantName: plantName)
+        .accessibilityLabel("Water \(plantName)")
+        .accessibilityIdentifier(identifier)
+    }
+}
+
 /// The reversible "Marked {task} done · Undo" banner (P28) shown over the Home pets/plants rosters
 /// after a one-tap completion. Reads ``ChoresReducer/State/careUndo`` (armed by `markCareTaskDone`);
 /// Undo sends `undoCareTaskDone`, which restores the task's captured PRIOR done-stamp. Auto-dismisses
@@ -3465,6 +3517,9 @@ private struct PlantRow: View {
     let photo: Data?
     let onMarkDone: (_ taskID: String) -> Void
 
+    /// Bumps on each water tap → drives the droplet burst, the glyph morph, and the thumbnail bounce.
+    @State private var waterTrigger = 0
+
     private var soonest: CareTask? { item.soonestDueTask() }
 
     var body: some View {
@@ -3474,6 +3529,7 @@ private struct PlantRow: View {
                     thumbnail
                         .frame(width: 44, height: 44)
                         .clipShape(Circle())
+                        .plantBounce(trigger: waterTrigger) // the plant perks up when watered
                     VStack(alignment: .leading, spacing: 2) {
                         Text(item.name).foregroundStyle(Color.ink)
                         speciesLine
@@ -3492,15 +3548,31 @@ private struct PlantRow: View {
             // completes (matched preset verb, e.g. "Water"/"Fertilize"), so it's clear on a glance.
             if let task = soonest, (task.daysUntilDue() ?? 0) <= 0 {
                 let preset = PlantCarePreset.matching(task.title)
-                CareMarkDonePill(
-                    title: preset?.title ?? "Mark done",
-                    icon: PlantCarePreset.symbol(forTitle: task.title),
-                    tint: .bacanGreen,
-                    motion: .leaf,
-                    accessibilityText: "\(preset?.title ?? "Mark done") \(item.name)",
-                    identifier: "plant-mark-done-\(item.id)",
-                    onTap: { onMarkDone(task.id) }
-                )
+                if preset == .water {
+                    // The dopamine path: watering fires the full celebration (burst + ripple + toast +
+                    // haptic) and the glyph morphs drop → check. Non-water plant care keeps the pill.
+                    WaterMarkDonePill(
+                        title: "Water",
+                        plantName: item.name,
+                        trigger: waterTrigger,
+                        identifier: "plant-mark-done-\(item.id)",
+                        onTap: {
+                            onMarkDone(task.id)
+                            waterTrigger += 1
+                            MenereHaptics.water()
+                        }
+                    )
+                } else {
+                    CareMarkDonePill(
+                        title: preset?.title ?? "Mark done",
+                        icon: PlantCarePreset.symbol(forTitle: task.title),
+                        tint: .bacanGreen,
+                        motion: .leaf,
+                        accessibilityText: "\(preset?.title ?? "Mark done") \(item.name)",
+                        identifier: "plant-mark-done-\(item.id)",
+                        onTap: { onMarkDone(task.id) }
+                    )
+                }
             }
         }
     }

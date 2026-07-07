@@ -1133,6 +1133,10 @@ private struct TodayCareRow: View {
     let onMarkDone: () -> Void
 
     @State private var slapOn = false
+    /// Bumps on each water tap → droplet burst + glyph morph + leading-icon bounce (plants only).
+    @State private var waterTrigger = 0
+
+    private var isPlant: Bool { due.item.kind == .plant }
 
     var body: some View {
         HStack(spacing: 12) {
@@ -1146,6 +1150,7 @@ private struct TodayCareRow: View {
                         .font(.subheadline)
                         .foregroundStyle(due.isOverdue ? Color.terracotta : Color.bacanGreen)
                         .frame(width: 22)
+                        .plantBounce(trigger: waterTrigger) // the plant perks up when watered
                     Text(due.item.name)
                         .foregroundStyle(Color.ink)
                         .lineLimit(1)
@@ -1155,22 +1160,34 @@ private struct TodayCareRow: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.pressable)
-            Button {
-                onMarkDone()
-                slapOn = true
-                Task { try? await Task.sleep(for: .milliseconds(800)); slapOn = false }
-            } label: {
-                // Plants unfurl a droplet; house upkeep keeps the sticker-slap.
-                let isPlant = due.item.kind == .plant
-                Image(systemName: isPlant ? "drop.fill" : "checkmark.circle.fill")
-                    .font(.title3)
-                    .foregroundStyle(Color.bacanGreen)
-                    .stickerSlap(isOn: isPlant ? false : slapOn, color: .bacanGreen)
-                    .leafUnfurl(isOn: isPlant ? slapOn : false, color: .bacanGreen)
+            if isPlant {
+                // The dopamine path: watering fires the full celebration; the glyph morphs drop → check.
+                Button {
+                    onMarkDone()
+                    waterTrigger += 1
+                    MenereHaptics.water()
+                } label: {
+                    WaterGlyph(trigger: waterTrigger, size: 20, restSymbol: "drop.fill", tint: .sky)
+                }
+                .buttonStyle(.pressable)
+                .waterCelebration(trigger: waterTrigger, plantName: due.item.name)
+                .accessibilityLabel("Water \(due.item.name)")
+                .accessibilityIdentifier("today-care-mark-done-\(due.item.id)")
+            } else {
+                Button {
+                    onMarkDone()
+                    slapOn = true
+                    Task { try? await Task.sleep(for: .milliseconds(800)); slapOn = false }
+                } label: {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.title3)
+                        .foregroundStyle(Color.bacanGreen)
+                        .stickerSlap(isOn: slapOn, color: .bacanGreen)
+                }
+                .buttonStyle(.pressable)
+                .accessibilityLabel("Mark done")
+                .accessibilityIdentifier("today-care-mark-done-\(due.item.id)")
             }
-            .buttonStyle(.pressable)
-            .accessibilityLabel(due.item.kind == .plant ? "Water" : "Mark done")
-            .accessibilityIdentifier("today-care-mark-done-\(due.item.id)")
         }
     }
 
