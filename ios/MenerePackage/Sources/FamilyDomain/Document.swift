@@ -80,6 +80,10 @@ public struct Document: Codable, Equatable, Identifiable, Sendable {
     /// which links to a `.project` *list item*. Decode-safe optional (older docs → nil); the AI
     /// pipeline never writes it, so it survives re-processing.
     public var projectIds: [String]?
+    /// The Project the ingestion pipeline *guessed* this doc belongs to (PR2) — an unconfirmed AI
+    /// suggestion (matched by vendor/keywords against active projects). The user confirms it (→
+    /// `projectIds`) or dismisses it. Decode-safe optional; cleared once confirmed/dismissed.
+    public var suggestedProjectId: String?
     /// The date printed on the document itself (invoice date, visit date), if detected.
     public var docDate: Date?
     /// An actionable due date (a bill due, a form deadline) → can suggest a calendar event.
@@ -119,6 +123,7 @@ public struct Document: Codable, Equatable, Identifiable, Sendable {
         linkedCareItemIds: [String]? = nil,
         linkedProjectItemIds: [String]? = nil,
         projectIds: [String]? = nil,
+        suggestedProjectId: String? = nil,
         docDate: Date? = nil,
         dueDate: Date? = nil,
         expiryDate: Date? = nil,
@@ -142,6 +147,7 @@ public struct Document: Codable, Equatable, Identifiable, Sendable {
         self.linkedCareItemIds = linkedCareItemIds
         self.linkedProjectItemIds = linkedProjectItemIds
         self.projectIds = projectIds
+        self.suggestedProjectId = suggestedProjectId
         self.docDate = docDate
         self.dueDate = dueDate
         self.expiryDate = expiryDate
@@ -187,6 +193,7 @@ public struct Document: Codable, Equatable, Identifiable, Sendable {
         linkedCareItemIds = try c.decodeIfPresent([String].self, forKey: .linkedCareItemIds)
         linkedProjectItemIds = try c.decodeIfPresent([String].self, forKey: .linkedProjectItemIds)
         projectIds = try c.decodeIfPresent([String].self, forKey: .projectIds)
+        suggestedProjectId = try c.decodeIfPresent(String.self, forKey: .suggestedProjectId)
         docDate = try c.decodeIfPresent(Date.self, forKey: .docDate)
         dueDate = try c.decodeIfPresent(Date.self, forKey: .dueDate)
         expiryDate = try c.decodeIfPresent(Date.self, forKey: .expiryDate)
