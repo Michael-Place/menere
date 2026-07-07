@@ -551,6 +551,14 @@ never spammy/guilt-y). Rollout:
   daily check-in 🔥) + "Today: all done 🌟" caught-up states + savings-goal milestones + Radar
   "all caught up". Keep it positive, never guilt-inducing.
 Sequence: D0 (now) → D1 (kit + care) solo → D2 (3 parallel: chores/lists/milestones) → D3 streaks.
+- **D1.5 — watering interaction (Michael feedback 2026-07-07), AFTER D1:** (a) COVERAGE AUDIT —
+  the celebration must fire at EVERY mark-watered/care-done site (D0 only hit Home/plant-detail;
+  Michael says Today doesn't celebrate — verify Today care card + Radar "needs attention" button
+  + roster/overview + anywhere else). (b) UNDO — an "Undo" action in the celebration toast +
+  make an already-done item un-doable (revert lastDoneAt + remove the activity, reuse the
+  care-undo/deleteActivity path). (c) DELAY — a "Not yet — soil's still damp" option that pushes
+  the care task's next-due out N days WITHOUT marking done (add a snooze/`snoozedUntil` or
+  bump nextDue on CareTask; kind-agnostic so it works for any care).
 
 # Motion & Delight (2026-07-06, Michael requested)
 - **Tab load-in animations:** each tab plays a signature staggered entrance on cold launch + on
