@@ -85,6 +85,13 @@ public struct MemoriesReducer {
         public var onThisDayPhotos: [OnThisDayPhotoGroup] = []
         /// FL3 — thumbnail bytes for the on-this-day photo strip, keyed by asset id.
         public var onThisDayThumbs: [String: Data] = [:]
+        /// FL3-dismiss — device-local (persisted) signatures of on-this-day *groups* the family waved off
+        /// as not memory-worthy; skipped on render. Hydrated from @AppStorage on `.task`, written through
+        /// on dismiss. No Firestore — this stays on the device.
+        public var dismissedOnThisDayGroups: Set<String> = []
+        /// FL3-dismiss — device-local (persisted) asset IDs individually waved off ("Not this one");
+        /// filtered out of any group they appear in (and out of make-a-memory).
+        public var dismissedOnThisDayAssets: Set<String> = []
         @Presents public var editor: MemoryEditorReducer.State?
         /// FL4 — the "People" (tag-a-face) sheet.
         @Presents public var faceTagging: FaceTaggingReducer.State?
@@ -119,6 +126,11 @@ public struct MemoriesReducer {
         case connectPhotosTapped
         /// FL3 — "Make a memory from these" on a year's on-this-day photos.
         case makeMemoryFromOnThisDay(yearsAgo: Int)
+        /// FL3-dismiss — the family waved off a whole year's on-this-day suggestion card (the × control);
+        /// its exact photo set stays hidden forever.
+        case dismissOnThisDayGroup(yearsAgo: Int)
+        /// FL3-dismiss — long-press "Not this one" removed a single photo from a suggestion.
+        case dismissOnThisDayAsset(id: String)
         /// The Memories-tab button AND the Today quick-action both send this to open a fresh page.
         case captureMomentTapped
         case memoryTapped(Memory)
@@ -171,6 +183,32 @@ public struct MemoriesReducer {
     static let onThisDayYearSpan = 5
     /// FL3 — ± window (in calendar days) around today's day when matching this-date-across-years.
     static let onThisDayWindowDays = 1
+
+    /// FL3-dismiss — @AppStorage keys for the device-local "not memory-worthy" dismissals (persist across
+    /// launches; never Firestore). Group = a whole year's suggestion card; Asset = a single bad photo.
+    static let dismissedGroupsKey = "memories.onThisDay.dismissedGroups"
+    static let dismissedAssetsKey = "memories.onThisDay.dismissedAssets"
+
+    /// FL3-dismiss — a stable, launch-independent signature for an on-this-day group: an order-independent
+    /// FNV-1a hash of its asset IDs. Because the signature *is* the exact photo set, dismissing hides
+    /// *those* photos forever, while a genuinely different set on a future day still surfaces. (Swift's
+    /// `hashValue` is per-run seeded, so we roll our own deterministic hash for persistence.)
+    static func onThisDayGroupSignature(_ assetIDs: [String]) -> String {
+        let joined = assetIDs.sorted().joined(separator: "\u{1}")
+        var hash: UInt64 = 0xcbf2_9ce4_8422_2325
+        for byte in joined.utf8 {
+            hash ^= UInt64(byte)
+            hash = hash &* 0x0000_0100_0000_01b3
+        }
+        return String(hash, radix: 16)
+    }
+
+    /// FL3-dismiss — serialize/parse a dismissal set for @AppStorage. Newline-joined; signatures are hex
+    /// and PhotoKit local IDs never contain a newline, so the round-trip is lossless + robust.
+    static func encodeDismissals(_ set: Set<String>) -> String { set.sorted().joined(separator: "\n") }
+    static func decodeDismissals(_ raw: String) -> Set<String> {
+        Set(raw.split(separator: "\n").map(String.init))
+    }
 
     /// FL3 — fetch the library photos taken on today's day, `1…span` years back. Runs off the main
     /// actor (PhotoKit is thread-safe for fetches); returns only the years that actually have photos.
@@ -227,6 +265,12 @@ public struct MemoriesReducer {
             switch action {
             case .task:
                 analytics.log("memories_opened")
+                // FL3-dismiss — hydrate the device-local "not memory-worthy" dismissals so waved-off cards
+                // (and photos) stay hidden across launches. Reads @AppStorage; no Firestore.
+                @Shared(.appStorage(Self.dismissedGroupsKey)) var dismissedGroupsRaw = ""
+                @Shared(.appStorage(Self.dismissedAssetsKey)) var dismissedAssetsRaw = ""
+                state.dismissedOnThisDayGroups = Self.decodeDismissals(dismissedGroupsRaw)
+                state.dismissedOnThisDayAssets = Self.decodeDismissals(dismissedAssetsRaw)
                 let now = date.now
                 // FL3 — resolve photo authorization (no prompt) and, if we can read, load this-date
                 // photos. Runs alongside the memory load; it's independent of the household.
@@ -334,7 +378,9 @@ public struct MemoriesReducer {
             case let .makeMemoryFromOnThisDay(yearsAgo):
                 guard let group = state.onThisDayPhotos.first(where: { $0.yearsAgo == yearsAgo }),
                       !group.assets.isEmpty else { return .none }
-                let assetIDs = group.assets.map(\.id)
+                // Honor any "Not this one" per-photo dismissals so a waved-off shot never lands in the page.
+                let assetIDs = group.assets.map(\.id).filter { !state.dismissedOnThisDayAssets.contains($0) }
+                guard !assetIDs.isEmpty else { return .none }
                 // Date the new page to the day those photos were actually taken (fallback: the anchor).
                 let memoryDate = group.assets.first?.creationDate ?? group.date
                 let memory = Memory(date: memoryDate, createdBy: uid() ?? "")
@@ -346,6 +392,25 @@ public struct MemoriesReducer {
                 // Reuse the editor's existing browse→memory load path (loadFullImage → downscale → slot);
                 // Save then uploads through StorageClient exactly like a hand-picked memory.
                 return .send(.editor(.presented(.libraryAssetsPicked(assetIDs))))
+
+            case let .dismissOnThisDayGroup(yearsAgo):
+                // Wave off a whole year's card. Key the dismissal off the ORIGINAL full photo set so it's
+                // stable regardless of any per-photo removals, then write it through to @AppStorage.
+                guard let group = state.onThisDayPhotos.first(where: { $0.yearsAgo == yearsAgo }) else { return .none }
+                let signature = Self.onThisDayGroupSignature(group.assets.map(\.id))
+                state.dismissedOnThisDayGroups.insert(signature)
+                analytics.log("onthisday_group_dismissed", ["yearsAgo": String(yearsAgo)])
+                @Shared(.appStorage(Self.dismissedGroupsKey)) var raw = ""
+                $raw.withLock { $0 = Self.encodeDismissals(state.dismissedOnThisDayGroups) }
+                return .none
+
+            case let .dismissOnThisDayAsset(id):
+                // "Not this one" — hide just this photo (keeps the good ones in the group).
+                state.dismissedOnThisDayAssets.insert(id)
+                analytics.log("onthisday_photo_dismissed")
+                @Shared(.appStorage(Self.dismissedAssetsKey)) var raw = ""
+                $raw.withLock { $0 = Self.encodeDismissals(state.dismissedOnThisDayAssets) }
+                return .none
 
             case .captureMomentTapped:
                 let memory = Memory(date: date.now, createdBy: uid() ?? "")

@@ -1,6 +1,7 @@
 import ComposableArchitecture
 import FamilyDomain
 import MenereUI
+import Photos
 import PhotoLibraryClient
 import SwiftUI
 import UIKit
@@ -171,11 +172,25 @@ public struct MemoriesView: View {
     private var onThisDayBuckets: [(yearsAgo: Int, memories: [Memory], group: OnThisDayPhotoGroup?)] {
         (1...MemoriesReducer.onThisDayYearSpan).compactMap { yearsAgo in
             let memories = memoriesOnThisDay(yearsAgo: yearsAgo)
-            let group = store.onThisDayPhotos.first { $0.yearsAgo == yearsAgo }
-            let hasPhotos = group.map { !$0.assets.isEmpty } ?? false
-            guard !memories.isEmpty || hasPhotos else { return nil }
-            return (yearsAgo, memories, hasPhotos ? group : nil)
+            let group = visibleOnThisDayGroup(yearsAgo: yearsAgo)
+            guard !memories.isEmpty || group != nil else { return nil }
+            return (yearsAgo, memories, group)
         }
+    }
+
+    /// FL3-dismiss — the on-this-day photo group for a year, honoring device-local dismissals: `nil` when
+    /// the whole card was waved off (its signature is dismissed) or every photo in it was individually
+    /// removed; otherwise the group with any "Not this one" photos filtered out. The whole-card signature
+    /// keys off the ORIGINAL full photo set (matching the reducer), so it stays stable across per-photo
+    /// removals.
+    private func visibleOnThisDayGroup(yearsAgo: Int) -> OnThisDayPhotoGroup? {
+        guard let group = store.onThisDayPhotos.first(where: { $0.yearsAgo == yearsAgo }),
+              !group.assets.isEmpty else { return nil }
+        let signature = MemoriesReducer.onThisDayGroupSignature(group.assets.map(\.id))
+        if store.dismissedOnThisDayGroups.contains(signature) { return nil }
+        let kept = group.assets.filter { !store.dismissedOnThisDayAssets.contains($0.id) }
+        guard !kept.isEmpty else { return nil }
+        return OnThisDayPhotoGroup(yearsAgo: group.yearsAgo, date: group.date, assets: kept)
     }
 
     /// Memories whose date lands on today's calendar day `yearsAgo` years back (± the on-this-day
@@ -280,6 +295,24 @@ public struct MemoriesView: View {
             RoundedRectangle(cornerRadius: 18, style: .continuous)
                 .strokeBorder(Color.terracotta.opacity(0.25), lineWidth: 1.5)
         )
+        // FL3-dismiss — a quiet × to wave off a suggestion that isn't memory-worthy (feet, a cooler…).
+        .overlay(alignment: .topTrailing) {
+            Button {
+                store.send(.dismissOnThisDayGroup(yearsAgo: group.yearsAgo), animation: .snappy)
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 11, weight: .bold, design: .rounded))
+                    .foregroundStyle(Color.inkSoft)
+                    .padding(7)
+                    .background(Circle().fill(Color.familyCanvas))
+                    .overlay(Circle().strokeBorder(Color.terracotta.opacity(0.25), lineWidth: 1))
+                    .shadow(color: .black.opacity(0.10), radius: 2, x: 0, y: 1)
+            }
+            .buttonStyle(.plain)
+            .padding(8)
+            .accessibilityLabel("Not memory-worthy — dismiss this suggestion")
+            .accessibilityIdentifier("memories-on-this-day-dismiss-\(group.yearsAgo)")
+        }
     }
 
     private func onThisDayThumb(_ asset: PhotoAsset, tiltSeed: Int) -> some View {
@@ -304,6 +337,14 @@ public struct MemoriesView: View {
         .rotationEffect(.degrees(Scrapbook.tilt(for: "otd\(tiltSeed)", max: 4)))
         .shadow(color: .black.opacity(0.10), radius: 4, x: 0, y: 2)
         .accessibilityIdentifier("memories-on-this-day-photo")
+        // FL3-dismiss — long-press a single shot to drop just it ("3 good + 1 bad" keeps the good).
+        .contextMenu {
+            Button(role: .destructive) {
+                store.send(.dismissOnThisDayAsset(id: asset.id), animation: .snappy)
+            } label: {
+                Label("Not this one", systemImage: "hand.thumbsdown")
+            }
+        }
     }
 
     private var onThisDayConnectPrompt: some View {
@@ -700,3 +741,56 @@ struct MemoryScrapbookPage: View {
         name.split(separator: " ").first.map(String.init) ?? name
     }
 }
+
+// MARK: - Previews (FL3-dismiss)
+
+#if DEBUG
+/// A flat swatch thumbnail so the on-this-day card renders without a real photo library.
+private func previewOnThisDayThumb(_ color: UIColor) -> Data {
+    let size = CGSize(width: 160, height: 160)
+    let image = UIGraphicsImageRenderer(size: size).image { ctx in
+        color.setFill()
+        ctx.fill(CGRect(origin: .zero, size: size))
+    }
+    return image.jpegData(compressionQuality: 0.8) ?? Data()
+}
+
+/// FL3-dismiss — the "On this day → Make a memory from these" card WITH the quiet × dismiss control
+/// (top-trailing) and long-pressable thumbnails ("Not this one"). `photoAuth == .denied` keeps the
+/// seeded group from being overwritten by the (empty) preview library fetch on `.task`.
+#Preview("On this day — dismissable card") {
+    let swatches: [UIColor] = [.systemTeal, .systemOrange, .systemPink, .systemIndigo]
+    let assets = swatches.indices.map { i in
+        PhotoAsset(
+            id: "preview/asset/\(i)",
+            creationDate: Calendar.current.date(byAdding: .year, value: -1, to: Date()),
+            isFavorite: false,
+            mediaType: .image,
+            pixelWidth: 3000,
+            pixelHeight: 4000
+        )
+    }
+    var state = MemoriesReducer.State()
+    state.hasLoaded = true
+    state.photoAuth = .denied
+    state.onThisDayPhotos = [
+        OnThisDayPhotoGroup(
+            yearsAgo: 1,
+            date: Calendar.current.date(byAdding: .year, value: -1, to: Date()) ?? Date(),
+            assets: assets
+        ),
+    ]
+    state.onThisDayThumbs = Dictionary(
+        uniqueKeysWithValues: zip(assets, swatches).map { ($0.id, previewOnThisDayThumb($1)) }
+    )
+    return NavigationStack {
+        MemoriesView(
+            store: Store(initialState: state) {
+                MemoriesReducer()
+            } withDependencies: {
+                $0.photoLibrary.authorizationStatus = { .denied }
+            }
+        )
+    }
+}
+#endif
