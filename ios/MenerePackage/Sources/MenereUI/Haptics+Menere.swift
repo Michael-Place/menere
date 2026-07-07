@@ -41,6 +41,28 @@ public enum MenereHaptics {
         }
     }
 
+    /// The care-completion haptic for the CelebrationKit — the satisfying "tap … *plip!*" two-part
+    /// sequence (a light impact, then a `.success` notification a beat later as the celebration lands).
+    /// Every ``CelebrationStyle`` shares this feel so care completions read consistently; `.pet` gets a
+    /// touch more bounce (a second soft tap — a playful "boop"). Call from the care-done button action.
+    ///
+    /// **Device only:** the simulator has no Taptic Engine, so this is imperceptible there.
+    public static func celebrate(_ style: CelebrationStyle) {
+        let impact = UIImpactFeedbackGenerator(style: .light)
+        impact.prepare()
+        impact.impactOccurred(intensity: 0.9)
+        if style == .pet {
+            // A little "boop" — pets earn an extra playful beat.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.07) {
+                UIImpactFeedbackGenerator(style: .soft).impactOccurred(intensity: 0.6)
+            }
+        }
+        // A short beat later, the "it landed" success buzz.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.14) {
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
+        }
+    }
+
     /// A single soft impact — the "press" acknowledgement, for spots where the full success sequence
     /// would be too much (e.g. a batch action that already has its own confirmation).
     public static func softTap() {

@@ -9,6 +9,58 @@ import SwiftUI
 import UIKit
 import UserDomain
 
+extension CelebrationStyle {
+    /// Map a care item's kind + a task's title to the CelebrationKit flavor (D1). Plant tasks flavor by
+    /// verb (water/mist → droplets, fertilize → leaf, re-pot → earth; other plant care keeps the leafy
+    /// plant-care flavor); pets get the paw burst; house/zone get the wrench burst.
+    static func forCare(kind: CareKind, taskTitle: String) -> CelebrationStyle {
+        switch kind {
+        case .plant:
+            switch PlantCarePreset.matching(taskTitle) {
+            case .water, .mist: return .water
+            case .fertilize: return .fertilize
+            case .repot: return .repot
+            default: return .fertilize   // prune / rotate / clean / pest / custom → leafy plant-care
+            }
+        case .pet: return .pet
+        case .house, .zone: return .house
+        }
+    }
+}
+
+/// A labeled care-done pill that fires the flavored CelebrationKit celebration on tap (D1) — the
+/// generalization of the D0 water pill. Shows a ``CelebrationGlyph`` (flavor symbol → check) + a
+/// title, tinted by the `style`. The PARENT owns `trigger` (so the row's thumbnail can `.careBounce`
+/// off the same tap) and, in `onTap`, bumps it + calls `MenereHaptics.celebrate(style)` after routing
+/// through `markCareTaskDone`.
+private struct CelebrationMarkDonePill: View {
+    let style: CelebrationStyle
+    let title: String
+    let name: String?
+    let trigger: Int
+    let accessibilityText: String
+    let identifier: String
+    let onTap: () -> Void
+
+    var body: some View {
+        Button(action: onTap) {
+            HStack(spacing: 5) {
+                CelebrationGlyph(trigger: trigger, style: style, size: 15)
+                Text(title)
+            }
+            .font(.system(.footnote, design: .rounded).weight(.semibold))
+            .foregroundStyle(style.tint)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 7)
+            .background(Capsule(style: .continuous).fill(style.tint.opacity(0.14)))
+        }
+        .buttonStyle(.pressable)
+        .careCelebration(trigger: trigger, style: style, name: name)
+        .accessibilityLabel(accessibilityText)
+        .accessibilityIdentifier(identifier)
+    }
+}
+
 /// The **Home** tab (P16) — a hub of glanceable OVERVIEW CARDS, each a leading tinted icon + title +
 /// one-line live status + chevron, tapping into a rich detail screen. This is an IA restructure: the
 /// detail screens hold the *exact* section content that used to stack in one long scroll, moved behind
@@ -2007,20 +2059,20 @@ private struct PlantDetailView: View {
 
 /// One row in the plant DETAIL's care-task list: a kind glyph (derived from the task title via
 /// ``PlantCarePreset/symbol(forTitle:)``), the task title, a due line ("Due today" / "Overdue by 2
-/// days" / "Fertilized Jun 20 by Migueluh"), and an inline mark-done button that plays the shared
-/// ``LeafUnfurl`` motion. Mark-done routes through the parent's `markCareTaskDone` →
-/// ``CareCompletion``/`writeCareDone` path (server-consistent, logs activity with the right verb).
+/// days" / "Fertilized Jun 20 by Migueluh"), and an inline mark-done button that fires the flavored
+/// CelebrationKit celebration (water → droplets, fertilize → leaf, re-pot → earth). Mark-done routes
+/// through the parent's `markCareTaskDone` → ``CareCompletion``/`writeCareDone` path (server-
+/// consistent, logs activity with the right verb).
 private struct PlantTaskRow: View {
     let task: CareTask
     let plantName: String
     let members: [HouseholdMember]
     let onMarkDone: () -> Void
 
-    @State private var unfurlOn = false
-    /// Bumps on each water tap → droplet burst + glyph morph + the leading-glyph bounce.
-    @State private var waterTrigger = 0
+    /// Bumps on each mark-done tap → flavored burst + glyph morph + the leading-glyph bounce.
+    @State private var careTrigger = 0
 
-    private var isWater: Bool { PlantCarePreset.matching(task.title) == .water }
+    private var style: CelebrationStyle { .forCare(kind: .plant, taskTitle: task.title) }
 
     var body: some View {
         HStack(spacing: 12) {
@@ -2030,7 +2082,7 @@ private struct PlantTaskRow: View {
                     .font(.subheadline).foregroundStyle(Color.bacanGreen)
             }
             .frame(width: 38, height: 38)
-            .plantBounce(trigger: waterTrigger) // the glyph perks up on watering
+            .careBounce(trigger: careTrigger) // the glyph perks up when the task is done
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(task.title).foregroundStyle(Color.ink)
@@ -2039,34 +2091,19 @@ private struct PlantTaskRow: View {
 
             Spacer(minLength: 4)
 
-            if isWater {
-                // The dopamine path: watering fires the full celebration; the glyph morphs drop → check.
-                Button {
-                    onMarkDone()
-                    waterTrigger += 1
-                    MenereHaptics.water()
-                } label: {
-                    WaterGlyph(trigger: waterTrigger, size: 20, restSymbol: "drop.fill", tint: .sky)
-                }
-                .buttonStyle(.pressable)
-                .waterCelebration(trigger: waterTrigger, plantName: plantName)
-                .accessibilityLabel("Water \(plantName)")
-                .accessibilityIdentifier("plant-task-done-\(task.id)")
-            } else {
-                Button {
-                    onMarkDone()
-                    unfurlOn = true
-                    Task { try? await Task.sleep(for: .milliseconds(800)); unfurlOn = false }
-                } label: {
-                    Image(systemName: "checkmark.circle.fill")
-                        .font(.title3)
-                        .foregroundStyle(Color.bacanGreen)
-                        .leafUnfurl(isOn: unfurlOn, color: .bacanGreen)
-                }
-                .buttonStyle(.pressable)
-                .accessibilityLabel("Mark \(task.title) done")
-                .accessibilityIdentifier("plant-task-done-\(task.id)")
+            // Every plant task now fires the flavored CelebrationKit celebration (water → droplets,
+            // fertilize → leaf pop, re-pot → earth, etc.); the glyph morphs its flavor symbol → check.
+            Button {
+                onMarkDone()
+                careTrigger += 1
+                MenereHaptics.celebrate(style)
+            } label: {
+                CelebrationGlyph(trigger: careTrigger, style: style, size: 20)
             }
+            .buttonStyle(.pressable)
+            .careCelebration(trigger: careTrigger, style: style, name: plantName)
+            .accessibilityLabel("\(task.title) \(plantName)")
+            .accessibilityIdentifier("plant-task-done-\(task.id)")
         }
     }
 
@@ -2167,17 +2204,22 @@ private func careDueChipText(_ task: CareTask) -> String {
 }
 
 /// One row in a pet / house / zone DETAIL's care-task list: a kind glyph, the task title, a due line,
-/// and an inline **sticker-slap** mark-done (matching those rosters, vs the plant's LeafUnfurl). Routes
-/// through the parent's `markCareTaskDone` → ``CareCompletion``/`writeCareDone` path (server-consistent,
+/// and an inline mark-done that fires the flavored CelebrationKit celebration (pet → paw, house/zone →
+/// wrench). Routes through the parent's `markCareTaskDone` → ``CareCompletion``/`writeCareDone` path (server-consistent,
 /// logs activity). Seasonal (yearly) zone tasks name their due DATE rather than a bare day count.
 private struct CareDetailTaskRow: View {
     let task: CareTask
     let members: [HouseholdMember]
     let glyph: String
     let tint: Color
+    /// The CelebrationKit flavor for this detail (pet detail → `.pet`, house/zone detail → `.house`).
+    let style: CelebrationStyle
+    /// The item's name, so the reward toast can say "{Name} says thanks!". `nil` ⇒ generic voice.
+    var name: String? = nil
     let onMarkDone: () -> Void
 
-    @State private var slapOn = false
+    /// Bumps on each mark-done tap → flavored burst + glyph morph + leading-glyph bounce.
+    @State private var careTrigger = 0
 
     var body: some View {
         HStack(spacing: 12) {
@@ -2186,6 +2228,7 @@ private struct CareDetailTaskRow: View {
                 Image(systemName: glyph).font(.subheadline).foregroundStyle(tint)
             }
             .frame(width: 38, height: 38)
+            .careBounce(trigger: careTrigger)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(task.title).foregroundStyle(Color.ink)
@@ -2196,15 +2239,13 @@ private struct CareDetailTaskRow: View {
 
             Button {
                 onMarkDone()
-                slapOn = true
-                Task { try? await Task.sleep(for: .milliseconds(700)); slapOn = false }
+                careTrigger += 1
+                MenereHaptics.celebrate(style)
             } label: {
-                Image(systemName: "checkmark.circle.fill")
-                    .font(.title3)
-                    .foregroundStyle(tint)
-                    .stickerSlap(isOn: slapOn, color: tint)
+                CelebrationGlyph(trigger: careTrigger, style: style, size: 20)
             }
             .buttonStyle(.pressable)
+            .careCelebration(trigger: careTrigger, style: style, name: name)
             .accessibilityLabel("Mark \(task.title) done")
             .accessibilityIdentifier("care-detail-task-done-\(task.id)")
         }
@@ -2523,6 +2564,8 @@ private struct PetDetailView: View {
                             members: store.members,
                             glyph: petTaskGlyph(task.title),
                             tint: .sky,
+                            style: .pet,
+                            name: pet.name,
                             onMarkDone: {
                                 store.send(.markCareTaskDone(itemID: pet.id, taskID: task.id))
                             }
@@ -2895,6 +2938,8 @@ private struct CareItemDetailView: View {
                             members: store.members,
                             glyph: item.iconSymbol,
                             tint: .bacanGreen,
+                            style: .forCare(kind: item.kind, taskTitle: task.title),
+                            name: item.name,
                             onMarkDone: {
                                 store.send(.markCareTaskDone(itemID: item.id, taskID: task.id))
                             }
@@ -3375,81 +3420,6 @@ private struct ActivityDetailView: View {
     }
 }
 
-/// The Home roster's one-tap "mark this task done" affordance (P28). A **labeled** capsule — not a
-/// bare check/drop — so it's obvious what the tap does and which task it completes: the row's due-line
-/// names the task, this pill names the action. Shown by its rows only when the soonest task is
-/// actionable. Plays a leaf-unfurl (plant water) or sticker-slap (pets/other) on tap, then routes
-/// through the shared `markCareTaskDone` → ``CareCompletion``/`writeCareDone` path — which arms the
-/// ``CareUndoBanner`` so the tap is reversible.
-private struct CareMarkDonePill: View {
-    enum Motion { case leaf, slap }
-    let title: String
-    let icon: String
-    let tint: Color
-    let motion: Motion
-    let accessibilityText: String
-    let identifier: String
-    let onTap: () -> Void
-
-    @State private var animate = false
-
-    var body: some View {
-        Button {
-            onTap()
-            animate = true
-            Task { try? await Task.sleep(for: .milliseconds(motion == .leaf ? 800 : 700)); animate = false }
-        } label: {
-            HStack(spacing: 5) {
-                // `motion` is constant per instance, so this branch never thrashes view identity.
-                if motion == .leaf {
-                    Image(systemName: icon).leafUnfurl(isOn: animate, color: tint)
-                } else {
-                    Image(systemName: icon).stickerSlap(isOn: animate, color: tint)
-                }
-                Text(title)
-            }
-            .font(.system(.footnote, design: .rounded).weight(.semibold))
-            .foregroundStyle(tint)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 7)
-            .background(Capsule(style: .continuous).fill(tint.opacity(0.14)))
-        }
-        .buttonStyle(.pressable)
-        .accessibilityLabel(accessibilityText)
-        .accessibilityIdentifier(identifier)
-    }
-}
-
-/// The plant WATER affordance (the dopamine one): a labeled sky pill whose glyph morphs drop → check,
-/// firing the full ``WaterBurst`` celebration (droplets + ripple) and a rotating cheerful toast on
-/// each tap. The parent owns `trigger` (so the plant's thumbnail can bounce off the same tap) and, in
-/// its `onTap`, bumps it + calls `MenereHaptics.water()` after routing through `markCareTaskDone`.
-private struct WaterMarkDonePill: View {
-    let title: String
-    let plantName: String
-    let trigger: Int
-    let identifier: String
-    let onTap: () -> Void
-
-    var body: some View {
-        Button(action: onTap) {
-            HStack(spacing: 5) {
-                WaterGlyph(trigger: trigger, size: 15, restSymbol: "drop.fill", tint: .sky)
-                Text(title)
-            }
-            .font(.system(.footnote, design: .rounded).weight(.semibold))
-            .foregroundStyle(Color.sky)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 7)
-            .background(Capsule(style: .continuous).fill(Color.sky.opacity(0.14)))
-        }
-        .buttonStyle(.pressable)
-        .waterCelebration(trigger: trigger, plantName: plantName)
-        .accessibilityLabel("Water \(plantName)")
-        .accessibilityIdentifier(identifier)
-    }
-}
-
 /// The reversible "Marked {task} done · Undo" banner (P28) shown over the Home pets/plants rosters
 /// after a one-tap completion. Reads ``ChoresReducer/State/careUndo`` (armed by `markCareTaskDone`);
 /// Undo sends `undoCareTaskDone`, which restores the task's captured PRIOR done-stamp. Auto-dismisses
@@ -3506,8 +3476,9 @@ private extension View {
 
 /// A single Plants row: circular photo thumbnail (or a leaf fallback), name, species, the soonest
 /// task's due line (task-title-driven verb wording — "Water due today" / "Watered Jul 2 by …"), and
-/// a labeled mark-done pill (``CareMarkDonePill``) that plays the ``LeafUnfurl`` motion. Routes through
-/// the same `markCareTaskDone` → ``CareCompletion``/`writeCareDone` path as House care. Tapping the row
+/// a labeled mark-done pill (``CelebrationMarkDonePill``) that fires the flavored CelebrationKit
+/// celebration. Routes through the same `markCareTaskDone` → ``CareCompletion``/`writeCareDone` path
+/// as House care. Tapping the row
 /// (thumbnail/name area) pushes the plant DETAIL page (P19-C1) — the mark-done pill acts in place, so
 /// it sits *outside* the navigating region.
 private struct PlantRow: View {
@@ -3517,8 +3488,8 @@ private struct PlantRow: View {
     let photo: Data?
     let onMarkDone: (_ taskID: String) -> Void
 
-    /// Bumps on each water tap → drives the droplet burst, the glyph morph, and the thumbnail bounce.
-    @State private var waterTrigger = 0
+    /// Bumps on each mark-done tap → drives the flavored burst, the glyph morph, and the thumbnail bounce.
+    @State private var careTrigger = 0
 
     private var soonest: CareTask? { item.soonestDueTask() }
 
@@ -3529,7 +3500,7 @@ private struct PlantRow: View {
                     thumbnail
                         .frame(width: 44, height: 44)
                         .clipShape(Circle())
-                        .plantBounce(trigger: waterTrigger) // the plant perks up when watered
+                        .careBounce(trigger: careTrigger) // the plant perks up when cared for
                     VStack(alignment: .leading, spacing: 2) {
                         Text(item.name).foregroundStyle(Color.ink)
                         speciesLine
@@ -3543,36 +3514,25 @@ private struct PlantRow: View {
 
             Spacer()
 
-            // Legibility (P28): show a LABELED pill — not a bare drop — and only when the soonest task
-            // is actually actionable (due/overdue/manual). The label names the exact task the tap
-            // completes (matched preset verb, e.g. "Water"/"Fertilize"), so it's clear on a glance.
+            // Legibility (P28): a LABELED pill — not a bare glyph — shown only when the soonest task is
+            // actionable. The label names the exact task the tap completes (matched preset verb); the
+            // CelebrationKit flavors the burst by that verb (water → droplets, fertilize → leaf, etc.).
             if let task = soonest, (task.daysUntilDue() ?? 0) <= 0 {
                 let preset = PlantCarePreset.matching(task.title)
-                if preset == .water {
-                    // The dopamine path: watering fires the full celebration (burst + ripple + toast +
-                    // haptic) and the glyph morphs drop → check. Non-water plant care keeps the pill.
-                    WaterMarkDonePill(
-                        title: "Water",
-                        plantName: item.name,
-                        trigger: waterTrigger,
-                        identifier: "plant-mark-done-\(item.id)",
-                        onTap: {
-                            onMarkDone(task.id)
-                            waterTrigger += 1
-                            MenereHaptics.water()
-                        }
-                    )
-                } else {
-                    CareMarkDonePill(
-                        title: preset?.title ?? "Mark done",
-                        icon: PlantCarePreset.symbol(forTitle: task.title),
-                        tint: .bacanGreen,
-                        motion: .leaf,
-                        accessibilityText: "\(preset?.title ?? "Mark done") \(item.name)",
-                        identifier: "plant-mark-done-\(item.id)",
-                        onTap: { onMarkDone(task.id) }
-                    )
-                }
+                let style = CelebrationStyle.forCare(kind: .plant, taskTitle: task.title)
+                CelebrationMarkDonePill(
+                    style: style,
+                    title: preset?.title ?? "Mark done",
+                    name: item.name,
+                    trigger: careTrigger,
+                    accessibilityText: "\(preset?.title ?? "Mark done") \(item.name)",
+                    identifier: "plant-mark-done-\(item.id)",
+                    onTap: {
+                        onMarkDone(task.id)
+                        careTrigger += 1
+                        MenereHaptics.celebrate(style)
+                    }
+                )
             }
         }
     }
@@ -3680,6 +3640,9 @@ private struct PetRow: View {
     let expiringDoc: FamilyDomain.Document?
     let onMarkDone: (_ taskID: String) -> Void
 
+    /// Bumps on each mark-done tap → paw burst + glyph morph + the pet's thumbnail bounce.
+    @State private var careTrigger = 0
+
     private var soonest: CareTask? { item.soonestDueTask() }
 
     var body: some View {
@@ -3689,6 +3652,7 @@ private struct PetRow: View {
                     thumbnail
                         .frame(width: 44, height: 44)
                         .clipShape(Circle())
+                        .careBounce(trigger: careTrigger) // the pet perks up when cared for
                     VStack(alignment: .leading, spacing: 2) {
                         Text(item.name).foregroundStyle(Color.ink)
                         if let breed = item.breed, !breed.isEmpty {
@@ -3712,14 +3676,18 @@ private struct PetRow: View {
             // soonest task is actually actionable (due/overdue/manual). The row's due-line names the
             // task ("Flea & tick due today"); this pill names the action, tying the two together.
             if let task = soonest, (task.daysUntilDue() ?? 0) <= 0 {
-                CareMarkDonePill(
+                CelebrationMarkDonePill(
+                    style: .pet,
                     title: "Mark done",
-                    icon: "checkmark.circle.fill",
-                    tint: .sky,
-                    motion: .slap,
+                    name: item.name,
+                    trigger: careTrigger,
                     accessibilityText: "Mark \(task.title) done for \(item.name)",
                     identifier: "pet-mark-done-\(item.id)",
-                    onTap: { onMarkDone(task.id) }
+                    onTap: {
+                        onMarkDone(task.id)
+                        careTrigger += 1
+                        MenereHaptics.celebrate(.pet)
+                    }
                 )
             }
         }
@@ -3789,9 +3757,13 @@ private struct CareRow: View {
     let members: [HouseholdMember]
     let onMarkDone: (_ taskID: String) -> Void
 
-    @State private var slapOn = false
+    /// Bumps on each mark-done tap → wrench burst + glyph morph + the leading-icon bounce.
+    @State private var careTrigger = 0
 
     private var soonest: CareTask? { item.soonestDueTask() }
+
+    /// House upkeep and yard zones both live here; both flavor to the `.house` (wrench) celebration.
+    private var style: CelebrationStyle { .forCare(kind: item.kind, taskTitle: soonest?.title ?? "") }
 
     var body: some View {
         HStack(spacing: 12) {
@@ -3802,6 +3774,7 @@ private struct CareRow: View {
                         Image(systemName: item.iconSymbol).foregroundStyle(Color.bacanGreen)
                     }
                     .frame(width: 40, height: 40)
+                    .careBounce(trigger: careTrigger)
 
                     VStack(alignment: .leading, spacing: 2) {
                         Text(item.name).foregroundStyle(Color.ink)
@@ -3821,15 +3794,13 @@ private struct CareRow: View {
             if let task = soonest {
                 Button {
                     onMarkDone(task.id)
-                    slapOn = true
-                    Task { try? await Task.sleep(for: .milliseconds(700)); slapOn = false }
+                    careTrigger += 1
+                    MenereHaptics.celebrate(style)
                 } label: {
-                    Image(systemName: "checkmark.circle.fill")
-                        .font(.title3)
-                        .foregroundStyle(Color.bacanGreen)
-                        .stickerSlap(isOn: slapOn, color: .bacanGreen)
+                    CelebrationGlyph(trigger: careTrigger, style: style, size: 22)
                 }
                 .buttonStyle(.pressable)
+                .careCelebration(trigger: careTrigger, style: style, name: item.name)
                 .accessibilityLabel("Mark done")
                 .accessibilityIdentifier("care-mark-done-\(item.id)")
             }

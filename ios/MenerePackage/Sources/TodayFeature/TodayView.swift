@@ -7,6 +7,33 @@ import HueClient
 import MenereUI
 import SwiftUI
 
+extension CelebrationStyle {
+    /// Map a care item's kind + a task's title to the CelebrationKit flavor (D1). Mirrors ChoresFeature's
+    /// mapping without a dependency on `PlantCarePreset` (a light substring match on the plant verb).
+    static func forCare(kind: CareKind, taskTitle: String) -> CelebrationStyle {
+        switch kind {
+        case .plant:
+            let t = taskTitle.lowercased()
+            if t.contains("water") || t.contains("mist") { return .water }
+            if t.contains("fertil") { return .fertilize }
+            if t.contains("re-pot") || t.contains("repot") { return .repot }
+            return .fertilize   // prune / rotate / clean / pest / custom → leafy plant-care
+        case .pet: return .pet
+        case .house, .zone: return .house
+        }
+    }
+
+    /// Map a Family Radar care category to a flavor. The radar carries no task title, so plant care
+    /// (dominantly overdue watering across the house's 32 plants) flavors to `.water`.
+    static func forRadar(_ category: FamilyRadar.CareRadarItem.Category) -> CelebrationStyle {
+        switch category {
+        case .plant: .water
+        case .pet: .pet
+        case .house: .house
+        }
+    }
+}
+
 public struct TodayView: View {
     @Bindable var store: StoreOf<TodayReducer>
     private let cal = Calendar.current
@@ -1132,16 +1159,16 @@ private struct TodayCareRow: View {
     let onOpen: () -> Void
     let onMarkDone: () -> Void
 
-    @State private var slapOn = false
-    /// Bumps on each water tap → droplet burst + glyph morph + leading-icon bounce (plants only).
-    @State private var waterTrigger = 0
+    /// Bumps on each mark-done tap → flavored burst + glyph morph + leading-icon bounce.
+    @State private var careTrigger = 0
 
-    private var isPlant: Bool { due.item.kind == .plant }
+    /// The CelebrationKit flavor for this due item (kind + task verb).
+    private var style: CelebrationStyle { .forCare(kind: due.item.kind, taskTitle: due.task.title) }
 
     var body: some View {
         HStack(spacing: 12) {
-            // The name + due chip are a tap target → the Home tab. The trailing droplet/check still
-            // waters / marks done in place.
+            // The name + due chip are a tap target → the Home tab. The trailing glyph still marks done
+            // in place, firing the flavored celebration.
             Button {
                 onOpen()
             } label: {
@@ -1150,7 +1177,7 @@ private struct TodayCareRow: View {
                         .font(.subheadline)
                         .foregroundStyle(due.isOverdue ? Color.terracotta : Color.bacanGreen)
                         .frame(width: 22)
-                        .plantBounce(trigger: waterTrigger) // the plant perks up when watered
+                        .careBounce(trigger: careTrigger) // the item perks up when cared for
                     Text(due.item.name)
                         .foregroundStyle(Color.ink)
                         .lineLimit(1)
@@ -1160,34 +1187,17 @@ private struct TodayCareRow: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.pressable)
-            if isPlant {
-                // The dopamine path: watering fires the full celebration; the glyph morphs drop → check.
-                Button {
-                    onMarkDone()
-                    waterTrigger += 1
-                    MenereHaptics.water()
-                } label: {
-                    WaterGlyph(trigger: waterTrigger, size: 20, restSymbol: "drop.fill", tint: .sky)
-                }
-                .buttonStyle(.pressable)
-                .waterCelebration(trigger: waterTrigger, plantName: due.item.name)
-                .accessibilityLabel("Water \(due.item.name)")
-                .accessibilityIdentifier("today-care-mark-done-\(due.item.id)")
-            } else {
-                Button {
-                    onMarkDone()
-                    slapOn = true
-                    Task { try? await Task.sleep(for: .milliseconds(800)); slapOn = false }
-                } label: {
-                    Image(systemName: "checkmark.circle.fill")
-                        .font(.title3)
-                        .foregroundStyle(Color.bacanGreen)
-                        .stickerSlap(isOn: slapOn, color: .bacanGreen)
-                }
-                .buttonStyle(.pressable)
-                .accessibilityLabel("Mark done")
-                .accessibilityIdentifier("today-care-mark-done-\(due.item.id)")
+            Button {
+                onMarkDone()
+                careTrigger += 1
+                MenereHaptics.celebrate(style)
+            } label: {
+                CelebrationGlyph(trigger: careTrigger, style: style, size: 20)
             }
+            .buttonStyle(.pressable)
+            .careCelebration(trigger: careTrigger, style: style, name: due.item.name)
+            .accessibilityLabel("Mark \(due.item.name) done")
+            .accessibilityIdentifier("today-care-mark-done-\(due.item.id)")
         }
     }
 
@@ -1312,7 +1322,10 @@ private struct CareRadarRow: View {
     let store: StoreOf<TodayReducer>
     let item: FamilyRadar.CareRadarItem
 
-    @State private var slapOn = false
+    /// Bumps on each mark-done tap → flavored burst + glyph morph.
+    @State private var careTrigger = 0
+
+    private var style: CelebrationStyle { .forRadar(item.category) }
 
     var body: some View {
         HStack(spacing: 12) {
@@ -1345,18 +1358,14 @@ private struct CareRadarRow: View {
             if item.isActionable, let careItemID = item.careItemID, let taskID = item.taskID {
                 Button {
                     store.send(.radarCareItemMarkedDone(itemID: careItemID, taskID: taskID))
-                    slapOn = true
-                    Task { try? await Task.sleep(for: .milliseconds(800)); slapOn = false }
+                    careTrigger += 1
+                    MenereHaptics.celebrate(style)
                 } label: {
-                    let isPlant = item.category == .plant
-                    Image(systemName: isPlant ? "drop.fill" : "checkmark.circle.fill")
-                        .font(.title3)
-                        .foregroundStyle(Color.bacanGreen)
+                    CelebrationGlyph(trigger: careTrigger, style: style, size: 21)
                         .frame(width: 30, height: 30)
-                        .stickerSlap(isOn: isPlant ? false : slapOn, color: .bacanGreen)
-                        .leafUnfurl(isOn: isPlant ? slapOn : false, color: .bacanGreen)
                 }
                 .buttonStyle(.pressable)
+                .careCelebration(trigger: careTrigger, style: style, name: item.label)
                 .accessibilityLabel(item.category == .plant ? "Water" : "Mark done")
                 .accessibilityIdentifier("today-radar-care-done-\(item.id)")
             }

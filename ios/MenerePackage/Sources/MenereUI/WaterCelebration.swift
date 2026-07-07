@@ -1,21 +1,20 @@
 import SwiftUI
 import UIKit
 
-// The "watering feels great" kit (delight micro-interaction). Three reusable pieces you compose on a
-// water / care-done button, all keyed to one monotonic `trigger` you bump on each successful tap:
+// The WATER flavor of the CelebrationKit (see `CelebrationKit.swift`): a fling of DROPLETS + an
+// expanding RIPPLE, "a drop hitting a pool," for the plant-watering moment. `CelebrationBurst`
+// composes this in for the `.water` style; the kit's other styles (leaf / earth / paw / wrench /
+// generic) are emoji-particle siblings. Kept in its own file because its bespoke teardrop + ripple
+// physics are distinct from the shared emoji burst.
 //
-//   • `WaterBurst`            — a fling of droplets + an expanding ripple (mount as an overlay).
-//   • `.waterCelebration(…)`  — that burst PLUS a rotating cheerful micro-copy toast, in one modifier.
-//   • `.plantBounce(trigger:)`— a happy spring bounce for the plant's row/thumbnail ("it's happy").
-//   • `WaterGlyph(trigger:)`  — the button icon: a droplet that morphs to a checkmark on completion.
-//
-// Pair with `MenereHaptics.water()` (fired from the button action) for the core dopamine. Everything
-// is FAST (~0.75s), non-blocking (never intercepts touches), interruptible (fast repeat taps restart
-// cleanly), and Reduce-Motion aware (physics/bounce skipped; glyph swap + haptic preserved).
+// Drive with one monotonic `trigger` (bump on each water tap). FAST (~0.75s), non-blocking (never
+// intercepts touches), interruptible (fast repeat taps restart cleanly), Reduce-Motion aware
+// (physics skipped entirely). See `CelebrationKit.swift` for the public API you actually call
+// (`.careCelebration`, `CelebrationGlyph`, `.careBounce`) and the D0 water back-compat wrappers.
 
 // MARK: - Water palette
 
-private extension Color {
+extension Color {
     /// The droplet/ripple palette — cool sky blues with a botanical-green wink and a white sparkle.
     static let waterPalette: [Color] = [
         .sky,
@@ -165,200 +164,3 @@ public struct WaterBurst: View {
         }
     }
 }
-
-// MARK: - waterCelebration modifier (burst + micro-copy toast)
-
-/// The rotating cheerful lines shown in the little toast — warm, witty, first-name-the-plant voice.
-/// `{PlantName}` is filled in when a name is provided.
-private let waterQuips: [String] = [
-    "Slurp! 💧",
-    "Ahh, refreshing 🌿",
-    "{PlantName} says thanks!",
-    "Hydrated ✨",
-    "Glug glug 💦",
-]
-
-private struct WaterCelebration: ViewModifier {
-    let trigger: Int
-    let plantName: String?
-
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var toastText: String?
-    @State private var toastNonce = 0
-
-    func body(content: Content) -> some View {
-        content
-            // Droplets + ripple, on a frame larger than the button so fast droplets don't clip.
-            .overlay {
-                WaterBurst(trigger: trigger)
-                    .frame(width: 170, height: 170)
-                    .allowsHitTesting(false)
-            }
-            // The cheerful micro-copy, floating just above the button. Anchored trailing so a wide line
-            // ("{Plant} says thanks!") grows leftward and can't run off the right screen edge.
-            .overlay(alignment: .topTrailing) {
-                if let toastText {
-                    Text(toastText)
-                        .font(.system(.caption, design: .rounded).weight(.semibold))
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, 11)
-                        .padding(.vertical, 6)
-                        .background(
-                            Capsule(style: .continuous).fill(Color.sky)
-                                .shadow(color: .sky.opacity(0.35), radius: 6, y: 2)
-                        )
-                        .fixedSize()
-                        .offset(y: -34)
-                        .allowsHitTesting(false)
-                        .accessibilityHidden(true)
-                        .id(toastNonce)
-                        .transition(.scale(scale: 0.6, anchor: .bottomTrailing).combined(with: .opacity))
-                }
-            }
-            .onChange(of: trigger) { _, newValue in
-                guard newValue > 0, !reduceMotion else { return }
-                let idx = (newValue - 1) % waterQuips.count
-                let name = (plantName?.split(separator: " ").first).map(String.init) ?? "It"
-                toastNonce += 1
-                let nonce = toastNonce
-                withAnimation(.spring(response: 0.34, dampingFraction: 0.6)) {
-                    toastText = waterQuips[idx].replacingOccurrences(of: "{PlantName}", with: name)
-                }
-                Task {
-                    try? await Task.sleep(for: .milliseconds(1200))
-                    guard nonce == toastNonce else { return } // a newer tap owns the toast now
-                    withAnimation(.easeOut(duration: 0.25)) { toastText = nil }
-                }
-            }
-    }
-}
-
-// MARK: - plantBounce modifier
-
-/// A happy little spring BOUNCE for a plant's row or thumbnail on watering — it scales up ~8% with a
-/// slight sway and settles, "the plant perking up." Keyed to the same `trigger` as the burst; plays
-/// only when the trigger advances. Skipped under Reduce Motion (renders at rest).
-private struct PlantBounce: ViewModifier {
-    let trigger: Int
-
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    private struct Frame {
-        var scale: Double = 1
-        var rotation: Double = 0
-    }
-
-    @ViewBuilder
-    func body(content: Content) -> some View {
-        if reduceMotion {
-            content
-        } else {
-            content
-                .keyframeAnimator(initialValue: Frame(), trigger: trigger) { view, frame in
-                    view
-                        .scaleEffect(frame.scale, anchor: .bottom)
-                        .rotationEffect(.degrees(frame.rotation), anchor: .bottom)
-                } keyframes: { _ in
-                    KeyframeTrack(\.scale) {
-                        SpringKeyframe(1.08, duration: 0.20, spring: .bouncy)
-                        SpringKeyframe(1.0, duration: 0.40, spring: .bouncy)
-                    }
-                    KeyframeTrack(\.rotation) {
-                        CubicKeyframe(-2.5, duration: 0.12)
-                        CubicKeyframe(2.0, duration: 0.16)
-                        SpringKeyframe(0, duration: 0.32, spring: .snappy)
-                    }
-                }
-        }
-    }
-}
-
-// MARK: - WaterGlyph (droplet → checkmark morph)
-
-/// The water button's icon: a droplet at rest that MORPHS to a checkmark for a beat when watering
-/// completes, then settles back — the little "done!" wink. Uses a symbol-replace content transition,
-/// so it stays gentle and works under Reduce Motion (this glyph swap IS the reduced-motion payoff).
-public struct WaterGlyph: View {
-    private let trigger: Int
-    private let size: CGFloat
-    private let restSymbol: String
-    private let tint: Color
-
-    @State private var showCheck = false
-
-    public init(trigger: Int, size: CGFloat = 20, restSymbol: String = "drop.fill", tint: Color = .bacanGreen) {
-        self.trigger = trigger
-        self.size = size
-        self.restSymbol = restSymbol
-        self.tint = tint
-    }
-
-    public var body: some View {
-        Image(systemName: showCheck ? "checkmark.circle.fill" : restSymbol)
-            .font(.system(size: size))
-            .foregroundStyle(showCheck ? Color.bacanGreen : tint)
-            .contentTransition(.symbolEffect(.replace))
-            .onChange(of: trigger) { _, newValue in
-                guard newValue > 0 else { return }
-                withAnimation(.snappy) { showCheck = true }
-                Task {
-                    try? await Task.sleep(for: .milliseconds(1100))
-                    withAnimation(.easeOut(duration: 0.3)) { showCheck = false }
-                }
-            }
-    }
-}
-
-// MARK: - View sugar
-
-public extension View {
-    /// Play the full water celebration — droplet burst + ripple + a rotating cheerful toast — over
-    /// this button on each advance of `trigger`. Pass the `plantName` so the toast can say
-    /// "{first name} says thanks!". Pair with `MenereHaptics.water()` in the button action and
-    /// `WaterGlyph` for the icon. See ``WaterBurst``.
-    func waterCelebration(trigger: Int, plantName: String? = nil) -> some View {
-        modifier(WaterCelebration(trigger: trigger, plantName: plantName))
-    }
-
-    /// A happy spring bounce for a plant's row/thumbnail on watering. Drive with the same `trigger`
-    /// as `waterCelebration`. Skipped under Reduce Motion. See ``PlantBounce``.
-    func plantBounce(trigger: Int) -> some View {
-        modifier(PlantBounce(trigger: trigger))
-    }
-}
-
-#if DEBUG
-private struct WaterCelebrationDemo: View {
-    @State private var trigger = 0
-    var body: some View {
-        ZStack {
-            Color.familyCanvas.ignoresSafeArea()
-            HStack(spacing: 16) {
-                ZStack {
-                    Circle().fill(Color.bacanGreen.opacity(0.15))
-                    Image(systemName: "leaf.fill").foregroundStyle(Color.bacanGreen)
-                }
-                .frame(width: 44, height: 44)
-                .plantBounce(trigger: trigger)
-
-                Text("Monstera").font(.system(.body, design: .rounded))
-                Spacer()
-
-                Button {
-                    trigger += 1
-                    MenereHaptics.water()
-                } label: {
-                    WaterGlyph(trigger: trigger, size: 22, tint: .sky)
-                }
-                .buttonStyle(.pressable)
-                .waterCelebration(trigger: trigger, plantName: "Monstera Deliciosa")
-            }
-            .padding(24)
-            .background(Capsule().fill(Color.familySurface))
-            .padding()
-        }
-    }
-}
-
-#Preview("Water celebration") { WaterCelebrationDemo() }
-#endif
