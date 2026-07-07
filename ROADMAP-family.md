@@ -533,6 +533,34 @@ Oliver" needs our OWN on-device Vision face clustering (FL4).
   (ties to V5 ingestion), scene/content tagging.
 Sequence: FL1 foundation solo (project.yml + new module), then FL2 + FL3 parallel on top.
 
+# Projects — family initiative workspaces (2026-07-07, Michael requested)
+A rich gathering-place per big undertaking (pool build, Oliver's school search, reno, trip) —
+photos, quotes/docs, links, contacts, tasks, budget, dates collect around ONE goal. Grows the
+lightweight `.project` ListType (the deck) into a real workspace. **Michael emphasized: the
+INGESTION pipeline must TAG things to a project as they come in — AI-SUGGEST a project when it's
+not obvious, so nothing gets lost.**
+- **PR1 — workspace MVP:** `Project {id, name, coverImagePath?, status(dreaming/researching/
+  deciding/inProgress/done), targetDate?, summary?, createdAt}` (FamilyDomain) + PersistenceClient
+  CRUD (`households/{hid}/projects`) + a Projects surface (list + create/edit) + the workspace
+  screen with core sections: **Inspiration board** (photos via PhotoLibraryClient/StorageClient +
+  BacanImage), **Documents** (Brain docs linked via `Document.projectIds`), **Links** (URLs),
+  **Tasks** (checklist), **Notes** (rich text). New `ProjectsFeature` module; entry from Lists.
+- **PR2 — INGESTION → projects (the tagging, Michael's emphasis):** `Document.projectIds`(+other
+  ingested items carry it); the smart-capture / Share Extension / URL-import / email / scanner
+  confirm flows get an "Add to a project" picker + **AI project-SUGGESTION** (match incoming
+  vendor/keywords/text against active projects → suggest even un-obvious items); assign existing
+  Brain docs/photos to a project; a project "inbox"/review for loose items.
+- **PR3 — contacts + budget:** Contacts (contractors/schools + linked quotes); quote/option
+  comparison; Money tie-in (project = planned big-ticket spend).
+- **PR4 — intelligence:** project BRIEF (AI summary of state); a **Project KB** of starter
+  templates (pool/school/reno/trip/party/baby/car/move/landscaping → seed structure + checklist +
+  "things people forget", like the Care Schedules KB); AI quote/option comparison table; decision
+  helper (pros/cons from gathered material).
+- **PR5 — surfacing:** Today "active projects" glance; project deadlines → Radar/Calendar; project
+  as a hub node in the navigable graph (P24).
+Name = "Projects" (working); alts Boards/Ventures/Drawing-Board. Sequence: PR1 spine → PR2 tagging
+→ PR3/PR4/PR5.
+
 # Care Journal (2026-07-07, Michael requested)
 Problem: watering pushes the due date so the row VANISHES right after the CTA animation — no
 persistent place to SEE/EDIT/UNDO past waterings. The `activity` log is free-text only (no
