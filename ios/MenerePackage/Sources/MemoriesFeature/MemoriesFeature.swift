@@ -88,6 +88,9 @@ public struct MemoriesReducer {
         @Presents public var editor: MemoryEditorReducer.State?
         /// FL4 — the "People" (tag-a-face) sheet.
         @Presents public var faceTagging: FaceTaggingReducer.State?
+        /// D2 — the pending marquee milestone celebration (the app's biggest moment). Non-`nil` from the
+        /// instant a milestone-tagged memory saves until the keepsake auto-dismisses (or is tapped away).
+        public var milestoneCelebration: MilestoneCelebrationRequest?
 
         public init() {}
 
@@ -129,6 +132,8 @@ public struct MemoriesReducer {
         case recapLoaded(monthKey: String, recap: String)
         case recapFailed(monthKey: String)
         case editor(PresentationAction<MemoryEditorReducer.Action>)
+        /// D2 — the milestone keepsake finished (auto-dismiss timer fired or the family tapped it away).
+        case milestoneCelebrationDismissed
     }
 
     public init() {}
@@ -405,10 +410,22 @@ public struct MemoriesReducer {
                 state.recaps[monthKey] = .failed
                 return .none
 
-            case .editor(.presented(.delegate(.didSave))),
-                 .editor(.presented(.delegate(.didDelete))):
-                // A save/delete changed the timeline — reload it.
+            case let .editor(.presented(.delegate(.didSave(milestone)))):
+                // A save changed the timeline — reload it. If the page carried a milestone, raise the
+                // marquee keepsake celebration (the biggest moment in the app).
+                if let milestone {
+                    state.milestoneCelebration = milestone
+                    analytics.log("milestone_celebrated", ["tagged": milestone.kidName.isEmpty ? "0" : "1"])
+                }
                 return .send(.task)
+
+            case .editor(.presented(.delegate(.didDelete))):
+                // A delete changed the timeline — reload it.
+                return .send(.task)
+
+            case .milestoneCelebrationDismissed:
+                state.milestoneCelebration = nil
+                return .none
 
             case .editor:
                 return .none
@@ -426,4 +443,48 @@ public struct MemoriesReducer {
 /// A person's first name for warm copy ("Oliver", "Famfis") — shared by the recap payload + views.
 func firstName(_ name: String) -> String {
     name.split(separator: " ").first.map(String.init) ?? name
+}
+
+// MARK: - Milestone celebration (D2 — the marquee moment)
+
+/// Everything the D2 ``MilestoneCelebration`` needs to fire when a memory tagged with a milestone is
+/// saved — the tagged kid's first name + color + avatar and the milestone text. Built by the editor on
+/// Save (it has the roster + tags in hand) and handed up via the ``MemoryEditorReducer/Action/Delegate``
+/// so the parent Memories view can raise the full-screen keepsake. `color`/`avatar` fall back to warm
+/// defaults when no kid is tagged (a family-wide milestone still deserves a party).
+public struct MilestoneCelebrationRequest: Equatable, Identifiable, Sendable {
+    public let id: UUID
+    public let kidName: String
+    public let milestone: String
+    public let color: MemberColor
+    public let avatarSystemName: String
+
+    public init(
+        id: UUID = UUID(),
+        kidName: String,
+        milestone: String,
+        color: MemberColor,
+        avatarSystemName: String
+    ) {
+        self.id = id
+        self.kidName = kidName
+        self.milestone = milestone
+        self.color = color
+        self.avatarSystemName = avatarSystemName
+    }
+
+    /// Builds a request from a just-saved memory + the roster — resolving the first tagged kid for the
+    /// color/avatar (warm marigold + star fallback for an untagged, family-wide milestone). Returns `nil`
+    /// when the memory carries no milestone (so only real milestones throw the party).
+    static func from(memory: Memory, members: [HouseholdMember]) -> MilestoneCelebrationRequest? {
+        guard let milestone = memory.milestone?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !milestone.isEmpty else { return nil }
+        let kid = members.first { memory.kidMemberIds.contains($0.id) }
+        return MilestoneCelebrationRequest(
+            kidName: kid.map { firstName($0.name) } ?? "",
+            milestone: milestone,
+            color: kid?.color ?? .marigold,
+            avatarSystemName: kid?.avatarSystemName ?? "star.circle.fill"
+        )
+    }
 }

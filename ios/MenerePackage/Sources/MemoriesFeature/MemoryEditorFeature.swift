@@ -128,7 +128,10 @@ public struct MemoryEditorReducer {
         case binding(BindingAction<State>)
 
         public enum Delegate: Equatable {
-            case didSave
+            /// A save landed. `milestone` is non-`nil` when the saved page carried a milestone tag — the
+            /// cue for the parent to raise the D2 full-screen keepsake celebration (see
+            /// ``MilestoneCelebrationRequest``). `nil` for an everyday (non-milestone) save.
+            case didSave(milestone: MilestoneCelebrationRequest?)
             case didDelete(id: String)
         }
     }
@@ -282,6 +285,7 @@ public struct MemoryEditorReducer {
                 let finalized = memory
                 let slots = state.slots
                 let isEditing = state.isEditing
+                let members = state.members
                 return .run { send in
                     var toSave = finalized
                     var photoPaths: [String] = []
@@ -308,10 +312,13 @@ public struct MemoryEditorReducer {
                     toSave.stickerPaths = stickerPaths
                     try await persistence.saveMemory(hid, toSave)
                     analytics.log("memory_created", ["editing": isEditing ? "1" : "0"])
-                    if let milestone = toSave.milestone, !milestone.isEmpty {
+                    // D2 — a milestone save is the app's marquee moment: build the keepsake payload and
+                    // hand it up so the timeline can raise the grand celebration.
+                    let celebration = MilestoneCelebrationRequest.from(memory: toSave, members: members)
+                    if celebration != nil {
                         analytics.log("milestone_logged", ["kids": String(toSave.kidMemberIds.count)])
                     }
-                    await send(.delegate(.didSave))
+                    await send(.delegate(.didSave(milestone: celebration)))
                     await dismiss()
                 }
 

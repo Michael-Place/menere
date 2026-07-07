@@ -53,6 +53,24 @@ public struct MemoriesView: View {
         .sheet(item: $store.scope(state: \.faceTagging, action: \.faceTagging)) { faceStore in
             FaceTaggingView(store: faceStore)
         }
+        // D2 — the marquee moment: a milestone-tagged memory was just saved. Raise the full-screen
+        // keepsake celebration over the timeline (it owns its own ~2s auto-dismiss + tap-to-close).
+        .overlay {
+            if let celebration = store.milestoneCelebration {
+                let rgb = celebration.color.rgb
+                MilestoneCelebration(
+                    kidName: celebration.kidName,
+                    milestone: celebration.milestone,
+                    tint: Color(red: rgb.red, green: rgb.green, blue: rgb.blue),
+                    avatarSystemName: celebration.avatarSystemName,
+                    milestoneSymbol: Milestone.symbol(for: celebration.milestone),
+                    onDismiss: { store.send(.milestoneCelebrationDismissed) }
+                )
+                .id(celebration.id)
+                .transition(.opacity)
+            }
+        }
+        .animation(.easeInOut(duration: 0.2), value: store.milestoneCelebration)
         .task { store.send(.task) }
     }
 
