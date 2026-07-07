@@ -298,8 +298,9 @@ exports.generateDailyBriefing = onCall(
 
 /**
  * `generateProjectBrief` is a v2 HTTPS callable (us-central1) that returns an AI brief for one
- * family project (`households/{hid}/projects/{projectId}`): `{ text, generatedAt, model, cached }`.
- * Input `{ projectId, force? }`; the household is derived from the CALLER
+ * family project (`households/{hid}/projects/{projectId}`): a structured
+ * `{ summary, highlights, decision, generatedAt, model, cached }` matching `FamilyDomain.ProjectBrief`.
+ * Input `{ projectId, force?, decisionFocus? }`; the household is derived from the CALLER
  * (`users/{uid}.householdId`) — a client-passed hid is never trusted, which also gates membership.
  * It loads the project + its linked Brain quote docs, asks Claude (Sonnet 5) for a warm, first-name
  * family-voice brief (state / next steps / decision), and caches it as a `brief` map on the project
@@ -317,6 +318,7 @@ exports.generateProjectBrief = onCall(
       throw new HttpsError("invalid-argument", "projectId is required.");
     }
     const force = request.data?.force === true;
+    const decisionFocus = request.data?.decisionFocus === true;
 
     const userSnap = await db().collection("users").doc(uid).get();
     const hid = userSnap.exists ? userSnap.data().householdId : null;
@@ -330,6 +332,7 @@ exports.generateProjectBrief = onCall(
         projectId,
         apiKey: ANTHROPIC_API_KEY.value(),
         force,
+        decisionFocus,
       });
     } catch (err) {
       if (err.message === "Project not found") {
