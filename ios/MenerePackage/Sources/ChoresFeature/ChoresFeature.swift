@@ -68,7 +68,23 @@ public struct ChoresReducer {
             /// too (no stray inflated `streakCount` lingers). Decode-safe additive capture.
             var priorStreakCount: Int?
             var priorLastStreakDate: Date?
+            /// Care Journal — the task's pre-completion event history, restored verbatim on Undo so the
+            /// appended (and any backfill-seeded) journal event is fully reversed.
+            var priorHistory: [CareEvent]?
             /// Bumped per mark-done so the banner re-animates and restarts its auto-dismiss timer.
+            var nonce: Int
+        }
+
+        /// Care Journal — the just-deleted event awaiting its Undo snackbar (swipe-to-delete = "un-water").
+        /// Captures the whole pre-delete ``CareTask`` so Undo restores it verbatim (history + stamps +
+        /// streak), and the removed ``CareEvent`` to name the snackbar. Nil = no snackbar showing.
+        var careEventUndo: CareEventUndo?
+        struct CareEventUndo: Equatable {
+            var itemID: String
+            var taskID: String
+            var taskTitle: String
+            var removed: CareEvent
+            var priorTask: CareTask
             var nonce: Int
         }
         var isLoading = false
@@ -156,6 +172,16 @@ public struct ChoresReducer {
         /// D1.5 — "not yet, the soil's still damp": push this care task's next-due out `days` without
         /// marking it done (kind-agnostic snooze via ``CareCompletion/snoozed(item:taskID:days:now:)``).
         case snoozeCareTask(itemID: String, taskID: String, days: Int)
+        /// Care Journal — delete a recorded completion (swipe-to-delete = the real "un-water"). Recomputes
+        /// `lastDoneAt` + streak from what remains and persists; arms the ``careEventUndo`` snackbar.
+        case deleteCareEvent(itemID: String, taskID: String, eventID: String)
+        /// Care Journal — restore the just-deleted event (the Undo snackbar).
+        case undoDeleteCareEvent
+        /// Care Journal — dismiss the delete-undo snackbar without restoring (tap-away / auto-timeout).
+        case dismissCareEventUndo
+        /// Care Journal — edit a recorded completion's date (and optionally who did it). Recomputes
+        /// `lastDoneAt` + streak and persists.
+        case editCareEvent(itemID: String, taskID: String, eventID: String, newDate: Date, memberID: String?)
         /// P19-C2 — batch "water this room": mark the due Water task done for every plant in `location`
         /// (nil ⇒ the "no room yet" bucket) whose water is due, each via the shared ``CareCompletion``/
         /// `writeCareDone` path (server-consistent, one activity entry per plant).
@@ -199,7 +225,7 @@ public struct ChoresReducer {
         case binding(BindingAction<State>)
     }
 
-    private enum CancelID { case observeStats, careUndo, observeCareCache }
+    private enum CancelID { case observeStats, careUndo, observeCareCache, careEventUndo }
 
     public init() {}
 
@@ -506,6 +532,7 @@ public struct ChoresReducer {
                 let priorSnooze = state.careItems[i].tasks[ti].snoozedUntil
                 let priorStreak = state.careItems[i].tasks[ti].streakCount
                 let priorStreakDate = state.careItems[i].tasks[ti].lastStreakDate
+                let priorHistory = state.careItems[i].tasks[ti].history
                 let taskTitle = state.careItems[i].tasks[ti].title
                 let itemName = state.careItems[i].name
                 analytics.log("care_marked_done", ["kind": kind.rawValue])
@@ -536,6 +563,7 @@ public struct ChoresReducer {
                     priorLastDoneAt: priorAt, priorLastDoneBy: priorBy, priorSnoozedUntil: priorSnooze,
                     activityID: outcome.activity?.id,
                     priorStreakCount: priorStreak, priorLastStreakDate: priorStreakDate,
+                    priorHistory: priorHistory,
                     nonce: (state.careUndo?.nonce ?? 0) + 1
                 )
                 effects.append(
@@ -564,6 +592,9 @@ public struct ChoresReducer {
                 // D3 — restore the pre-completion streak too, so an accidental tap leaves no inflated count.
                 state.careItems[i].tasks[ti].streakCount = undo.priorStreakCount
                 state.careItems[i].tasks[ti].lastStreakDate = undo.priorLastStreakDate
+                // Care Journal — drop the appended (and any backfill-seeded) event by restoring the exact
+                // pre-completion history, so an undone tap leaves no stray journal entry.
+                state.careItems[i].tasks[ti].history = undo.priorHistory
                 let undoneActivityID = undo.activityID
                 if let aid = undoneActivityID { state.activity.removeAll { $0.id == aid } }
                 let restored = state.careItems[i]
@@ -599,6 +630,80 @@ public struct ChoresReducer {
                 return .run { [updated] _ in
                     @Dependency(\.persistence) var persistence
                     try await persistence.saveCareItem(hid, updated)
+                }
+
+            case let .deleteCareEvent(itemID, taskID, eventID):
+                guard let (hid, _) = ctx(),
+                      let i = state.careItems.firstIndex(where: { $0.id == itemID }),
+                      let ti = state.careItems[i].tasks.firstIndex(where: { $0.id == taskID })
+                else { return .none }
+                // Capture the whole pre-delete task so Undo restores it verbatim (history + stamps + streak).
+                let priorTask = state.careItems[i].tasks[ti]
+                // Materialize the legacy seed event (if any) so a swipe on a not-yet-tracked task works,
+                // then find the event we're removing (for the snackbar label) and delete it.
+                state.careItems[i].tasks[ti].backfillHistoryIfNeeded()
+                let removed = state.careItems[i].tasks[ti].history?.first { $0.id == eventID }
+                guard state.careItems[i].tasks[ti].deleteEvent(id: eventID), let removed else {
+                    state.careItems[i].tasks[ti] = priorTask   // nothing removed — revert the backfill
+                    return .none
+                }
+                analytics.log("care_event_deleted", ["kind": state.careItems[i].kind.rawValue])
+                let saved = state.careItems[i]
+                state.careEventUndo = State.CareEventUndo(
+                    itemID: itemID, taskID: taskID, taskTitle: priorTask.title,
+                    removed: removed, priorTask: priorTask,
+                    nonce: (state.careEventUndo?.nonce ?? 0) + 1
+                )
+                return .merge(
+                    .run { _ in
+                        @Dependency(\.persistence) var persistence
+                        try await persistence.saveCareItem(hid, saved)
+                    },
+                    .run { send in
+                        try await Task.sleep(for: .seconds(6))
+                        await send(.dismissCareEventUndo)
+                    }
+                    .cancellable(id: CancelID.careEventUndo, cancelInFlight: true)
+                )
+
+            case .undoDeleteCareEvent:
+                guard let (hid, _) = ctx(), let undo = state.careEventUndo,
+                      let i = state.careItems.firstIndex(where: { $0.id == undo.itemID }),
+                      let ti = state.careItems[i].tasks.firstIndex(where: { $0.id == undo.taskID })
+                else {
+                    state.careEventUndo = nil
+                    return .cancel(id: CancelID.careEventUndo)
+                }
+                analytics.log("care_event_delete_undone", ["kind": state.careItems[i].kind.rawValue])
+                state.careItems[i].tasks[ti] = undo.priorTask
+                let saved = state.careItems[i]
+                state.careEventUndo = nil
+                return .merge(
+                    .cancel(id: CancelID.careEventUndo),
+                    .run { _ in
+                        @Dependency(\.persistence) var persistence
+                        try await persistence.saveCareItem(hid, saved)
+                    }
+                )
+
+            case .dismissCareEventUndo:
+                state.careEventUndo = nil
+                return .cancel(id: CancelID.careEventUndo)
+
+            case let .editCareEvent(itemID, taskID, eventID, newDate, memberID):
+                guard let (hid, _) = ctx(),
+                      let i = state.careItems.firstIndex(where: { $0.id == itemID }),
+                      let ti = state.careItems[i].tasks.firstIndex(where: { $0.id == taskID })
+                else { return .none }
+                state.careItems[i].tasks[ti].backfillHistoryIfNeeded()
+                guard state.careItems[i].tasks[ti].editEvent(
+                    id: eventID, newDate: newDate, memberId: .some(memberID)
+                ) else { return .none }
+                analytics.log("care_event_edited", ["kind": state.careItems[i].kind.rawValue])
+                let saved = state.careItems[i]
+                return .run { _ in
+                    @Dependency(\.persistence) var persistence
+                    try await persistence.saveCareItem(hid, saved)
                 }
 
             case let .waterRoomDone(location):

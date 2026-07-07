@@ -28,6 +28,31 @@ public enum CareKind: String, Codable, CaseIterable, Sendable, Equatable {
     }
 }
 
+/// A single recorded completion of a ``CareTask`` — one entry in the Care Journal ("💧 Watered ·
+/// Jul 7, 2:14 PM · Michael"). The task keeps a running ``CareTask/history`` of these so a plant's
+/// (or pet's / house-care) watering log has a persistent, editable home — the disappearing due-list
+/// CTA can't provide review/undo, this can. Decode-safe and kind-agnostic.
+public struct CareEvent: Codable, Equatable, Identifiable, Sendable {
+    public var id: String
+    /// When the care happened.
+    public var date: Date
+    /// The uid of whoever did it (nil when unknown — e.g. a backfilled legacy stamp with no `lastDoneBy`).
+    public var memberId: String?
+
+    public init(id: String = UUID().uuidString, date: Date, memberId: String? = nil) {
+        self.id = id
+        self.date = date
+        self.memberId = memberId
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decodeIfPresent(String.self, forKey: .id) ?? UUID().uuidString
+        date = try c.decodeIfPresent(Date.self, forKey: .date) ?? Date()
+        memberId = try c.decodeIfPresent(String.self, forKey: .memberId)
+    }
+}
+
 /// A single recurring upkeep task inside a ``CareItem`` — "Replace filter", "Wash bedding".
 ///
 /// Distinct from a kid `Chore`: **no XP**, tracked purely by *who did it last, and when*.
@@ -75,6 +100,13 @@ public struct CareTask: Codable, Equatable, Identifiable, Sendable {
     /// The date the streak was last advanced — used to tell an on-cadence completion (continue the
     /// streak) from a lapse (a silent reset to 1). Decode-safe additive field.
     public var lastStreakDate: Date?
+    /// The **Care Journal** — every recorded completion of this task, oldest → newest. Powers the
+    /// per-plant/pet/house watering log (see/edit/undo), which the disappearing due-list CTA can't.
+    /// `lastDoneAt`/`lastDoneBy` mirror the newest event; ``markDone``/``appendEvent`` keep them in
+    /// sync. Backfilled from the single legacy `lastDoneAt` on first write (see ``backfillHistoryIfNeeded``).
+    /// Capped to ``maxHistory``. Decode-safe additive field (older tasks nil ⇒ derive a one-event
+    /// journal from `lastDoneAt` via ``displayHistory``).
+    public var history: [CareEvent]?
 
     public init(
         id: String = UUID().uuidString,
@@ -86,7 +118,8 @@ public struct CareTask: Codable, Equatable, Identifiable, Sendable {
         maintenanceTemplateID: String? = nil,
         snoozedUntil: Date? = nil,
         streakCount: Int? = nil,
-        lastStreakDate: Date? = nil
+        lastStreakDate: Date? = nil,
+        history: [CareEvent]? = nil
     ) {
         self.id = id
         self.title = title
@@ -98,6 +131,7 @@ public struct CareTask: Codable, Equatable, Identifiable, Sendable {
         self.snoozedUntil = snoozedUntil
         self.streakCount = streakCount
         self.lastStreakDate = lastStreakDate
+        self.history = history
     }
 
     public init(from decoder: Decoder) throws {
@@ -112,10 +146,155 @@ public struct CareTask: Codable, Equatable, Identifiable, Sendable {
         snoozedUntil = try c.decodeIfPresent(Date.self, forKey: .snoozedUntil)
         streakCount = try c.decodeIfPresent(Int.self, forKey: .streakCount)
         lastStreakDate = try c.decodeIfPresent(Date.self, forKey: .lastStreakDate)
+        history = try c.decodeIfPresent([CareEvent].self, forKey: .history)
     }
 
     /// `true` when there's no cadence — seasonal / manual.
     public var isManual: Bool { intervalDays == nil }
+
+    // MARK: - Care Journal (event history: see / edit / undo)
+
+    /// The most events we keep per task — the journal shows a long tail without the doc growing without
+    /// bound. On overflow the oldest are dropped first.
+    public static let maxHistory = 200
+
+    /// A **deterministic** id for the single event we synthesize from the legacy `lastDoneAt`, so the
+    /// journal's displayed backfill row and the persisted ``backfillHistoryIfNeeded`` agree on which
+    /// event a swipe-delete / edit targets. Stable per task.
+    public var seedEventID: String { "\(id)-seed" }
+
+    /// The one event implied by a legacy `lastDoneAt`/`lastDoneBy` (nil when the task was never done).
+    private var legacySeedEvent: CareEvent? {
+        guard let lastDoneAt else { return nil }
+        return CareEvent(id: seedEventID, date: lastDoneAt, memberId: lastDoneBy)
+    }
+
+    /// The journal to SHOW — the real ``history`` when present, otherwise a single derived event from
+    /// the legacy `lastDoneAt` (so existing plants surface their last watering **without** a write).
+    /// Chronological, oldest → newest. Views sort/slice as they like.
+    public var displayHistory: [CareEvent] {
+        if let history, !history.isEmpty { return history.sorted { $0.date < $1.date } }
+        return legacySeedEvent.map { [$0] } ?? []
+    }
+
+    /// Seed ``history`` with the single legacy `lastDoneAt` event when it's empty but the task has been
+    /// done before — the first-write backfill so existing tasks keep their last completion once we start
+    /// tracking a real history. No-op when history already exists or the task was never done.
+    public mutating func backfillHistoryIfNeeded() {
+        guard (history?.isEmpty ?? true), let seed = legacySeedEvent else { return }
+        history = [seed]
+    }
+
+    /// `lastDoneAt`/`lastDoneBy` = the newest event (nil ⇒ never-done) — the source-of-truth sync after
+    /// any history change.
+    private mutating func refreshLastDoneFromHistory() {
+        guard let latest = history?.max(by: { $0.date < $1.date }) else {
+            lastDoneAt = nil
+            lastDoneBy = nil
+            return
+        }
+        lastDoneAt = latest.date
+        lastDoneBy = latest.memberId
+    }
+
+    /// Recompute the positive-only D3 streak purely from ``history``, folding completion-by-completion in
+    /// chronological order with the exact same rule as ``streakAfterCompletion(now:)`` (first → 1;
+    /// same-day/skew → unchanged; within two cadence cycles → +1; a full extra cycle missed → silent
+    /// reset to 1; manual → always +1). Used after an edit/delete, where there's no reliable incremental
+    /// value to carry. Never surfaces a loss — a lapse just restarts at 1.
+    private mutating func recomputeStreakFromHistory() {
+        guard let h = history, !h.isEmpty else {
+            streakCount = nil
+            lastStreakDate = nil
+            return
+        }
+        let sorted = h.sorted { $0.date < $1.date }
+        let cal = Calendar.current
+        var streak = 0
+        var lastAdvance: Date?
+        for e in sorted {
+            if let last = lastAdvance {
+                let gap = cal.dateComponents(
+                    [.day], from: cal.startOfDay(for: last), to: cal.startOfDay(for: e.date)
+                ).day ?? 0
+                if gap <= 0 {
+                    // same day / skew → unchanged
+                } else if let interval = intervalDays, gap > interval * 2 {
+                    streak = 1                          // missed a full extra cycle → gentle reset
+                } else {
+                    streak += 1
+                }
+            } else {
+                streak = 1                              // first-ever completion
+            }
+            lastAdvance = e.date
+        }
+        streakCount = streak
+        lastStreakDate = lastAdvance
+    }
+
+    /// Append `event` to the journal (backfilling the legacy stamp first so a prior single completion
+    /// isn't lost), trim to ``maxHistory``, and refresh `lastDoneAt`/`lastDoneBy` to the newest event.
+    /// **Leaves the D3 streak untouched** — ``CareCompletion/markDone`` advances the positive-only streak
+    /// incrementally so a legacy task's accumulated `streakCount` isn't reset by a shallow backfilled
+    /// history.
+    public mutating func appendEvent(_ event: CareEvent) {
+        backfillHistoryIfNeeded()
+        var h = history ?? []
+        h.append(event)
+        h.sort { $0.date < $1.date }
+        if h.count > Self.maxHistory { h.removeFirst(h.count - Self.maxHistory) }
+        history = h
+        refreshLastDoneFromHistory()
+    }
+
+    /// Remove the journal event with `id` — the real "un-water" — and fully recompute `lastDoneAt` +
+    /// the D3 streak from what remains (empty ⇒ reverts to never-done). Backfills the legacy stamp first
+    /// so a swipe-delete of a legacy task's implied event materializes then removes it. Returns `true`
+    /// when an event was removed.
+    @discardableResult
+    public mutating func deleteEvent(id: String) -> Bool {
+        backfillHistoryIfNeeded()
+        guard var h = history, let idx = h.firstIndex(where: { $0.id == id }) else { return false }
+        h.remove(at: idx)
+        history = h
+        refreshLastDoneFromHistory()
+        recomputeStreakFromHistory()
+        return true
+    }
+
+    /// Move the journal event with `id` to `newDate` (and, when `memberId` is provided, reassign who),
+    /// re-sort, and recompute `lastDoneAt` + streak. `memberId` is a double-optional: omit it to leave
+    /// the person unchanged, pass `.some(uid)`/`.some(nil)` to set/clear it. Returns `true` when found.
+    @discardableResult
+    public mutating func editEvent(id: String, newDate: Date, memberId: String?? = nil) -> Bool {
+        backfillHistoryIfNeeded()
+        guard var h = history, let idx = h.firstIndex(where: { $0.id == id }) else { return false }
+        h[idx].date = newDate
+        if let memberId { h[idx].memberId = memberId }
+        h.sort { $0.date < $1.date }
+        history = h
+        refreshLastDoneFromHistory()
+        recomputeStreakFromHistory()
+        return true
+    }
+
+    /// Average whole-day cadence between consecutive journal events, or nil with fewer than two — powers
+    /// the journal summary header's "~ every 6 days".
+    public func averageCadenceDays(now: Date = Date()) -> Int? {
+        let events = displayHistory
+        guard events.count >= 2 else { return nil }
+        let cal = Calendar.current
+        var gaps: [Int] = []
+        for i in 1..<events.count {
+            let d = cal.dateComponents(
+                [.day], from: cal.startOfDay(for: events[i - 1].date), to: cal.startOfDay(for: events[i].date)
+            ).day ?? 0
+            if d > 0 { gaps.append(d) }
+        }
+        guard !gaps.isEmpty else { return nil }
+        return Int((Double(gaps.reduce(0, +)) / Double(gaps.count)).rounded())
+    }
 
     // MARK: Positive-only streaks (D3)
 

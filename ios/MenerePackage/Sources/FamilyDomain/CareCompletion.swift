@@ -34,8 +34,10 @@ public enum CareCompletion {
         // resets to 1. Never decremented, never surfaced as a loss — see ``CareTask/streakAfterCompletion``.
         updated.tasks[t].streakCount = item.tasks[t].streakAfterCompletion(now: now)
         updated.tasks[t].lastStreakDate = now
-        updated.tasks[t].lastDoneAt = now
-        updated.tasks[t].lastDoneBy = uid
+        // Care Journal — record this completion as a real event (seeding the legacy `lastDoneAt` first so
+        // the prior single stamp isn't lost), which also refreshes `lastDoneAt`/`lastDoneBy` to the newest
+        // event. History is the source of truth for last-done; the streak stays incrementally advanced above.
+        updated.tasks[t].appendEvent(CareEvent(date: now, memberId: uid))
         // Actually doing the task clears any "soil's still damp" snooze so the normal cadence resumes
         // from this completion (a snooze longer than the interval shouldn't outlive the real care).
         updated.tasks[t].snoozedUntil = nil

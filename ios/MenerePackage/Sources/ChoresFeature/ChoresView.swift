@@ -139,6 +139,10 @@ public struct ChoresView: View {
         /// pushed on a house/zone row tap. Lighter than plant/pet: no photo/species/vet. Re-derives the
         /// live ``CareItem`` by id.
         case careDetail(id: String)
+        /// Care Journal — a single care item's chronological watering/care log (see/edit/undo), pushed
+        /// from a detail screen's "Care journal" button. Kind-agnostic (plants/pets/house). `focusTaskID`
+        /// pre-selects a task's filter chip when opened from a specific task; nil ⇒ "All".
+        case careJournal(itemID: String, focusTaskID: String?)
     }
 
     public var body: some View {
@@ -209,6 +213,7 @@ public struct ChoresView: View {
                 case let .plantDetail(id): PlantDetailView(store: store, plantID: id)
                 case let .petDetail(id): PetDetailView(store: store, petID: id)
                 case let .careDetail(id): CareItemDetailView(store: store, itemID: id)
+                case let .careJournal(id, focus): CareJournalView(store: store, itemID: id, focusTaskID: focus)
                 case .yard: YardDetailView(store: store)
                 case .pets: PetsDetailView(store: store)
                 case .activity: ActivityDetailView(store: store)
@@ -268,6 +273,7 @@ public struct ChoresView: View {
         case .plantDetail: analytics.log("home_detail_opened", ["kind": "plant"])
         case .petDetail: analytics.log("home_detail_opened", ["kind": "pet"])
         case .careDetail: analytics.log("home_detail_opened", ["kind": "care"])
+        case .careJournal: analytics.log("care_journal_opened")
         }
     }
 
@@ -1847,6 +1853,8 @@ private struct PlantDetailView: View {
                         )
                     }
                 }
+                Divider()
+                CareJournalLink(itemID: plant.id, label: "Watering history")
             }
         }
     }
@@ -2766,6 +2774,8 @@ private struct PetDetailView: View {
                         )
                     }
                 }
+                Divider()
+                CareJournalLink(itemID: pet.id, tint: .sky, label: "Care journal")
             }
         }
     }
@@ -3143,6 +3153,8 @@ private struct CareItemDetailView: View {
                         )
                     }
                 }
+                Divider()
+                CareJournalLink(itemID: item.id, label: "Care journal")
             }
         }
     }
@@ -3676,6 +3688,463 @@ private extension View {
         modifier(CareUndoBanner(store: store))
     }
 }
+
+// MARK: - Care Journal (see / edit / undo a care item's completion history)
+
+/// A tappable "Care journal" / "Watering history" link shown at the foot of a detail screen's care-task
+/// card — pushes ``CareJournalView`` for the item. Kind-agnostic (plants → "Watering history", pets/house
+/// → "Care journal").
+private struct CareJournalLink: View {
+    let itemID: String
+    var tint: Color = .bacanGreen
+    var label: String = "Care journal"
+
+    var body: some View {
+        NavigationLink(value: ChoresView.Destination.careJournal(itemID: itemID, focusTaskID: nil)) {
+            HStack(spacing: 8) {
+                Image(systemName: "clock.arrow.circlepath").font(.subheadline).foregroundStyle(tint)
+                Text(label)
+                    .font(.system(.subheadline, design: .rounded).weight(.medium))
+                    .foregroundStyle(tint)
+                Spacer(minLength: 4)
+                Image(systemName: "chevron.right").font(.caption2.weight(.semibold)).foregroundStyle(Color.inkSoft)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("care-journal-link-\(itemID)")
+    }
+}
+
+/// One entry in a care item's journal: a recorded ``CareEvent`` paired with the ``CareTask`` it belongs
+/// to (events don't carry their task, so we flatten them here). Sorted newest-first for the screen.
+private struct JournalEntry: Identifiable, Equatable {
+    let task: CareTask
+    let event: CareEvent
+    var id: String { "\(task.id)/\(event.id)" }
+}
+
+/// The **Care Journal** — a concise, chronological log of every watering/care completion for one item,
+/// grouped by day, filterable per task, with a summary header (count · average cadence · 🔥 streak). This
+/// is the persistent home for review + **edit** (tap a row → change the date/who) + **undo** (swipe to
+/// delete = the real "un-water", with an Undo snackbar) that the disappearing due-list CTA can't provide.
+/// Kind-agnostic: reached from plant, pet, and house/zone detail screens.
+private struct CareJournalView: View {
+    @Bindable var store: StoreOf<ChoresReducer>
+    let itemID: String
+    let focusTaskID: String?
+
+    /// The task filter: nil ⇒ "All", else a specific task's events only. Seeded from `focusTaskID`.
+    @State private var selectedTaskID: String?
+    /// The event currently being edited (date/who), presented as a sheet.
+    @State private var editing: CareEventEditContext?
+
+    init(store: StoreOf<ChoresReducer>, itemID: String, focusTaskID: String?) {
+        self.store = store
+        self.itemID = itemID
+        self.focusTaskID = focusTaskID
+        _selectedTaskID = State(initialValue: focusTaskID)
+    }
+
+    /// Re-derived live so edits/deletes reflect immediately.
+    private var item: CareItem? { store.careItems.first { $0.id == itemID } }
+
+    var body: some View {
+        Group {
+            if let item {
+                content(item)
+            } else {
+                ContentUnavailableView("Nothing here yet", systemImage: "clock.arrow.circlepath")
+                    .padding(.top, 60)
+            }
+        }
+        .background(Color.familyCanvas)
+        .navigationTitle("Care journal")
+        .navigationBarTitleDisplayMode(.inline)
+        .careEventUndoBanner(store, itemID: itemID)
+        .sheet(item: $editing) { ctx in
+            CareEventEditSheet(
+                context: ctx,
+                members: store.members,
+                onSave: { newDate, memberID in
+                    store.send(.editCareEvent(
+                        itemID: itemID, taskID: ctx.taskID, eventID: ctx.event.id,
+                        newDate: newDate, memberID: memberID
+                    ))
+                }
+            )
+        }
+    }
+
+    @ViewBuilder
+    private func content(_ item: CareItem) -> some View {
+        let entries = filteredEntries(item)
+        List {
+            Section {
+                summaryHeader(item, entries: entries)
+                    .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
+                    .listRowBackground(Color.clear)
+                if tasksWithHistory(item).count > 1 {
+                    filterChips(item)
+                        .listRowInsets(EdgeInsets(top: 0, leading: 12, bottom: 4, trailing: 12))
+                        .listRowBackground(Color.clear)
+                }
+            }
+
+            if entries.isEmpty {
+                Section {
+                    Text("No care logged yet. Once you mark a task done, it'll show up here — tidy and easy to fix.")
+                        .font(.system(.subheadline, design: .rounded))
+                        .foregroundStyle(Color.inkSoft)
+                        .listRowBackground(Color.familySurface)
+                }
+            } else {
+                ForEach(groupedByDay(entries), id: \.key) { group in
+                    Section(dayLabel(group.key)) {
+                        ForEach(group.entries) { entry in
+                            eventRow(item, entry: entry)
+                                .listRowBackground(Color.familySurface)
+                                .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                                    Button(role: .destructive) {
+                                        store.send(.deleteCareEvent(
+                                            itemID: itemID, taskID: entry.task.id, eventID: entry.event.id
+                                        ), animation: .snappy)
+                                    } label: {
+                                        Label(unwaterLabel(entry.task), systemImage: "arrow.uturn.backward")
+                                    }
+                                    .accessibilityIdentifier("care-journal-delete-\(entry.event.id)")
+                                }
+                        }
+                    }
+                }
+            }
+        }
+        .scrollContentBackground(.hidden)
+        .listStyle(.insetGrouped)
+    }
+
+    // MARK: Summary header
+
+    @ViewBuilder
+    private func summaryHeader(_ item: CareItem, entries: [JournalEntry]) -> some View {
+        let cadence = cadenceDays(entries)
+        let streak = representativeStreak(item)
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 10) {
+                Image(systemName: "book.pages.fill").font(.title3).foregroundStyle(Color.bacanGreen)
+                Text(item.name).familyTitle(.headline)
+                Spacer(minLength: 4)
+                StreakBadge(streak: streak)
+            }
+            HStack(spacing: 14) {
+                summaryStat("\(entries.count)", entries.count == 1 ? "entry" : "entries", "checkmark.seal.fill")
+                if let cadence {
+                    summaryStat("~\(cadence)d", "cadence", "calendar")
+                }
+            }
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 18, style: .continuous).fill(Color.familySurface))
+    }
+
+    private func summaryStat(_ value: String, _ label: String, _ symbol: String) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: symbol).font(.caption).foregroundStyle(Color.inkSoft)
+            Text(value).font(.system(.subheadline, design: .rounded).weight(.bold)).foregroundStyle(Color.ink)
+            Text(label).font(.caption).foregroundStyle(Color.inkSoft)
+        }
+    }
+
+    // MARK: Filter chips (watering front-and-center)
+
+    private func filterChips(_ item: CareItem) -> some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                filterChip(title: "All", isOn: selectedTaskID == nil) { selectedTaskID = nil }
+                ForEach(tasksWithHistory(item)) { task in
+                    filterChip(title: task.title, isOn: selectedTaskID == task.id) { selectedTaskID = task.id }
+                }
+            }
+            .padding(.horizontal, 4)
+        }
+    }
+
+    private func filterChip(title: String, isOn: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: { withAnimation(.snappy) { action() } }) {
+            Text(title)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(isOn ? .white : Color.ink)
+                .padding(.horizontal, 12).padding(.vertical, 7)
+                .background(Capsule().fill(isOn ? Color.bacanGreen : Color.bacanGreen.opacity(0.12)))
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("care-journal-filter-\(title)")
+    }
+
+    // MARK: Event row
+
+    private func eventRow(_ item: CareItem, entry: JournalEntry) -> some View {
+        let verb = ActivityItem.careVerb(forTask: entry.task.title).capitalizedFirst
+        return Button {
+            editing = CareEventEditContext(taskID: entry.task.id, event: entry.event)
+        } label: {
+            HStack(spacing: 12) {
+                ZStack {
+                    Circle().fill(Color.bacanGreen.opacity(0.15))
+                    Image(systemName: glyph(item, task: entry.task)).font(.subheadline).foregroundStyle(Color.bacanGreen)
+                }
+                .frame(width: 36, height: 36)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(verb).font(.system(.body, design: .rounded).weight(.medium)).foregroundStyle(Color.ink)
+                    Text(subtitle(entry)).font(.caption).foregroundStyle(Color.inkSoft)
+                }
+                Spacer(minLength: 4)
+                Image(systemName: "pencil").font(.caption2).foregroundStyle(Color.inkSoft.opacity(0.6))
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("care-journal-row-\(entry.event.id)")
+        .accessibilityLabel("\(verb), \(subtitle(entry)). Tap to edit, swipe to remove.")
+    }
+
+    /// "Jul 7, 2:14 PM · Michael" — the full moment plus who did it.
+    private func subtitle(_ entry: JournalEntry) -> String {
+        let when = entry.event.date.formatted(.dateTime.month(.abbreviated).day().hour().minute())
+        if let by = entry.event.memberId, let name = store.members.first(where: { $0.id == by })?.name {
+            return "\(when) · \(name)"
+        }
+        return when
+    }
+
+    /// A verb-driven glyph for the row (water → drop, fertilize → leaf …), falling back to the item's
+    /// own icon so pet/house tasks stay on-brand.
+    private func glyph(_ item: CareItem, task: CareTask) -> String {
+        PlantCarePreset.matching(task.title)?.symbol ?? item.iconSymbol
+    }
+
+    /// "Un-water" for a watering task, else "Remove" — the destructive swipe reads as the real undo.
+    private func unwaterLabel(_ task: CareTask) -> String {
+        PlantCarePreset.matching(task.title) == .water ? "Un-water" : "Remove"
+    }
+
+    // MARK: Data shaping
+
+    /// Every task that has at least one journal event (real or the legacy-seed), watering first.
+    private func tasksWithHistory(_ item: CareItem) -> [CareTask] {
+        item.tasks
+            .filter { !$0.displayHistory.isEmpty }
+            .sorted { lhs, rhs in
+                let lw = PlantCarePreset.matching(lhs.title) == .water
+                let rw = PlantCarePreset.matching(rhs.title) == .water
+                if lw != rw { return lw }   // watering front-and-center
+                return lhs.title < rhs.title
+            }
+    }
+
+    /// All journal entries for the current filter, newest-first.
+    private func filteredEntries(_ item: CareItem) -> [JournalEntry] {
+        var out: [JournalEntry] = []
+        for task in item.tasks {
+            if let sel = selectedTaskID, task.id != sel { continue }
+            for event in task.displayHistory {
+                out.append(JournalEntry(task: task, event: event))
+            }
+        }
+        return out.sorted { $0.event.date > $1.event.date }
+    }
+
+    /// Average whole-day cadence across the filtered entries (nil with < 2). Mirrors
+    /// ``CareTask/averageCadenceDays`` but spans the merged, multi-task set when the filter is "All".
+    private func cadenceDays(_ entries: [JournalEntry]) -> Int? {
+        let dates = entries.map(\.event.date).sorted()
+        guard dates.count >= 2 else { return nil }
+        let cal = Calendar.current
+        var gaps: [Int] = []
+        for i in 1..<dates.count {
+            let d = cal.dateComponents([.day], from: cal.startOfDay(for: dates[i - 1]), to: cal.startOfDay(for: dates[i])).day ?? 0
+            if d > 0 { gaps.append(d) }
+        }
+        guard !gaps.isEmpty else { return nil }
+        return Int((Double(gaps.reduce(0, +)) / Double(gaps.count)).rounded())
+    }
+
+    /// The 🔥 streak to show in the header: the selected task's, or the strongest across tasks for "All".
+    private func representativeStreak(_ item: CareItem) -> Int? {
+        if let sel = selectedTaskID { return item.tasks.first { $0.id == sel }?.streakCount }
+        return item.tasks.compactMap(\.streakCount).max()
+    }
+
+    /// Group newest-first entries by calendar day, preserving newest-day-first order.
+    private func groupedByDay(_ entries: [JournalEntry]) -> [(key: Date, entries: [JournalEntry])] {
+        let cal = Calendar.current
+        var order: [Date] = []
+        var buckets: [Date: [JournalEntry]] = [:]
+        for entry in entries {
+            let day = cal.startOfDay(for: entry.event.date)
+            if buckets[day] == nil { order.append(day) }
+            buckets[day, default: []].append(entry)
+        }
+        return order.map { (key: $0, entries: buckets[$0] ?? []) }
+    }
+
+    private func dayLabel(_ day: Date) -> String {
+        let cal = Calendar.current
+        if cal.isDateInToday(day) { return "Today" }
+        if cal.isDateInYesterday(day) { return "Yesterday" }
+        if cal.isDate(day, equalTo: Date(), toGranularity: .year) {
+            return day.formatted(.dateTime.weekday(.abbreviated).month(.abbreviated).day())
+        }
+        return day.formatted(.dateTime.month(.abbreviated).day().year())
+    }
+}
+
+/// The item being edited in ``CareEventEditSheet`` — identifiable by its event id for `.sheet(item:)`.
+private struct CareEventEditContext: Identifiable, Equatable {
+    let taskID: String
+    let event: CareEvent
+    var id: String { event.id }
+}
+
+/// Edit a single journal event: change WHEN it happened (date + time) and, optionally, WHO did it. Saving
+/// routes through ``ChoresReducer/Action/editCareEvent`` which recomputes `lastDoneAt` + streak.
+private struct CareEventEditSheet: View {
+    let context: CareEventEditContext
+    let members: [HouseholdMember]
+    let onSave: (_ newDate: Date, _ memberID: String?) -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var date: Date
+    @State private var memberID: String?
+
+    init(context: CareEventEditContext, members: [HouseholdMember], onSave: @escaping (Date, String?) -> Void) {
+        self.context = context
+        self.members = members
+        self.onSave = onSave
+        _date = State(initialValue: context.event.date)
+        _memberID = State(initialValue: context.event.memberId)
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("When") {
+                    DatePicker("Date & time", selection: $date, in: ...Date(), displayedComponents: [.date, .hourAndMinute])
+                }
+                Section("Who") {
+                    Picker("Done by", selection: $memberID) {
+                        Text("Someone").tag(String?.none)
+                        ForEach(members) { m in
+                            Text(m.name).tag(String?.some(m.id))
+                        }
+                    }
+                }
+            }
+            .navigationTitle("Edit entry")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save") {
+                        onSave(date, memberID)
+                        dismiss()
+                    }
+                    .accessibilityIdentifier("care-journal-edit-save")
+                }
+            }
+        }
+    }
+}
+
+/// The reversible "un-water" snackbar shown after a swipe-delete in the journal, driven by
+/// `store.careEventUndo`. Mirrors ``CareUndoBanner``'s appearance-independent chrome.
+private struct CareEventUndoBanner: ViewModifier {
+    @Bindable var store: StoreOf<ChoresReducer>
+    let itemID: String
+
+    private let toastFill = Color(red: 0.165, green: 0.141, blue: 0.133)
+    private let toastCheck = Color(red: 0.44, green: 0.78, blue: 0.60)
+    private let toastUndo = Color(red: 0.93, green: 0.71, blue: 0.31)
+
+    func body(content: Content) -> some View {
+        content.overlay(alignment: .bottom) {
+            if let undo = store.careEventUndo, undo.itemID == itemID {
+                HStack(spacing: 12) {
+                    Image(systemName: "arrow.uturn.backward.circle.fill").foregroundStyle(toastCheck)
+                    Text("Removed \(undo.taskTitle.lowercased()) entry")
+                        .font(.system(.subheadline, design: .rounded).weight(.medium))
+                        .foregroundStyle(.white)
+                        .lineLimit(1)
+                    Spacer(minLength: 8)
+                    Button("Undo") { store.send(.undoDeleteCareEvent, animation: .snappy) }
+                        .font(.system(.subheadline, design: .rounded).weight(.bold))
+                        .foregroundStyle(toastUndo)
+                        .accessibilityIdentifier("care-journal-undo")
+                }
+                .padding(.horizontal, 18)
+                .padding(.vertical, 13)
+                .background(
+                    Capsule(style: .continuous).fill(toastFill)
+                        .overlay(Capsule(style: .continuous).strokeBorder(Color.white.opacity(0.08), lineWidth: 0.5))
+                )
+                .shadow(color: .black.opacity(0.28), radius: 14, y: 5)
+                .padding(.horizontal, 20)
+                .padding(.bottom, 14)
+                .id(undo.nonce)
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+                .onTapGesture { store.send(.dismissCareEventUndo, animation: .snappy) }
+            }
+        }
+        .animation(.snappy, value: store.careEventUndo)
+    }
+}
+
+private extension View {
+    func careEventUndoBanner(_ store: StoreOf<ChoresReducer>, itemID: String) -> some View {
+        modifier(CareEventUndoBanner(store: store, itemID: itemID))
+    }
+}
+
+#if DEBUG
+#Preview("Care journal") {
+    let cal = Calendar.current
+    func daysAgo(_ d: Int, hour: Int = 9) -> Date {
+        let base = cal.date(byAdding: .day, value: -d, to: Date()) ?? Date()
+        return cal.date(bySettingHour: hour, minute: 14, second: 0, of: base) ?? base
+    }
+    let plant = CareItem(
+        kind: .plant, name: "Monstera", iconSymbol: "leaf.fill", location: "Living room",
+        tasks: [
+            CareTask(
+                title: "Water", intervalDays: 7,
+                streakCount: 4, lastStreakDate: daysAgo(0),
+                history: [
+                    CareEvent(date: daysAgo(21), memberId: "A"),
+                    CareEvent(date: daysAgo(14), memberId: "B"),
+                    CareEvent(date: daysAgo(7), memberId: "A"),
+                    CareEvent(date: daysAgo(0, hour: 14), memberId: "A"),
+                ]
+            ),
+            CareTask(
+                title: "Fertilize", intervalDays: 30,
+                history: [CareEvent(date: daysAgo(9), memberId: "B")]
+            ),
+        ]
+    )
+    var state = ChoresReducer.State()
+    state.careItems = [plant]
+    state.members = [HouseholdMember(id: "A", name: "Michael"), HouseholdMember(id: "B", name: "Valentina")]
+    return NavigationStack {
+        CareJournalView(
+            store: Store(initialState: state) { ChoresReducer() },
+            itemID: plant.id, focusTaskID: nil
+        )
+    }
+}
+#endif
 
 /// A single Plants row: circular photo thumbnail (or a leaf fallback), name, species, the soonest
 /// task's due line (task-title-driven verb wording — "Water due today" / "Watered Jul 2 by …"), and
