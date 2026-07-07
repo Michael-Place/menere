@@ -533,6 +533,25 @@ Oliver" needs our OWN on-device Vision face clustering (FL4).
   (ties to V5 ingestion), scene/content tagging.
 Sequence: FL1 foundation solo (project.yml + new module), then FL2 + FL3 parallel on top.
 
+# The Delight Layer (2026-07-07, Michael requested — "dopamine hits")
+Principle: ONE reusable CelebrationKit (MenereUI) — haptics + burst variants (droplet/confetti/
+sparkle/leaf/paw) + a reward toast + rotating micro-copy pools — flavored per moment. Tone =
+**calm by default, joyful on accomplishment** (family hub, not a slot machine — earned + warm,
+never spammy/guilt-y). Rollout:
+- **D0 — Watering celebration [BUILDING]:** haptic + droplet burst+ripple + plant bounce + micro-
+  copy on the Water button (Home care rows / plant detail / Today care card). Becomes the KIT
+  foundation. (Haptics are device-only — sim can't feel them.)
+- **D1 — Generalize the kit + care-all-kinds:** extract the reusable CelebrationKit from D0; apply
+  to EVERY care completion (fertilize/repot/pet-meds/house-maintenance), type-flavored.
+- **D2 — the big completions (parallel):** (a) **Chores → XP → level-up** — +XP fly, progress
+  snap, and a real level-up celebration on the phone (the crown+confetti the tvOS leaderboard
+  already has); (b) **List check-off + "list done!"** (grocery/packing complete); (c) **Kid
+  milestones** — the BIGGEST celebration in the app (first words etc. — precious).
+- **D3 — streak/ambient layer (gentle):** track + reward streaks (watered-N-days, chore streaks,
+  daily check-in 🔥) + "Today: all done 🌟" caught-up states + savings-goal milestones + Radar
+  "all caught up". Keep it positive, never guilt-inducing.
+Sequence: D0 (now) → D1 (kit + care) solo → D2 (3 parallel: chores/lists/milestones) → D3 streaks.
+
 # Motion & Delight (2026-07-06, Michael requested)
 - **Tab load-in animations:** each tab plays a signature staggered entrance on cold launch + on
   tab-switch — "surprise & delight as I navigate." Shared `TabEntrance` reveal (spring stagger,
