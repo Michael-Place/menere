@@ -7,6 +7,16 @@ minimal public-launch hardening).
 
 For the full pivot plan, phase history, and decisions, see **`ROADMAP-family.md`**.
 
+**Act III shipped (builds 49–61, all on TestFlight):** the **Delight Layer** (`CelebrationKit` in
+MenereUI — reusable haptics+confetti; care-all-kinds celebrations, chore→XP→level-up, list-done,
+kid-milestone keepsake, positive-only care streaks via `CareTask.streakCount`); **Today redesign**
+(14 cards → calm hierarchy: one consolidated "Needs you today" + "Today's plan" + quiet glances);
+**Care Journal** (`CareTask.history:[CareEvent]` + per-plant watering-history screen, swipe-to-
+un-water + edit); **Projects** (`ProjectsFeature` — family-initiative workspaces; PR1 workspace →
+PR2 ingestion project-tagging via `Document.suggestedProjectId` + AI matcher → PR3 contacts+budget
+→ PR4 `generateProjectBrief` + KB templates → PR5 Today/Radar surfacing; see ROADMAP-family.md → "Projects").
+Swift-6 concurrency warnings cleaned up (build 61).
+
 **Act II (in progress — P5 identity ✅, P6 Today ✅, P7 Family Brain ✅, P8 home care ✅, P9 plants & garden ✅, P10 pets ✅, P12 Hue ✅, P13-C1 Money ✅, P15 fleet ✅ except C6 Ford):**
 The smart-home fleet: `HueClient`/`LutronClient`/`SonosClient`/`NestClient`/
 `HubspaceClient`/`MerossClient`/`HomeKitClient` — all playbook-shaped (config docs under
