@@ -134,6 +134,11 @@ public struct CaptureReducer {
         /// The processed (downscaled JPEG) photo to classify + upload, and a small preview thumbnail.
         var imageJPEG: Data?
         var thumbnail: Data?
+        /// A shared PDF's raw bytes (no downscale) + its filename, carried straight from the Share
+        /// Extension. A PDF is a document → it routes to the Family Brain and uploads via
+        /// `storage.uploadDocumentPDF` (the same path the doc scanner uses), never the photo-page path.
+        var pdfData: Data?
+        var pdfFilename: String?
 
         /// The ranked destinations for the current input; `suggestions.first` is the AI/heuristic's
         /// pick and is pre-selected. The user confirms it or taps another (one-tap override).
@@ -152,9 +157,11 @@ public struct CaptureReducer {
         var errorMessage: String?
 
         var hasInput: Bool {
-            imageJPEG != nil || !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            imageJPEG != nil || pdfData != nil
+                || !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         }
         var hasPhoto: Bool { imageJPEG != nil }
+        var hasPDF: Bool { pdfData != nil }
         var trimmedText: String { text.trimmingCharacters(in: .whitespacesAndNewlines) }
 
         public init() {}
@@ -165,8 +172,9 @@ public struct CaptureReducer {
         /// V5 Share Extension last-mile: read-and-clear the parked share (`CaptureHandoffStore.take()`)
         /// off the reducer, loading + downscaling any shared image bytes from the app-group container.
         case consumeHandoff
-        /// The parked share (if any) + its processed image, ready to prefill the compose surface.
-        case handoffLoaded(PendingShare, jpeg: Data?, thumbnail: Data?)
+        /// The parked share (if any) + its processed image and/or raw PDF bytes, ready to prefill the
+        /// compose surface.
+        case handoffLoaded(PendingShare, jpeg: Data?, thumbnail: Data?, pdf: Data?)
         case contextLoaded(lists: [FamilyList], members: [HouseholdMember])
         /// A photo finished processing in the view (downscaled JPEG + preview thumbnail).
         case photoProcessed(jpeg: Data, thumbnail: Data)
@@ -234,19 +242,31 @@ public struct CaptureReducer {
                     guard let share = CaptureHandoffStore.take() else { return }
                     var jpeg: Data?
                     var thumbnail: Data?
-                    if share.kind == .image,
-                       let name = share.attachmentFilename,
+                    var pdf: Data?
+                    if let name = share.attachmentFilename,
                        let url = PendingShareStore.attachmentURL(for: name),
-                       let data = try? Data(contentsOf: url),
-                       let ui = UIImage(data: data) {
-                        jpeg = CaptureImageProcessing.downscaledJPEG(from: ui, maxEdge: 2000, quality: 0.75)
-                        thumbnail = CaptureImageProcessing.thumbnailJPEG(from: ui)
+                       let data = try? Data(contentsOf: url) {
+                        switch share.kind {
+                        case .image:
+                            if let ui = UIImage(data: data) {
+                                jpeg = CaptureImageProcessing.downscaledJPEG(from: ui, maxEdge: 2000, quality: 0.75)
+                                thumbnail = CaptureImageProcessing.thumbnailJPEG(from: ui)
+                            }
+                        case .pdf:
+                            // A PDF's bytes go up untouched (no downscale) — the Brain reads the file.
+                            pdf = data
+                        case .text, .url:
+                            break
+                        }
                     }
-                    await send(.handoffLoaded(share, jpeg: jpeg, thumbnail: thumbnail))
+                    await send(.handoffLoaded(share, jpeg: jpeg, thumbnail: thumbnail, pdf: pdf))
                 }
 
-            case let .handoffLoaded(share, jpeg, thumbnail):
-                analytics.log("share_prefill", ["kind": share.kind.rawValue])
+            case let .handoffLoaded(share, jpeg, thumbnail, pdf):
+                analytics.log("share_prefill", [
+                    "kind": share.kind.rawValue,
+                    "has_pdf": (pdf != nil) ? "1" : "0",
+                ])
                 switch share.kind {
                 case .image:
                     // Prefill the photo slot; any note that rode along goes into the field too.
@@ -262,9 +282,23 @@ public struct CaptureReducer {
                     // (V5-URL) so the sheet opens already carrying a proposed destination.
                     state.text = share.composeText
                     return .send(.classifyTapped)
-                case .text, .pdf:
-                    // Text lands in the note field; a PDF has no compose slot, so carry its title/note
-                    // text (nothing is lost) and let the user route it.
+                case .pdf:
+                    // A PDF is a document → it belongs in the Family Brain. Carry the raw bytes + the
+                    // typed description (as the title/note), pre-select Brain, and jump straight to the
+                    // confirm card so the user files it in one tap. If the bytes somehow didn't load,
+                    // fall back to the plain note field so nothing is silently dropped.
+                    let note = share.composeText
+                    if !note.isEmpty { state.text = note }
+                    if let pdf {
+                        state.pdfData = pdf
+                        state.pdfFilename = share.attachmentFilename
+                        state.suggestions = [.brain]
+                        state.selected = .brain
+                        state.stage = .confirm
+                    }
+                    return .none
+                case .text:
+                    // Text lands in the note field for the user to route.
                     state.text = share.composeText
                     return .none
                 }
@@ -356,16 +390,18 @@ public struct CaptureReducer {
                 }
                 let text = state.trimmedText
                 let jpeg = state.imageJPEG
+                let pdfData = state.pdfData
                 let plantHint = state.plantHint
                 let list = Self.targetList(state.lists)
+                let input = pdfData != nil ? "pdf" : (jpeg != nil ? "photo" : "text")
                 analytics.log("smart_capture_routed", [
                     "destination": dest.rawValue,
-                    "input": jpeg != nil ? "photo" : "text",
+                    "input": input,
                 ])
                 return .run { send in
                     do {
                         let receipt = try await Self.file(
-                            dest: dest, hid: hid, uid: uid, text: text, jpeg: jpeg,
+                            dest: dest, hid: hid, uid: uid, text: text, jpeg: jpeg, pdfData: pdfData,
                             plantHint: plantHint, list: list,
                             persistence: persistence, storage: storage, docs: docs
                         )
@@ -466,6 +502,7 @@ public struct CaptureReducer {
         uid: String,
         text: String,
         jpeg: Data?,
+        pdfData: Data? = nil,
         plantHint: PlantHint?,
         list: FamilyList?,
         persistence: PersistenceClient,
@@ -477,14 +514,20 @@ public struct CaptureReducer {
         case .brain:
             let docId = UUID().uuidString
             var pagePaths: [String] = []
-            if let jpeg {
+            if let pdfData {
+                // A shared PDF uploads as-is via the doc-scanner's PDF path (NOT the photo-page path)
+                // so `processDocument` reads the real file. `document.pdf` is the only "page".
+                let path = try await storage.uploadDocumentPDF(hid, docId, pdfData)
+                pagePaths.append(path)
+            } else if let jpeg {
                 let compressed = DocumentImageProcessing.compressedJPEG(from: jpeg) ?? jpeg
                 let path = try await storage.uploadDocumentPage(hid, docId, 0, compressed)
                 pagePaths.append(path)
             }
+            let title = text.nonEmpty ?? (pdfData != nil ? "Shared PDF" : defaultDocTitle(text: text, now: now))
             let doc = FamilyDomain.Document(
                 id: docId,
-                title: defaultDocTitle(text: text, now: now),
+                title: title,
                 type: .other,
                 pagePaths: pagePaths,
                 notes: text.isEmpty ? nil : text,

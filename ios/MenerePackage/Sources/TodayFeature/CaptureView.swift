@@ -88,7 +88,11 @@ public struct CaptureView: View {
                         .foregroundStyle(Color.inkSoft)
                 }
 
-                photoWell
+                if store.hasPDF {
+                    pdfChip
+                } else {
+                    photoWell
+                }
 
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Add a note")
@@ -351,6 +355,9 @@ public struct CaptureView: View {
                     .frame(width: 60, height: 60)
                     .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
             }
+            if store.hasPDF {
+                pdfChip
+            }
             if !store.trimmedText.isEmpty {
                 Text(store.trimmedText)
                     .font(.subheadline)
@@ -359,6 +366,24 @@ public struct CaptureView: View {
             }
             Spacer(minLength: 0)
         }
+    }
+
+    /// The "a PDF is attached" chip — the file-slot analogue of the photo thumbnail, so the user can
+    /// see the shared document rode along even though there's no image to preview.
+    private var pdfChip: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "doc.fill")
+                .foregroundStyle(Color.sky)
+            Text("PDF attached")
+                .font(.system(.subheadline, design: .rounded).weight(.semibold))
+                .foregroundStyle(Color.ink)
+        }
+        .padding(.horizontal, 12).padding(.vertical, 10)
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(Color.sky.opacity(0.12))
+        )
+        .accessibilityIdentifier("capture-pdf-chip")
     }
 
     // MARK: - Filing
