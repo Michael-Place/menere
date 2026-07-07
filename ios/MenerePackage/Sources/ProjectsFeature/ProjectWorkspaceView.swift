@@ -23,6 +23,7 @@ public struct ProjectWorkspaceView: View {
             VStack(alignment: .leading, spacing: 22) {
                 header
                 inspirationSection
+                suggestionsSection
                 documentsSection
                 linksSection
                 tasksSection
@@ -201,6 +202,56 @@ public struct ProjectWorkspaceView: View {
                     }
                 }
             }
+        }
+    }
+
+    // MARK: Suggested items inbox
+
+    /// A gently-highlighted card of docs the AI/capture *guessed* belong here (`suggestedProjectId`),
+    /// each with **Add** (confirm → moves into Documents) or **Dismiss** (wave it off). Hidden when empty.
+    @ViewBuilder
+    private var suggestionsSection: some View {
+        let suggestions = store.suggestedDocuments
+        if !suggestions.isEmpty {
+            VStack(alignment: .leading, spacing: 12) {
+                Label {
+                    Text("\(suggestions.count) \(suggestions.count == 1 ? "item" : "items") suggested for this project")
+                        .font(.system(.headline, design: .rounded).weight(.bold))
+                        .foregroundStyle(Color.ink)
+                        .fixedSize(horizontal: false, vertical: true)
+                } icon: {
+                    Image(systemName: "sparkles").foregroundStyle(Color.marigold)
+                }
+
+                Text("These looked related — keep them?")
+                    .font(.system(.subheadline, design: .rounded))
+                    .foregroundStyle(Color.inkSoft)
+
+                VStack(spacing: 8) {
+                    ForEach(suggestions) { doc in
+                        SuggestionRow(
+                            doc: doc,
+                            onAdd: {
+                                store.send(.acceptSuggestion(doc))
+                                MenereHaptics.softTap()
+                            },
+                            onDismiss: { store.send(.dismissSuggestion(doc)) }
+                        )
+                    }
+                }
+            }
+            .padding(16)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 20, style: .continuous)
+                    .fill(Color.marigold.opacity(0.12))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 20, style: .continuous)
+                    .strokeBorder(Color.marigold.opacity(0.35), lineWidth: 1)
+            )
+            .padding(.horizontal, 16)
+            .accessibilityIdentifier("project-suggestions-section")
         }
     }
 
@@ -513,6 +564,69 @@ struct DocumentRow: View {
     }
 }
 
+// MARK: - Suggestion row
+
+/// One suggested doc in the inbox: title/vendor/amount + **Add** (confirm) and **Dismiss** (wave off).
+struct SuggestionRow: View {
+    let doc: FamilyDomain.Document
+    let onAdd: () -> Void
+    let onDismiss: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 10) {
+                Image(systemName: doc.type.symbolName)
+                    .foregroundStyle(Color.marigold)
+                    .frame(width: 26)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(doc.title.isEmpty ? doc.type.displayName : doc.title)
+                        .font(.system(.subheadline, design: .rounded).weight(.medium))
+                        .foregroundStyle(Color.ink)
+                        .lineLimit(1)
+                    HStack(spacing: 6) {
+                        if let vendor = doc.vendor, !vendor.isEmpty {
+                            Text(vendor).lineLimit(1)
+                        }
+                        if let amount = doc.amount {
+                            Text(amount, format: .currency(code: "USD"))
+                        }
+                    }
+                    .font(.caption)
+                    .foregroundStyle(Color.inkSoft)
+                }
+                Spacer(minLength: 0)
+            }
+
+            HStack(spacing: 8) {
+                Spacer(minLength: 0)
+                Button { onDismiss() } label: {
+                    Text("Dismiss")
+                        .font(.system(.footnote, design: .rounded).weight(.semibold))
+                        .foregroundStyle(Color.inkSoft)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 7)
+                        .background(Capsule().fill(Color.familyCanvas))
+                }
+                .buttonStyle(.pressable)
+                .accessibilityIdentifier("dismiss-suggestion")
+
+                Button { onAdd() } label: {
+                    Label("Add", systemImage: "plus")
+                        .font(.system(.footnote, design: .rounded).weight(.bold))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 7)
+                        .background(Capsule().fill(Color.bacanGreen))
+                }
+                .buttonStyle(.pressable)
+                .accessibilityIdentifier("add-suggestion")
+            }
+        }
+        .padding(12)
+        .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color.familySurface))
+    }
+}
+
 // MARK: - Preview
 
 #Preview("Workspace") {
@@ -521,6 +635,39 @@ struct DocumentRow: View {
             store: Store(
                 initialState: ProjectWorkspaceReducer.State(project: Project.previewSamples[0])
             ) {
+                ProjectWorkspaceReducer()
+            } withDependencies: {
+                $0.storage = .previewValue
+            }
+        )
+    }
+}
+
+#Preview("Suggested inbox") {
+    let project = Project.previewSamples[0]
+    var state = ProjectWorkspaceReducer.State(project: project)
+    state.documents = [
+        FamilyDomain.Document(
+            title: "Blue Haven — pool quote",
+            type: .receipt,
+            projectIds: nil,
+            suggestedProjectId: project.id,
+            amount: 78_500,
+            vendor: "Blue Haven Pools",
+            uploadedBy: "preview"
+        ),
+        FamilyDomain.Document(
+            title: "Gunite vs. fiberglass brochure",
+            type: .other,
+            projectIds: nil,
+            suggestedProjectId: project.id,
+            vendor: "Pool Warehouse",
+            uploadedBy: "preview"
+        ),
+    ]
+    return NavigationStack {
+        ProjectWorkspaceView(
+            store: Store(initialState: state) {
                 ProjectWorkspaceReducer()
             } withDependencies: {
                 $0.storage = .previewValue

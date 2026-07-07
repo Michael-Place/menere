@@ -59,6 +59,14 @@ public struct ProjectWorkspaceReducer {
                 .filter { !($0.projectIds ?? []).contains(project.id) }
                 .sorted { $0.createdAt > $1.createdAt }
         }
+
+        /// Documents the AI (or capture) *guessed* belong to this project but that no one has
+        /// confirmed yet — the "suggested items" inbox. Excludes anything already linked.
+        var suggestedDocuments: [FamilyDomain.Document] {
+            documents
+                .filter { $0.suggestedProjectId == project.id && !($0.projectIds ?? []).contains(project.id) }
+                .sorted { $0.createdAt > $1.createdAt }
+        }
     }
 
     public enum Action: BindableAction, Equatable {
@@ -99,6 +107,10 @@ public struct ProjectWorkspaceReducer {
         case addDocumentTapped
         case linkDocument(FamilyDomain.Document)
         case unlinkDocument(FamilyDomain.Document)
+
+        // Suggested-items inbox (AI/capture guessed this doc belongs here)
+        case acceptSuggestion(FamilyDomain.Document)
+        case dismissSuggestion(FamilyDomain.Document)
 
         // Whole-project lifecycle
         case deleteProjectTapped
@@ -319,10 +331,12 @@ public struct ProjectWorkspaceReducer {
                     state.documents[idx] = updated
                 }
                 state.showDocPicker = false
+                // Immutable snapshot so the concurrently-executing `.run` closure doesn't capture a `var`.
+                let linked = updated
                 return .run { _ in
                     @Dependency(\.persistence) var persistence
                     @Dependency(\.analytics) var analytics
-                    try await persistence.saveDocument(hid, updated)
+                    try await persistence.saveDocument(hid, linked)
                     analytics.log("project_document_linked")
                 }
 
@@ -334,9 +348,47 @@ public struct ProjectWorkspaceReducer {
                 if let idx = state.documents.firstIndex(where: { $0.id == doc.id }) {
                     state.documents[idx] = updated
                 }
+                // Immutable snapshot so the concurrently-executing `.run` closure doesn't capture a `var`.
+                let unlinked = updated
                 return .run { _ in
                     @Dependency(\.persistence) var persistence
-                    try await persistence.saveDocument(hid, updated)
+                    try await persistence.saveDocument(hid, unlinked)
+                }
+
+            // MARK: Suggested-items inbox
+            // The AI (or capture) tagged `suggestedProjectId` on a loose doc — surface it here so the
+            // family can keep it (→ real `projectIds` link) or gently wave it off.
+            case let .acceptSuggestion(doc):
+                guard let hid = hid() else { return .none }
+                var updated = doc
+                var ids = updated.projectIds ?? []
+                if !ids.contains(state.project.id) { ids.append(state.project.id) }
+                updated.projectIds = ids
+                updated.suggestedProjectId = nil
+                if let idx = state.documents.firstIndex(where: { $0.id == doc.id }) {
+                    state.documents[idx] = updated
+                }
+                let accepted = updated
+                return .run { _ in
+                    @Dependency(\.persistence) var persistence
+                    @Dependency(\.analytics) var analytics
+                    try await persistence.saveDocument(hid, accepted)
+                    analytics.log("project_suggestion_added")
+                }
+
+            case let .dismissSuggestion(doc):
+                guard let hid = hid() else { return .none }
+                var updated = doc
+                updated.suggestedProjectId = nil
+                if let idx = state.documents.firstIndex(where: { $0.id == doc.id }) {
+                    state.documents[idx] = updated
+                }
+                let dismissed = updated
+                return .run { _ in
+                    @Dependency(\.persistence) var persistence
+                    @Dependency(\.analytics) var analytics
+                    try await persistence.saveDocument(hid, dismissed)
+                    analytics.log("project_suggestion_dismissed")
                 }
 
             // MARK: Lifecycle
