@@ -28,6 +28,13 @@ public struct ProjectsReducer {
         var newCoverData: Data?
         var isCreating = false
 
+        // Template picker (PR4). A chosen KB template pre-fills the phase, summary, starter tasks, and
+        // "don't forget" notes on create. `nil` (or the blank template) = start from scratch.
+        var showTemplatePicker = false
+        var selectedTemplateId: String?
+        /// The resolved template for the current draft, if one is chosen (blank resolves to `nil`).
+        var selectedTemplate: ProjectTemplate? { selectedTemplateId.flatMap(ProjectTemplate.named) }
+
         @Presents var workspace: ProjectWorkspaceReducer.State?
 
         public init() {}
@@ -39,6 +46,9 @@ public struct ProjectsReducer {
         case addTapped
         case newCoverPicked(Data)
         case newCoverCleared
+        case chooseTemplateTapped
+        case templatePicked(String)
+        case clearTemplate
         case createProject
         case projectCreated(Project)
         case projectTapped(Project)
@@ -80,6 +90,8 @@ public struct ProjectsReducer {
                 state.newTargetDate = Date()
                 state.newSummary = ""
                 state.newCoverData = nil
+                state.selectedTemplateId = nil
+                state.showTemplatePicker = false
                 state.showNewSheet = true
                 return .none
 
@@ -91,18 +103,48 @@ public struct ProjectsReducer {
                 state.newCoverData = nil
                 return .none
 
+            case .chooseTemplateTapped:
+                state.showTemplatePicker = true
+                return .none
+
+            case let .templatePicked(id):
+                state.showTemplatePicker = false
+                guard let template = ProjectTemplate.named(id) else { return .none }
+                // Blank/custom clears any prior selection but still applies its (dreaming) phase.
+                state.selectedTemplateId = template.isBlank ? nil : id
+                state.newPhase = template.phaseSuggestion
+                // Pre-fill name + summary only when the family hasn't typed their own.
+                if state.newName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, !template.isBlank {
+                    state.newName = template.title
+                }
+                if state.newSummary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    state.newSummary = template.summaryHint
+                }
+                return .none
+
+            case .clearTemplate:
+                state.selectedTemplateId = nil
+                return .none
+
             case .createProject:
                 let name = state.newName.trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !name.isEmpty, let hid = hid(), !state.isCreating else { return .none }
                 state.isCreating = true
                 let summary = state.newSummary.trimmingCharacters(in: .whitespacesAndNewlines)
-                let base = Project(
+                var base = Project(
                     name: name,
                     status: state.newPhase,
                     targetDate: state.hasTargetDate ? state.newTargetDate : nil,
                     summary: summary.isEmpty ? nil : summary
                 )
+                // Seed the workspace from the chosen KB template (starter checklist + "don't forget" notes).
+                let template = state.selectedTemplate
+                if let template, !template.isBlank {
+                    base.tasks = template.starterProjectTasks()
+                    base.notes = template.starterNotes()
+                }
                 let coverData = state.newCoverData
+                let templateId = template?.isBlank == false ? template?.id : nil
                 return .run { send in
                     @Dependency(\.persistence) var persistence
                     @Dependency(\.storage) var storage
@@ -114,6 +156,9 @@ public struct ProjectsReducer {
                     }
                     try await persistence.saveProject(hid, project)
                     analytics.log("project_created", ["phase": project.status.rawValue])
+                    if let templateId {
+                        analytics.log("project_template_used", ["template": templateId])
+                    }
                     await send(.projectCreated(project))
                 }
 
@@ -364,6 +409,35 @@ private struct NewProjectSheet: View {
     var body: some View {
         NavigationStack {
             Form {
+                // Start from a template — pre-fills phase, summary, starter tasks + "don't forget" notes.
+                Section {
+                    Button { store.send(.chooseTemplateTapped) } label: {
+                        HStack(spacing: 12) {
+                            Image(systemName: store.selectedTemplate?.systemImage ?? "wand.and.stars")
+                                .foregroundStyle(Color.bacanGreen)
+                                .frame(width: 26)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(store.selectedTemplate?.title ?? "Start from a template")
+                                    .font(.system(.body, design: .rounded).weight(.semibold))
+                                    .foregroundStyle(Color.ink)
+                                Text(store.selectedTemplate.map { _ in "Pre-fills tasks + reminders" }
+                                     ?? "Pool, school, trip, reno, and more")
+                                    .font(.caption)
+                                    .foregroundStyle(Color.inkSoft)
+                            }
+                            Spacer()
+                            Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.tertiary)
+                        }
+                    }
+                    .accessibilityIdentifier("choose-template-button")
+                    if store.selectedTemplate != nil {
+                        Button(role: .destructive) { store.send(.clearTemplate) } label: {
+                            Label("Clear template", systemImage: "xmark.circle")
+                        }
+                    }
+                }
+                .listRowBackground(Color.familySurface)
+
                 Section {
                     TextField("Pool build, Oliver's new school…", text: $store.newName)
                         .accessibilityIdentifier("new-project-name-field")
@@ -423,7 +497,104 @@ private struct NewProjectSheet: View {
                         .accessibilityIdentifier("create-project-button")
                 }
             }
+            .sheet(isPresented: $store.showTemplatePicker) {
+                TemplatePickerSheet(
+                    selectedId: store.selectedTemplateId,
+                    onPick: { store.send(.templatePicked($0)) },
+                    onCancel: { store.showTemplatePicker = false }
+                )
+            }
         }
+    }
+}
+
+// MARK: - Template picker
+
+/// The Project KB picker (PR4) — a scrollable menu of starter templates (pool, school, trip, reno,
+/// party, baby, car, move, landscaping) plus "Start from scratch". Each row previews what it seeds:
+/// the suggested phase and a peek at the starter checklist + "things people forget".
+private struct TemplatePickerSheet: View {
+    let selectedId: String?
+    let onPick: (String) -> Void
+    let onCancel: () -> Void
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                LazyVStack(spacing: 12) {
+                    ForEach(ProjectTemplate.catalog) { template in
+                        Button { onPick(template.id) } label: {
+                            TemplateRow(template: template, isSelected: template.id == selectedId)
+                        }
+                        .buttonStyle(.pressable)
+                    }
+                }
+                .padding(16)
+            }
+            .background(Color.familyCanvas)
+            .navigationTitle("Start from a template")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel", action: onCancel)
+                }
+            }
+        }
+    }
+}
+
+private struct TemplateRow: View {
+    let template: ProjectTemplate
+    let isSelected: Bool
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            ZStack {
+                Circle().fill(ProjectPhasePalette.color(template.phaseSuggestion).opacity(0.14))
+                    .frame(width: 44, height: 44)
+                Image(systemName: template.systemImage)
+                    .font(.system(size: 19, weight: .semibold))
+                    .foregroundStyle(ProjectPhasePalette.color(template.phaseSuggestion))
+            }
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 6) {
+                    Text(template.title)
+                        .font(.system(.headline, design: .rounded).weight(.bold))
+                        .foregroundStyle(Color.ink)
+                    if isSelected {
+                        Image(systemName: "checkmark.circle.fill").foregroundStyle(Color.bacanGreen)
+                    }
+                }
+                if template.isBlank {
+                    Text("A clean slate — add your own tasks and notes.")
+                        .font(.system(.footnote, design: .rounded))
+                        .foregroundStyle(Color.inkSoft)
+                        .multilineTextAlignment(.leading)
+                } else {
+                    Text(template.summaryHint)
+                        .font(.system(.footnote, design: .rounded))
+                        .foregroundStyle(Color.inkSoft)
+                        .multilineTextAlignment(.leading)
+                    if let first = template.starterTasks.first {
+                        Label("\(template.starterTasks.count) starter tasks · \(first)…", systemImage: "checklist")
+                            .font(.caption)
+                            .foregroundStyle(Color.inkSoft)
+                            .lineLimit(1)
+                    }
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .fill(Color.familySurface)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .strokeBorder(isSelected ? Color.bacanGreen : .clear, lineWidth: 2)
+        )
     }
 }
 
@@ -451,6 +622,10 @@ private struct NewProjectSheet: View {
     NavigationStack {
         ProjectsView(store: Store(initialState: ProjectsReducer.State()) { ProjectsReducer() })
     }
+}
+
+#Preview("Template picker") {
+    TemplatePickerSheet(selectedId: "pool", onPick: { _ in }, onCancel: {})
 }
 
 extension Project {

@@ -219,6 +219,10 @@ public struct Project: Codable, Equatable, Identifiable, Sendable {
     /// An optional budget the family is working toward — compared against the gathered quotes in the
     /// workspace's Budget section. PR3 — decode-safe optional.
     public var budgetTarget: Double?
+    /// The cached AI **brief** for this project (Projects PR4). Written by the `generateProjectBrief`
+    /// Cloud Function and cached here so it round-trips through the normal project load. Decode-safe
+    /// optional — older projects (and projects with no brief yet) simply resolve to `nil`.
+    public var brief: ProjectBrief?
 
     public init(
         id: String = UUID().uuidString,
@@ -233,7 +237,8 @@ public struct Project: Codable, Equatable, Identifiable, Sendable {
         notes: String? = nil,
         photoPaths: [String]? = nil,
         contacts: [ProjectContact]? = nil,
-        budgetTarget: Double? = nil
+        budgetTarget: Double? = nil,
+        brief: ProjectBrief? = nil
     ) {
         self.id = id
         self.name = name
@@ -248,6 +253,7 @@ public struct Project: Codable, Equatable, Identifiable, Sendable {
         self.photoPaths = photoPaths
         self.contacts = contacts
         self.budgetTarget = budgetTarget
+        self.brief = brief
     }
 
     public init(from decoder: Decoder) throws {
@@ -266,6 +272,7 @@ public struct Project: Codable, Equatable, Identifiable, Sendable {
         photoPaths = try c.decodeIfPresent([String].self, forKey: .photoPaths)
         contacts = try c.decodeIfPresent([ProjectContact].self, forKey: .contacts)
         budgetTarget = try c.decodeIfPresent(Double.self, forKey: .budgetTarget)
+        brief = try? c.decodeIfPresent(ProjectBrief.self, forKey: .brief)
     }
 
     /// The phase (kept as a computed twin of the decode fallback for call-site symmetry).

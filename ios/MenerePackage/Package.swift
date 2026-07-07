@@ -252,6 +252,8 @@ let package = Package(
             name: "ProjectsFeature",
             dependencies: [
                 .product(name: "ComposableArchitecture", package: "swift-composable-architecture"),
+                // PR4: the `generateProjectBrief` HTTPS callable (mirrors TodayFeature's BriefingClient).
+                .product(name: "FirebaseFunctions", package: "firebase-ios-sdk"),
                 "MenereUI",
                 "FamilyDomain",
                 "PersistenceClient",

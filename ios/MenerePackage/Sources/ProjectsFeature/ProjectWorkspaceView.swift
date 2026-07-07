@@ -22,6 +22,7 @@ public struct ProjectWorkspaceView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
                 header
+                briefSection
                 inspirationSection
                 suggestionsSection
                 documentsSection
@@ -156,6 +157,148 @@ public struct ProjectWorkspaceView: View {
         .background(RoundedRectangle(cornerRadius: 22, style: .continuous).fill(Color.familySurface))
         .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
         .padding(.horizontal, 16)
+    }
+
+    // MARK: Brief (PR4)
+
+    /// The AI **brief** card — pinned at the top of the workspace. Cache-aware: shows the brief cached
+    /// on `project.brief` immediately, with a refresh and a "Help me decide" affordance. When there's
+    /// no brief yet (or the `generateProjectBrief` function isn't deployed), it offers a gentle CTA that
+    /// no-ops cleanly on failure.
+    private var briefSection: some View {
+        SectionCard(title: "Brief", systemImage: "sparkles", accent: .bacanGreen) {
+            if store.briefLoading {
+                briefLoadingState
+            } else if let brief = store.project.brief, brief.hasContent {
+                briefContent(brief)
+            } else {
+                briefEmptyState
+            }
+        }
+        .accessibilityIdentifier("project-brief-section")
+    }
+
+    @ViewBuilder
+    private func briefContent(_ brief: ProjectBrief) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(brief.summary)
+                .font(.system(.subheadline, design: .rounded))
+                .foregroundStyle(Color.ink)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("project-brief-summary")
+
+            if !brief.highlights.isEmpty {
+                VStack(alignment: .leading, spacing: 7) {
+                    ForEach(brief.highlights, id: \.self) { line in
+                        HStack(alignment: .top, spacing: 8) {
+                            Image(systemName: "sparkle")
+                                .font(.system(size: 10, weight: .bold))
+                                .foregroundStyle(Color.bacanGreen)
+                                .padding(.top, 3)
+                            Text(line)
+                                .font(.system(.footnote, design: .rounded))
+                                .foregroundStyle(Color.inkSoft)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                }
+            }
+
+            // Decision helper output — the pros/cons read, shown when the brief carries one.
+            if let decision = brief.decision, !decision.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    Label {
+                        Text("Help me decide")
+                            .font(.system(.footnote, design: .rounded).weight(.bold))
+                            .foregroundStyle(Color.terracotta)
+                    } icon: {
+                        Image(systemName: "scalemass.fill").foregroundStyle(Color.terracotta)
+                    }
+                    Text(decision)
+                        .font(.system(.footnote, design: .rounded))
+                        .foregroundStyle(Color.ink)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color.terracotta.opacity(0.10)))
+                .accessibilityIdentifier("project-brief-decision")
+            }
+
+            HStack(spacing: 10) {
+                if let at = brief.generatedAt {
+                    Text("Updated \(at.formatted(.relative(presentation: .named)))")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
+                Spacer(minLength: 0)
+                briefActionButton(
+                    "Refresh", systemImage: "arrow.clockwise", tint: .bacanGreen, filled: false,
+                    id: "refresh-project-brief"
+                ) { store.send(.loadBrief(force: true, decisionFocus: false)) }
+                briefActionButton(
+                    "Help me decide", systemImage: "scalemass", tint: .terracotta, filled: false,
+                    id: "project-help-me-decide"
+                ) { store.send(.helpMeDecideTapped) }
+            }
+            .padding(.top, 2)
+        }
+    }
+
+    private var briefLoadingState: some View {
+        HStack(spacing: 10) {
+            ProgressView()
+            Text(store.briefDecisionFocus ? "Weighing the options…" : "Writing your brief…")
+                .font(.system(.subheadline, design: .rounded))
+                .foregroundStyle(Color.inkSoft)
+            Spacer(minLength: 0)
+        }
+        .padding(.vertical, 4)
+        .accessibilityIdentifier("project-brief-loading")
+    }
+
+    @ViewBuilder
+    private var briefEmptyState: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(store.briefError
+                 ? "Couldn't write a brief just now — give it another try in a moment."
+                 : "Get an AI read on where this project stands: what's next, what to watch, and a nudge on the big decision.")
+                .font(.system(.subheadline, design: .rounded))
+                .foregroundStyle(Color.inkSoft)
+                .fixedSize(horizontal: false, vertical: true)
+
+            HStack(spacing: 10) {
+                briefActionButton(
+                    store.briefError ? "Try again" : "Generate a brief",
+                    systemImage: "sparkles", tint: .bacanGreen, filled: true,
+                    id: "generate-project-brief"
+                ) { store.send(.loadBrief(force: false, decisionFocus: false)) }
+                briefActionButton(
+                    "Help me decide", systemImage: "scalemass", tint: .terracotta, filled: false,
+                    id: "project-help-me-decide"
+                ) { store.send(.helpMeDecideTapped) }
+                Spacer(minLength: 0)
+            }
+        }
+    }
+
+    /// A small pill button for the brief card — filled (primary) or tinted-outline (secondary).
+    private func briefActionButton(
+        _ title: String, systemImage: String, tint: Color, filled: Bool, id: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Label(title, systemImage: systemImage)
+                .font(.system(.footnote, design: .rounded).weight(.semibold))
+                .foregroundStyle(filled ? .white : tint)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 7)
+                .background(
+                    Capsule().fill(filled ? tint : tint.opacity(0.12))
+                )
+        }
+        .buttonStyle(.pressable)
+        .accessibilityIdentifier(id)
     }
 
     // MARK: Inspiration board
@@ -992,6 +1135,46 @@ struct SuggestionRow: View {
                 ProjectWorkspaceReducer()
             } withDependencies: {
                 $0.storage = .previewValue
+                $0.projectBrief = .previewValue
+            }
+        )
+    }
+}
+
+#Preview("Brief — populated") {
+    var project = Project.previewSamples[0]
+    project.brief = ProjectBrief(
+        summary: "The backyard pool is coming together, Michael. Three builders are in play and two quotes are in — Aqua Dreams is the low bid. HOA approval is the long pole; nudge it this week.",
+        highlights: [
+            "Aqua Dreams is $22.5k under budget — current front-runner",
+            "Still waiting on the HOA + city permits",
+            "Confirm Blue Haven's insurance before comparing further",
+        ],
+        decision: "Leaning Aqua Dreams — lowest bid and a solid warranty — but verify their license and references first. Hold the final call until the third quote lands.",
+        generatedAt: Date().addingTimeInterval(-7200)
+    )
+    return NavigationStack {
+        ProjectWorkspaceView(
+            store: Store(initialState: ProjectWorkspaceReducer.State(project: project)) {
+                ProjectWorkspaceReducer()
+            } withDependencies: {
+                $0.storage = .previewValue
+                $0.projectBrief = .previewValue
+            }
+        )
+    }
+}
+
+#Preview("Brief — loading") {
+    var state = ProjectWorkspaceReducer.State(project: Project.previewSamples[0])
+    state.briefLoading = true
+    return NavigationStack {
+        ProjectWorkspaceView(
+            store: Store(initialState: state) {
+                ProjectWorkspaceReducer()
+            } withDependencies: {
+                $0.storage = .previewValue
+                $0.projectBrief = .previewValue
             }
         )
     }

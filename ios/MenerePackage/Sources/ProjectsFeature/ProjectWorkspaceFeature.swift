@@ -53,6 +53,14 @@ public struct ProjectWorkspaceReducer {
         /// The text the budget field binds to (dollars, no cents) while editing.
         var budgetDraft = ""
 
+        // Brief (PR4). The brief itself is cached on `project.brief` (cache-aware for free); these
+        // just drive the card's transient UI.
+        var briefLoading = false
+        /// True while the in-flight (or last) generation was a "Help me decide" request.
+        var briefDecisionFocus = false
+        /// Set when a generation attempt fails AND we have no cached brief to fall back on.
+        var briefError = false
+
         public init(project: Project) {
             self.project = project
         }
@@ -181,6 +189,13 @@ public struct ProjectWorkspaceReducer {
         case clearBudget
         case dismissBudgetEditor
 
+        // Brief (PR4)
+        /// Generate (or fetch cached) the AI brief. `force` regenerates; `decisionFocus` asks for the
+        /// pros/cons decision read (the "Help me decide" helper).
+        case loadBrief(force: Bool, decisionFocus: Bool)
+        case briefResponse(ProjectBrief?)
+        case helpMeDecideTapped
+
         // Whole-project lifecycle
         case deleteProjectTapped
 
@@ -195,7 +210,7 @@ public struct ProjectWorkspaceReducer {
 
     public init() {}
 
-    private enum CancelID { case notesDebounce }
+    private enum CancelID { case notesDebounce, brief }
 
     private func hid() -> String? {
         @Shared(.user) var user
@@ -557,6 +572,47 @@ public struct ProjectWorkspaceReducer {
             case .dismissBudgetEditor:
                 state.showBudgetEditor = false
                 return .none
+
+            // MARK: Brief (PR4)
+            // The AI brief lives on `project.brief` (cached, cache-aware on open). This just fetches a
+            // fresh one via the `generateProjectBrief` callable, keeping any existing brief on failure
+            // so the card never blanks out (and no-ops gracefully if the function isn't deployed yet).
+            case let .loadBrief(force, decisionFocus):
+                guard let hid = hid(), !state.briefLoading else { return .none }
+                state.briefLoading = true
+                state.briefError = false
+                state.briefDecisionFocus = decisionFocus
+                let projectId = state.project.id
+                return .run { send in
+                    @Dependency(\.projectBrief) var projectBrief
+                    @Dependency(\.analytics) var analytics
+                    do {
+                        let brief = try await projectBrief.generate(hid, projectId, force, decisionFocus)
+                        analytics.log("project_brief_generated", [
+                            "decision": decisionFocus ? "1" : "0",
+                            "force": force ? "1" : "0",
+                        ])
+                        await send(.briefResponse(brief))
+                    } catch {
+                        // Not deployed / offline / bad payload — treat as "no brief this time".
+                        await send(.briefResponse(nil))
+                    }
+                }
+                .cancellable(id: CancelID.brief, cancelInFlight: true)
+
+            case let .briefResponse(brief):
+                state.briefLoading = false
+                guard let brief, brief.hasContent else {
+                    // Only surface an error when there's nothing to show — otherwise keep the cached brief.
+                    state.briefError = (state.project.brief == nil)
+                    return .none
+                }
+                state.project.brief = brief
+                // Cache the fresh brief onto the project doc + echo to the list.
+                return persist(state.project)
+
+            case .helpMeDecideTapped:
+                return .send(.loadBrief(force: true, decisionFocus: true))
 
             // MARK: Lifecycle
             case .deleteProjectTapped:
