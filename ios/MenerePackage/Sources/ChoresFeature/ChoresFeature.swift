@@ -82,9 +82,26 @@ public struct ChoresReducer {
         var newRewardTitle = ""
         var newRewardCost = 50
         // Confetti celebration: bumped when the live leaderboard reports a member's level rising;
-        // `confettiColor` is that member's color (drives ``ConfettiBurst`` in ``ChoresView``).
+        // `confettiColor` is that member's color (drives the level-up ``ConfettiBurst``). D2 also
+        // drives the big ``LevelUpCelebration`` card off this same bump.
         var confettiTrigger = 0
         var confettiColor: MemberColor?
+
+        // D2 — level-up card presentation: the member's NEW level + name while the big
+        // ``LevelUpCelebration`` (crown + confetti) is on screen. Non-nil = presented; the view's
+        // `onDismiss` sends ``Action/dismissLevelUp`` to clear it. Captured in ``Action/statsUpdated``
+        // alongside `confettiTrigger`.
+        var leveledUpTo: Int?
+        var leveledUpName: String?
+
+        // D2 — chore-done juice: `choreDoneTrigger` bumps on each chore COMPLETION (not un-complete).
+        // The credited member's leaderboard bar pulses + a "+{lastChoreXP} XP" flies up off it
+        // (``XPFly``). `lastChoreXP` is the client's on-time/streak-aware ESTIMATE for the fly only —
+        // XP stays server-authoritative; the bar re-snaps to the real value when `observeMemberStats`
+        // lands. `lastChoreCreditID` gates which leaderboard row shows the fly.
+        var choreDoneTrigger = 0
+        var lastChoreXP = 0
+        var lastChoreCreditID: String?
 
         /// P16-C2 — the ritual key currently firing from the Smart-home preview's inline chips (dims the
         /// tapped chip while the scene recall is in flight). Nil = idle.
@@ -115,6 +132,8 @@ public struct ChoresReducer {
         case addTapped
         case editTapped(Chore)
         case toggleComplete(Chore)
+        /// D2 — dismiss the big level-up celebration (tap-to-dismiss or its ~1.6s auto-timeout).
+        case dismissLevelUp
         case addRewardTapped
         case createReward
         case redeem(Reward, byMemberID: String)
@@ -339,8 +358,14 @@ public struct ChoresReducer {
                 for updated in stats {
                     if let prior = state.stats.first(where: { $0.memberID == updated.memberID }),
                        updated.level > prior.level {
-                        state.confettiColor = state.members.first { $0.id == updated.memberID }?.color
+                        let member = state.members.first { $0.id == updated.memberID }
+                        state.confettiColor = member?.color
                         state.confettiTrigger += 1
+                        // D2 — arm the big level-up card (crown + confetti); the view captures these
+                        // at fire time and clears them via `dismissLevelUp`.
+                        state.leveledUpTo = updated.level
+                        state.leveledUpName = member?.name
+                        analytics.log("level_up", ["level": String(updated.level)])
                     }
                 }
                 state.stats = stats
@@ -359,10 +384,21 @@ public struct ChoresReducer {
                       let idx = state.chores.firstIndex(where: { $0.id == chore.id }) else { return .none }
                 // Shared completion logic (see ``ChoreCompletion``) so Today and Chores behave
                 // identically. XP is reversed/awarded server-side by onChoreToggled either way.
-                if !chore.isCompleted { analytics.log("chore_completed") }
-                let outcome = chore.isCompleted
-                    ? ChoreCompletion.uncomplete(chore)
-                    : ChoreCompletion.complete(chore, fallbackCreditID: uid, members: state.members)
+                let completing = !chore.isCompleted
+                let outcome = completing
+                    ? ChoreCompletion.complete(chore, fallbackCreditID: uid, members: state.members)
+                    : ChoreCompletion.uncomplete(chore)
+                if completing {
+                    analytics.log("chore_completed")
+                    // D2 — chore-done juice: bump the fly/bar trigger for the credited member and
+                    // estimate the XP for the "+n XP" fly (server stays authoritative for the bar).
+                    let creditID = outcome.updated.completedByMemberID ?? uid
+                    let creditStats = state.stats(for: creditID)
+                    state.lastChoreXP = XPCalculator.xpForCompletion(chore: chore, currentStreak: creditStats.currentStreak)
+                    state.lastChoreCreditID = creditID
+                    state.choreDoneTrigger += 1
+                    analytics.log("chore_celebrated", ["xp": String(state.lastChoreXP)])
+                }
                 state.chores[idx] = outcome.updated
                 if let next = outcome.next { state.chores.append(next) }        // recurring respawn
                 if let activity = outcome.activity { state.activity.insert(activity, at: 0) }
@@ -370,6 +406,11 @@ public struct ChoresReducer {
                     @Dependency(\.persistence) var persistence
                     try await persistence.writeCompletion(hid: hid, outcome)
                 }
+
+            case .dismissLevelUp:
+                state.leveledUpTo = nil
+                state.leveledUpName = nil
+                return .none
 
             case .addRewardTapped:
                 state.newRewardTitle = ""

@@ -220,9 +220,15 @@ public struct ChoresView: View {
             .onAppear { logDestinationOpened(destination) }
         }
         .overlay {
-            // A level-up that arrives while the hub is visible still celebrates here.
-            ConfettiBurst(color: confettiColor, trigger: store.confettiTrigger)
-                .ignoresSafeArea()
+            // D2 — a level-up that arrives while the hub is visible still celebrates here (crown +
+            // member-colored confetti). Reduce-Motion falls back to a quiet banner inside the card.
+            LevelUpCelebration(
+                trigger: store.confettiTrigger,
+                level: store.leveledUpTo ?? 0,
+                color: confettiColor,
+                memberName: store.leveledUpName,
+                onDismiss: { store.send(.dismissLevelUp) }
+            )
         }
         .task { store.send(.task) }
         // Sheets + the reward alert live on the hub root so they present over whichever detail screen
@@ -792,8 +798,14 @@ private struct ChoresRewardsDetailView: View {
         .scrollContentBackground(.hidden)
         .background(Color.familyCanvas)
         .overlay {
-            ConfettiBurst(color: confettiColor, trigger: store.confettiTrigger)
-                .ignoresSafeArea()
+            // D2 — the big level-up celebration (crown + member-colored confetti), Reduce-Motion aware.
+            LevelUpCelebration(
+                trigger: store.confettiTrigger,
+                level: store.leveledUpTo ?? 0,
+                color: confettiColor,
+                memberName: store.leveledUpName,
+                onDismiss: { store.send(.dismissLevelUp) }
+            )
         }
         .navigationTitle("Chores & rewards")
         .navigationBarTitleDisplayMode(.inline)
@@ -830,33 +842,24 @@ private struct ChoresRewardsDetailView: View {
     }
 
     private func leaderboardRow(_ row: LeaderRow) -> some View {
-        let rgb = row.member.color.rgb
-        let color = Color(red: rgb.red, green: rgb.green, blue: rgb.blue)
-        return VStack(alignment: .leading, spacing: 4) {
-            HStack {
-                Image(systemName: row.member.avatarSystemName).foregroundStyle(color)
-                Text(row.member.name).foregroundStyle(Color.ink)
-                Spacer()
-                Text("Lv \(row.stats.level)")
-                    .font(.caption).fontWeight(.semibold).foregroundStyle(Color.inkSoft)
-                Text("\(row.stats.totalXP) XP")
-                    .font(.caption).foregroundStyle(color)
-            }
-            ProgressView(value: row.stats.levelProgress).tint(color)
-        }
-        .padding(.vertical, 2)
+        // D2 — the fly fires only on the row of the member just credited (its trigger stays 0
+        // otherwise, so a completion never lights up every bar).
+        let mine = store.lastChoreCreditID == row.member.id
+        return LeaderboardRowView(
+            member: row.member,
+            stats: row.stats,
+            xpFlyTrigger: mine ? store.choreDoneTrigger : 0,
+            xpFlyAmount: store.lastChoreXP
+        )
     }
 
     // MARK: Chores
 
     private func choreRow(_ chore: Chore) -> some View {
         HStack(spacing: 12) {
-            Button { store.send(.toggleComplete(chore)) } label: {
-                Image(systemName: chore.isCompleted ? "checkmark.circle.fill" : "circle")
-                    .foregroundStyle(chore.isCompleted ? Color.bacanGreen : Color.inkSoft)
-                    .stickerSlap(isOn: chore.isCompleted, color: .bacanGreen)
+            ChoreCompleteButton(isCompleted: chore.isCompleted) {
+                store.send(.toggleComplete(chore))
             }
-            .buttonStyle(.pressable)
 
             Button { store.send(.editTapped(chore)) } label: {
                 VStack(alignment: .leading, spacing: 2) {
@@ -899,6 +902,87 @@ private struct ChoresRewardsDetailView: View {
                 Text("Redeem").font(.caption).fontWeight(.semibold).foregroundStyle(Color.bacanGreen)
             }
         }
+    }
+}
+
+// MARK: - D2 chore-done juice: leaderboard row + chore complete button
+
+/// A leaderboard row that celebrates an XP gain: the credited member's level/XP bar pulses and a
+/// "+{n} XP" chip (``XPFly``) floats up off it. The bar itself *snaps* to its new fill when the
+/// server writeback lands (via `observeMemberStats`) — an animated `levelProgress` change — while
+/// the pulse gives an instant local reaction at the tap. `xpFlyTrigger` is 0 unless THIS member was
+/// just credited (see `leaderboardRow`), so completions never light up every bar.
+private struct LeaderboardRowView: View {
+    let member: HouseholdMember
+    let stats: MemberStats
+    let xpFlyTrigger: Int
+    let xpFlyAmount: Int
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var pulse = false
+
+    private var color: Color {
+        let rgb = member.color.rgb
+        return Color(red: rgb.red, green: rgb.green, blue: rgb.blue)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Image(systemName: member.avatarSystemName).foregroundStyle(color)
+                Text(member.name).foregroundStyle(Color.ink)
+                Spacer()
+                Text("Lv \(stats.level)")
+                    .font(.caption).fontWeight(.semibold).foregroundStyle(Color.inkSoft)
+                Text("\(stats.totalXP) XP")
+                    .font(.caption).foregroundStyle(color)
+            }
+            ProgressView(value: stats.levelProgress).tint(color)
+                // The bar snaps to its new fill when server XP lands.
+                .animation(.spring(response: 0.45, dampingFraction: 0.7), value: stats.levelProgress)
+                .scaleEffect(x: 1, y: pulse ? 1.9 : 1, anchor: .center)
+                .overlay(alignment: .trailing) {
+                    XPFly(trigger: xpFlyTrigger, amount: xpFlyAmount, color: color)
+                }
+        }
+        .padding(.vertical, 2)
+        .onChange(of: xpFlyTrigger) { _, newValue in
+            guard newValue > 0, !reduceMotion else { return }
+            withAnimation(.spring(response: 0.22, dampingFraction: 0.5)) { pulse = true }
+            Task {
+                try? await Task.sleep(for: .milliseconds(260))
+                withAnimation(.spring(response: 0.35, dampingFraction: 0.7)) { pulse = false }
+            }
+        }
+    }
+}
+
+/// A chore's mark-done control with its own point-of-tap delight: on completion it fires the
+/// care-completion haptic + a soft generic ``CelebrationBurst`` right at the checkmark (via
+/// `.careCelebration`), keeping the existing `.stickerSlap` check morph. The reducer owns the XP
+/// fly + level-up; this is the instant "tap felt good" beat. Un-completing gets a quiet soft tap.
+private struct ChoreCompleteButton: View {
+    let isCompleted: Bool
+    let onToggle: () -> Void
+
+    @State private var burst = 0
+
+    var body: some View {
+        Button {
+            if !isCompleted {
+                burst += 1
+                MenereHaptics.celebrate(.generic)
+            } else {
+                MenereHaptics.softTap()
+            }
+            onToggle()
+        } label: {
+            Image(systemName: isCompleted ? "checkmark.circle.fill" : "circle")
+                .foregroundStyle(isCompleted ? Color.bacanGreen : Color.inkSoft)
+                .stickerSlap(isOn: isCompleted, color: .bacanGreen)
+        }
+        .buttonStyle(.pressable)
+        .careCelebration(trigger: burst, style: .generic)
     }
 }
 
