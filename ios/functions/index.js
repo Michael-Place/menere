@@ -20,6 +20,7 @@ const { extractURL: runExtractURL } = require("./urlExtract");
 const { extractEventsFromText } = require("./eventExtract");
 const { resolveHousehold: resolveInboundHousehold, routeEmail } = require("./emailRouter");
 const { generateDailyBriefing } = require("./briefingGenerate");
+const { generateProjectBrief } = require("./briefGenerate");
 const { processDocument } = require("./docProcess");
 const { buildDocumentCreatedTrigger } = require("./docCreatedTrigger");
 const { identifyPlant } = require("./plantIdentify");
@@ -291,6 +292,50 @@ exports.generateDailyBriefing = onCall(
       });
     } catch (err) {
       throw new HttpsError("internal", `Briefing failed: ${err.message}`);
+    }
+  }
+);
+
+/**
+ * `generateProjectBrief` is a v2 HTTPS callable (us-central1) that returns an AI brief for one
+ * family project (`households/{hid}/projects/{projectId}`): `{ text, generatedAt, model, cached }`.
+ * Input `{ projectId, force? }`; the household is derived from the CALLER
+ * (`users/{uid}.householdId`) — a client-passed hid is never trusted, which also gates membership.
+ * It loads the project + its linked Brain quote docs, asks Claude (Sonnet 5) for a warm, first-name
+ * family-voice brief (state / next steps / decision), and caches it as a `brief` map on the project
+ * doc. Pass `force: true` (the refresh button) to regenerate. Reuses the `ANTHROPIC_API_KEY` secret.
+ */
+exports.generateProjectBrief = onCall(
+  { timeoutSeconds: 60, memory: "512MiB", secrets: [ANTHROPIC_API_KEY] },
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError("unauthenticated", "You must be signed in.");
+    }
+    const uid = request.auth.uid;
+    const projectId = String(request.data?.projectId || "").trim();
+    if (!projectId) {
+      throw new HttpsError("invalid-argument", "projectId is required.");
+    }
+    const force = request.data?.force === true;
+
+    const userSnap = await db().collection("users").doc(uid).get();
+    const hid = userSnap.exists ? userSnap.data().householdId : null;
+    if (!hid) {
+      throw new HttpsError("failed-precondition", "No household for this user.");
+    }
+    try {
+      return await generateProjectBrief({
+        db: db(),
+        hid,
+        projectId,
+        apiKey: ANTHROPIC_API_KEY.value(),
+        force,
+      });
+    } catch (err) {
+      if (err.message === "Project not found") {
+        throw new HttpsError("not-found", "That project no longer exists.");
+      }
+      throw new HttpsError("internal", `Project brief failed: ${err.message}`);
     }
   }
 );
