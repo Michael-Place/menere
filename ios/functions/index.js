@@ -21,6 +21,7 @@ const { extractEventsFromText } = require("./eventExtract");
 const { resolveHousehold: resolveInboundHousehold, routeEmail } = require("./emailRouter");
 const { generateDailyBriefing } = require("./briefingGenerate");
 const { processDocument } = require("./docProcess");
+const { buildDocumentCreatedTrigger } = require("./docCreatedTrigger");
 const { identifyPlant } = require("./plantIdentify");
 const { speciesProfile } = require("./plantSpeciesProfile");
 const { troubleshootPlant } = require("./plantTroubleshoot");
@@ -331,6 +332,16 @@ exports.processDocument = onCall(
     }
   }
 );
+
+/**
+ * `onDocumentCreated` is a v2 Firestore trigger (us-central1) — the SERVER-SIDE auto-processing path
+ * for the Family Brain. When a document is created at `households/{hid}/documents/{docId}` with
+ * `processingState:"pending"` AND `needsServerProcessing:true` (the Share Extension's direct-to-cloud
+ * path, which does NOT call the `processDocument` callable), it runs the SAME extraction via the
+ * shared `processDocument` core, then clears the flag. Docs the in-app callable handles never set the
+ * flag, so there is no double-processing. See `docCreatedTrigger.js` for the gate + idempotency guard.
+ */
+exports.onDocumentCreated = buildDocumentCreatedTrigger(ANTHROPIC_API_KEY);
 
 /**
  * `identifyPlant` is a v2 HTTPS callable (us-central1) for the P9 Plants module. Input
