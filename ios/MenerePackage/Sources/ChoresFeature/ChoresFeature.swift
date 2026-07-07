@@ -64,6 +64,10 @@ public struct ChoresReducer {
             var priorSnoozedUntil: Date?
             /// The optimistic activity entry inserted by the mark-done, popped back out on Undo.
             var activityID: String?
+            /// D3 — prior positive-only streak, so an undo of an accidental tap fully reverts the streak
+            /// too (no stray inflated `streakCount` lingers). Decode-safe additive capture.
+            var priorStreakCount: Int?
+            var priorLastStreakDate: Date?
             /// Bumped per mark-done so the banner re-animates and restarts its auto-dismiss timer.
             var nonce: Int
         }
@@ -500,6 +504,8 @@ public struct ChoresReducer {
                 let priorAt = state.careItems[i].tasks[ti].lastDoneAt
                 let priorBy = state.careItems[i].tasks[ti].lastDoneBy
                 let priorSnooze = state.careItems[i].tasks[ti].snoozedUntil
+                let priorStreak = state.careItems[i].tasks[ti].streakCount
+                let priorStreakDate = state.careItems[i].tasks[ti].lastStreakDate
                 let taskTitle = state.careItems[i].tasks[ti].title
                 let itemName = state.careItems[i].name
                 analytics.log("care_marked_done", ["kind": kind.rawValue])
@@ -507,6 +513,13 @@ public struct ChoresReducer {
                 // identically: stamp who-did-it-last + a best-effort "took care of…" activity entry.
                 state.careItems[i] = outcome.updated
                 if let activity = outcome.activity { state.activity.insert(activity, at: 0) }
+                // D3 — POSITIVE-ONLY streak milestone: a completion that lands the streak exactly on a
+                // threshold (7/14/30/60/100) earns a small, joyful burst (fired row-side via the task's
+                // new `streakCount`). Here we only log it — the reset case is silent, never logged as a loss.
+                let newStreak = outcome.updated.tasks[ti].streakCount ?? 0
+                if CareStreak.isMilestone(newStreak) {
+                    analytics.log("streak_milestone", ["streak": String(newStreak), "kind": kind.rawValue])
+                }
                 var effects: [Effect<Action>] = [
                     .run { [outcome] _ in
                         @Dependency(\.persistence) var persistence
@@ -521,7 +534,9 @@ public struct ChoresReducer {
                 state.careUndo = State.CareUndo(
                     itemID: itemID, taskID: taskID, itemName: itemName, taskTitle: taskTitle,
                     priorLastDoneAt: priorAt, priorLastDoneBy: priorBy, priorSnoozedUntil: priorSnooze,
-                    activityID: outcome.activity?.id, nonce: (state.careUndo?.nonce ?? 0) + 1
+                    activityID: outcome.activity?.id,
+                    priorStreakCount: priorStreak, priorLastStreakDate: priorStreakDate,
+                    nonce: (state.careUndo?.nonce ?? 0) + 1
                 )
                 effects.append(
                     .run { send in
@@ -546,6 +561,9 @@ public struct ChoresReducer {
                 state.careItems[i].tasks[ti].lastDoneAt = undo.priorLastDoneAt
                 state.careItems[i].tasks[ti].lastDoneBy = undo.priorLastDoneBy
                 state.careItems[i].tasks[ti].snoozedUntil = undo.priorSnoozedUntil
+                // D3 — restore the pre-completion streak too, so an accidental tap leaves no inflated count.
+                state.careItems[i].tasks[ti].streakCount = undo.priorStreakCount
+                state.careItems[i].tasks[ti].lastStreakDate = undo.priorLastStreakDate
                 let undoneActivityID = undo.activityID
                 if let aid = undoneActivityID { state.activity.removeAll { $0.id == aid } }
                 let restored = state.careItems[i]

@@ -29,6 +29,11 @@ public enum CareCompletion {
     ) -> Outcome? {
         guard let t = item.tasks.firstIndex(where: { $0.id == taskID }) else { return nil }
         var updated = item
+        // D3 — advance the POSITIVE-ONLY streak from the task's PRE-completion state (compute before we
+        // overwrite the stamps). On-cadence completions increment; a full missed cadence-cycle silently
+        // resets to 1. Never decremented, never surfaced as a loss — see ``CareTask/streakAfterCompletion``.
+        updated.tasks[t].streakCount = item.tasks[t].streakAfterCompletion(now: now)
+        updated.tasks[t].lastStreakDate = now
         updated.tasks[t].lastDoneAt = now
         updated.tasks[t].lastDoneBy = uid
         // Actually doing the task clears any "soil's still damp" snooze so the normal cadence resumes

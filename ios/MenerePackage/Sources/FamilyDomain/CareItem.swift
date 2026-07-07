@@ -66,6 +66,15 @@ public struct CareTask: Codable, Equatable, Identifiable, Sendable {
     /// {date}", not overdue, until `snoozedUntil` arrives (then normal cadence resumes). Kind-agnostic
     /// (any care can snooze). A past `snoozedUntil` is stale and ignored. Decode-safe additive field.
     public var snoozedUntil: Date?
+    /// A **positive-only** "kept-it-up" streak (D3): how many on-cadence completions in a row. `nil`/`0`
+    /// = no streak yet. Advanced by ``CareCompletion/markDone`` when a completion lands on-cadence,
+    /// and **silently reset to 1** when a full extra cadence-cycle was missed. It is NEVER decremented
+    /// and NEVER surfaced as a loss — a broken streak just quietly restarts, no guilt, no red X.
+    /// Decode-safe additive field (older tasks nil ⇒ no streak).
+    public var streakCount: Int?
+    /// The date the streak was last advanced — used to tell an on-cadence completion (continue the
+    /// streak) from a lapse (a silent reset to 1). Decode-safe additive field.
+    public var lastStreakDate: Date?
 
     public init(
         id: String = UUID().uuidString,
@@ -75,7 +84,9 @@ public struct CareTask: Codable, Equatable, Identifiable, Sendable {
         lastDoneBy: String? = nil,
         firstDueAt: Date? = nil,
         maintenanceTemplateID: String? = nil,
-        snoozedUntil: Date? = nil
+        snoozedUntil: Date? = nil,
+        streakCount: Int? = nil,
+        lastStreakDate: Date? = nil
     ) {
         self.id = id
         self.title = title
@@ -85,6 +96,8 @@ public struct CareTask: Codable, Equatable, Identifiable, Sendable {
         self.firstDueAt = firstDueAt
         self.maintenanceTemplateID = maintenanceTemplateID
         self.snoozedUntil = snoozedUntil
+        self.streakCount = streakCount
+        self.lastStreakDate = lastStreakDate
     }
 
     public init(from decoder: Decoder) throws {
@@ -97,10 +110,38 @@ public struct CareTask: Codable, Equatable, Identifiable, Sendable {
         firstDueAt = try c.decodeIfPresent(Date.self, forKey: .firstDueAt)
         maintenanceTemplateID = try c.decodeIfPresent(String.self, forKey: .maintenanceTemplateID)
         snoozedUntil = try c.decodeIfPresent(Date.self, forKey: .snoozedUntil)
+        streakCount = try c.decodeIfPresent(Int.self, forKey: .streakCount)
+        lastStreakDate = try c.decodeIfPresent(Date.self, forKey: .lastStreakDate)
     }
 
     /// `true` when there's no cadence — seasonal / manual.
     public var isManual: Bool { intervalDays == nil }
+
+    // MARK: Positive-only streaks (D3)
+
+    /// The streak count this task WOULD have after an on-cadence completion at `now` — a pure
+    /// projection of ``CareCompletion/markDone``'s streak logic, so a view can preview a milestone the
+    /// instant the button is tapped (before the write round-trips), and unit tests can assert it.
+    ///
+    /// **Positive-only + generous by design** — a slightly-late water still counts; the only "down"
+    /// move is a silent reset to 1, never a decrement, never a message:
+    ///   • First-ever completion → `1`.
+    ///   • Same day as the last advance (or clock skew) → **unchanged** (double-taps don't inflate it).
+    ///   • Within a forgiving window (up to **two** cadence intervals since the last advance) → `+1`.
+    ///   • A full extra cadence-cycle missed (gap > `2 × interval` days) → **reset to `1`**, silently.
+    ///   • Manual / seasonal task (no cadence) → `+1` (there's nothing to be "late" against).
+    public func streakAfterCompletion(now: Date = Date()) -> Int {
+        let current = streakCount ?? 0
+        guard current > 0, let last = lastStreakDate else { return 1 } // first streak
+        let cal = Calendar.current
+        let gap = cal.dateComponents(
+            [.day], from: cal.startOfDay(for: last), to: cal.startOfDay(for: now)
+        ).day ?? 0
+        if gap <= 0 { return current }                        // same day / skew → don't inflate
+        guard let interval = intervalDays else { return current + 1 } // manual → always continues
+        if gap > interval * 2 { return 1 }                    // missed a full extra cycle → gentle reset
+        return current + 1
+    }
 
     /// Computed next-due date. `lastDoneAt + intervalDays` once done; otherwise the `firstDueAt`
     /// anchor when set; `nil` for a manual task or an un-anchored never-done task (see
@@ -161,6 +202,26 @@ public struct CareTask: Codable, Equatable, Identifiable, Sendable {
         guard let days = daysUntilDue(now: now) else { return false }
         return days < 0
     }
+}
+
+/// Positive-only care-streak rules (D3) — the thresholds and gates shared by the badge, the
+/// milestone celebration, and analytics. There is **no** notion here of a "lost" or "broken" streak:
+/// a lapse silently resets ``CareTask/streakCount`` to 1 (see ``CareTask/streakAfterCompletion(now:)``)
+/// and nothing negative is ever surfaced. This namespace only ever *celebrates*.
+public enum CareStreak {
+    /// Streak lengths worth a small, joyful burst. Because a streak only ever advances by one, a
+    /// completion that lands the count *exactly* on one of these is the milestone moment.
+    public static let milestones: [Int] = [7, 14, 30, 60, 100]
+
+    /// The streak length at/above which the gentle "🔥 {n}" badge appears. Below this: **nothing** —
+    /// no number, no pressure, no expectation to keep anything going.
+    public static let badgeThreshold = 3
+
+    /// `true` when a completion that lands the streak on `streak` should fire the milestone celebration.
+    public static func isMilestone(_ streak: Int) -> Bool { milestones.contains(streak) }
+
+    /// `true` when `streak` is long enough to earn the quiet badge (≥ ``badgeThreshold``).
+    public static func showsBadge(_ streak: Int?) -> Bool { (streak ?? 0) >= badgeThreshold }
 }
 
 /// Whether a plant species is toxic to the family's pets (P19-C4). The Place house has two dogs

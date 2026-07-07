@@ -2209,6 +2209,10 @@ private struct PlantTaskRow: View {
 
     /// Bumps on each mark-done tap → flavored burst + glyph morph + the leading-glyph bounce.
     @State private var careTrigger = 0
+    /// D3 — bumps only when a completion lands the streak exactly on a milestone (7/14/30/60/100),
+    /// firing the positive-only streak celebration. `milestoneStreak` is that new streak length.
+    @State private var milestoneTrigger = 0
+    @State private var milestoneStreak = 0
 
     private var style: CelebrationStyle { .forCare(kind: .plant, taskTitle: task.title) }
 
@@ -2223,7 +2227,10 @@ private struct PlantTaskRow: View {
             .careBounce(trigger: careTrigger) // the glyph perks up when the task is done
 
             VStack(alignment: .leading, spacing: 2) {
-                Text(task.title).foregroundStyle(Color.ink)
+                HStack(spacing: 6) {
+                    Text(task.title).foregroundStyle(Color.ink)
+                    StreakBadge(streak: task.streakCount) // D3 — only appears at ≥ 3, never below
+                }
                 dueLine
             }
 
@@ -2236,9 +2243,16 @@ private struct PlantTaskRow: View {
                     MenereHaptics.softTap()
                     onUndo()
                 } else {
+                    // D3 — project the streak BEFORE marking done so we can fire a milestone burst the
+                    // instant it crosses (positive-only; a non-milestone completion just skips this).
+                    let projected = task.streakAfterCompletion()
                     onMarkDone()
                     careTrigger += 1
                     MenereHaptics.celebrate(style)
+                    if CareStreak.isMilestone(projected) {
+                        milestoneStreak = projected
+                        milestoneTrigger += 1
+                    }
                 }
             } label: {
                 CelebrationGlyph(trigger: careTrigger, style: style, size: 20)
@@ -2248,6 +2262,7 @@ private struct PlantTaskRow: View {
                 trigger: careTrigger, style: style, name: plantName,
                 isJustDone: isJustDone, onUndo: onUndo, onSnooze: onSnooze
             )
+            .streakMilestone(streak: milestoneStreak, trigger: milestoneTrigger)
             .accessibilityLabel(isJustDone ? "Undo \(task.title) \(plantName)" : "\(task.title) \(plantName)")
             .accessibilityIdentifier("plant-task-done-\(task.id)")
         }
@@ -2373,6 +2388,9 @@ private struct CareDetailTaskRow: View {
 
     /// Bumps on each mark-done tap → flavored burst + glyph morph + leading-glyph bounce.
     @State private var careTrigger = 0
+    /// D3 — bumps only when a completion lands the streak exactly on a milestone (positive-only).
+    @State private var milestoneTrigger = 0
+    @State private var milestoneStreak = 0
 
     var body: some View {
         HStack(spacing: 12) {
@@ -2384,7 +2402,10 @@ private struct CareDetailTaskRow: View {
             .careBounce(trigger: careTrigger)
 
             VStack(alignment: .leading, spacing: 2) {
-                Text(task.title).foregroundStyle(Color.ink)
+                HStack(spacing: 6) {
+                    Text(task.title).foregroundStyle(Color.ink)
+                    StreakBadge(streak: task.streakCount) // D3 — only appears at ≥ 3
+                }
                 dueLine
             }
 
@@ -2395,9 +2416,14 @@ private struct CareDetailTaskRow: View {
                     MenereHaptics.softTap()
                     onUndo()
                 } else {
+                    let projected = task.streakAfterCompletion()
                     onMarkDone()
                     careTrigger += 1
                     MenereHaptics.celebrate(style)
+                    if CareStreak.isMilestone(projected) {
+                        milestoneStreak = projected
+                        milestoneTrigger += 1
+                    }
                 }
             } label: {
                 CelebrationGlyph(trigger: careTrigger, style: style, size: 20)
@@ -2407,6 +2433,7 @@ private struct CareDetailTaskRow: View {
                 trigger: careTrigger, style: style, name: name,
                 isJustDone: isJustDone, onUndo: onUndo, onSnooze: onSnooze
             )
+            .streakMilestone(streak: milestoneStreak, trigger: milestoneTrigger)
             .accessibilityLabel(isJustDone ? "Undo \(task.title)" : "Mark \(task.title) done")
             .accessibilityIdentifier("care-detail-task-done-\(task.id)")
         }
@@ -3672,6 +3699,9 @@ private struct PlantRow: View {
 
     /// Bumps on each mark-done tap → drives the flavored burst, the glyph morph, and the thumbnail bounce.
     @State private var careTrigger = 0
+    /// D3 — bumps only when a completion lands the streak exactly on a milestone (positive-only).
+    @State private var milestoneTrigger = 0
+    @State private var milestoneStreak = 0
 
     private var soonest: CareTask? { item.soonestDueTask() }
 
@@ -3692,7 +3722,10 @@ private struct PlantRow: View {
                         .clipShape(Circle())
                         .careBounce(trigger: careTrigger) // the plant perks up when cared for
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(item.name).foregroundStyle(Color.ink)
+                        HStack(spacing: 6) {
+                            Text(item.name).foregroundStyle(Color.ink)
+                            StreakBadge(streak: soonest?.streakCount) // D3 — only appears at ≥ 3
+                        }
                         speciesLine
                         dueLine
                     }
@@ -3718,14 +3751,20 @@ private struct PlantRow: View {
                     accessibilityText: "\(preset?.title ?? "Mark done") \(item.name)",
                     identifier: "plant-mark-done-\(item.id)",
                     onTap: {
+                        let projected = task.streakAfterCompletion()
                         onMarkDone(task.id)
                         careTrigger += 1
                         MenereHaptics.celebrate(style)
+                        if CareStreak.isMilestone(projected) {
+                            milestoneStreak = projected
+                            milestoneTrigger += 1
+                        }
                     },
                     isJustDone: undoingTaskID == task.id,
                     onUndo: onUndo,
                     onSnooze: { days in onSnooze(task.id, days) }
                 )
+                .streakMilestone(streak: milestoneStreak, trigger: milestoneTrigger)
             }
         }
     }
