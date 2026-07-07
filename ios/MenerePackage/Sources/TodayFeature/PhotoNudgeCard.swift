@@ -29,115 +29,99 @@ struct PhotoNudgeCard: View {
         }
     }
 
-    // MARK: The nudge (authorized, fresh batch)
+    // MARK: The nudge (authorized, fresh batch) — a slim inline prompt, not a full card
 
+    /// Demoted (declutter pass) from a full card with a preview strip + big button to a single slim
+    /// row: one thumbnail, a one-line prompt, a compact "Make a memory" chip, and a quiet dismiss. It
+    /// sits inline under the greeting so it invites without competing with the day's real priorities.
     private func nudgeCard(_ nudge: PhotoNudge) -> some View {
-        card {
-            HStack(spacing: 8) {
+        HStack(spacing: 10) {
+            if let first = nudge.thumbnailAssetIDs.first {
+                PhotoNudgeThumbnail(assetID: first, side: 40)
+            } else {
                 Image(systemName: "photo.badge.plus.fill")
-                    .font(.subheadline)
+                    .font(.title3)
                     .foregroundStyle(Color.marigold)
-                Text("New photos")
-                    .familyTitle(.headline)
-                    .foregroundStyle(Color.ink)
-                Spacer()
-                Button {
-                    store.send(.photoNudgeDismissed)
-                } label: {
-                    Image(systemName: "xmark")
-                        .font(.caption.weight(.bold))
-                        .foregroundStyle(Color.inkSoft)
-                        .padding(6)
-                }
-                .buttonStyle(.pressable)
-                .accessibilityLabel("Not now")
-                .accessibilityIdentifier("today-photo-nudge-dismiss")
-            }
-
-            Text(nudgeLine(nudge.newCount))
-                .foregroundStyle(Color.ink)
-                .fixedSize(horizontal: false, vertical: true)
-
-            if !nudge.thumbnailAssetIDs.isEmpty {
-                HStack(spacing: 8) {
-                    ForEach(nudge.thumbnailAssetIDs, id: \.self) { id in
-                        PhotoNudgeThumbnail(assetID: id)
-                    }
-                    Spacer(minLength: 0)
-                }
+                    .frame(width: 40, height: 40)
             }
 
             Button {
                 store.send(.photoNudgeTapped)
             } label: {
-                HStack(spacing: 8) {
-                    Image(systemName: "sparkles")
-                    Text("Make a memory")
-                    Spacer()
-                    Image(systemName: "chevron.right").font(.footnote.weight(.semibold))
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(nudgeLine(nudge.newCount))
+                        .font(.system(.subheadline, design: .rounded).weight(.semibold))
+                        .foregroundStyle(Color.ink)
+                        .lineLimit(1)
+                    Text("Tap to make a memory 📸")
+                        .font(.system(.caption, design: .rounded))
+                        .foregroundStyle(Color.bacanGreen)
                 }
-                .font(.system(.subheadline, design: .rounded).weight(.semibold))
-                .foregroundStyle(.white)
-                .padding(.horizontal, 16)
-                .padding(.vertical, 12)
-                .frame(maxWidth: .infinity)
-                .background(Capsule(style: .continuous).fill(Color.bacanGreen))
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
             }
             .buttonStyle(.pressable)
             .accessibilityIdentifier("today-photo-nudge-make-memory")
+
+            Button {
+                store.send(.photoNudgeDismissed)
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(Color.inkSoft)
+                    .padding(6)
+            }
+            .buttonStyle(.pressable)
+            .accessibilityLabel("Not now")
+            .accessibilityIdentifier("today-photo-nudge-dismiss")
         }
+        .padding(10)
+        .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Color.familySurface))
         .accessibilityIdentifier("today-photo-nudge")
     }
 
-    /// "You added 12 new photos — want to save any as a memory? 📸" (grammatical for a single photo too).
+    /// "12 new photos" (grammatical for a single photo too).
     private func nudgeLine(_ count: Int) -> String {
-        let noun = count == 1 ? "1 new photo" : "\(count) new photos"
-        return "You added \(noun) — want to save any as a memory? 📸"
+        count == 1 ? "1 new photo" : "\(count) new photos"
     }
 
-    // MARK: The soft opt-in (Photos not asked yet)
+    // MARK: The soft opt-in (Photos not asked yet) — a slim one-line prompt
 
     private var softOptInCard: some View {
-        card {
-            HStack(spacing: 8) {
-                Image(systemName: "photo.on.rectangle.angled")
-                    .font(.subheadline)
-                    .foregroundStyle(Color.bacanGreen)
-                Text("Your photos")
-                    .familyTitle(.headline)
-                    .foregroundStyle(Color.ink)
-                Spacer()
-            }
-            Text("Let Bacán surface new photos so you can turn them into memories?")
+        HStack(spacing: 10) {
+            Image(systemName: "photo.on.rectangle.angled")
+                .font(.subheadline)
+                .foregroundStyle(Color.bacanGreen)
+            Text("Surface new photos as memories?")
+                .font(.system(.subheadline, design: .rounded).weight(.semibold))
                 .foregroundStyle(Color.ink)
-                .fixedSize(horizontal: false, vertical: true)
-            HStack(spacing: 10) {
-                Button {
-                    store.send(.photoNudgeSurfaceDismissed)
-                } label: {
-                    Text("Maybe later")
-                        .font(.system(.subheadline, design: .rounded).weight(.semibold))
-                        .foregroundStyle(Color.bacanGreen)
-                        .padding(.horizontal, 16).padding(.vertical, 11)
-                        .background(Capsule(style: .continuous).fill(Color.bacanGreen.opacity(0.12)))
-                }
-                .buttonStyle(.pressable)
-                .accessibilityIdentifier("today-photo-nudge-later")
-
-                Button {
-                    store.send(.photoNudgeSurfaceTapped)
-                } label: {
-                    Text("Sure")
-                        .font(.system(.subheadline, design: .rounded).weight(.semibold))
-                        .foregroundStyle(.white)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 11)
-                        .background(Capsule(style: .continuous).fill(Color.bacanGreen))
-                }
-                .buttonStyle(.pressable)
-                .accessibilityIdentifier("today-photo-nudge-surface")
+                .lineLimit(1)
+                .layoutPriority(1)
+            Spacer(minLength: 4)
+            Button {
+                store.send(.photoNudgeSurfaceDismissed)
+            } label: {
+                Text("Later")
+                    .font(.system(.caption, design: .rounded).weight(.semibold))
+                    .foregroundStyle(Color.inkSoft)
             }
+            .buttonStyle(.pressable)
+            .accessibilityIdentifier("today-photo-nudge-later")
+
+            Button {
+                store.send(.photoNudgeSurfaceTapped)
+            } label: {
+                Text("Sure")
+                    .font(.system(.caption, design: .rounded).weight(.bold))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 12).padding(.vertical, 6)
+                    .background(Capsule(style: .continuous).fill(Color.bacanGreen))
+            }
+            .buttonStyle(.pressable)
+            .accessibilityIdentifier("today-photo-nudge-surface")
         }
+        .padding(10)
+        .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Color.familySurface))
         .accessibilityIdentifier("today-photo-nudge-optin")
     }
 
@@ -167,17 +151,6 @@ struct PhotoNudgeCard: View {
         .accessibilityIdentifier("today-photo-nudge-saved")
     }
 
-    // MARK: Card chrome (matches Today's familySurface cards)
-
-    private func card<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 12, content: content)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(16)
-            .background(
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .fill(Color.familySurface)
-            )
-    }
 }
 
 // MARK: - Preview thumbnail
@@ -186,11 +159,10 @@ struct PhotoNudgeCard: View {
 /// in a small process-wide cache so scrolling Today doesn't re-decode. Read-only (FL2 never writes).
 private struct PhotoNudgeThumbnail: View {
     let assetID: String
+    var side: CGFloat = 60
 
     @Dependency(\.photoLibrary) private var photoLibrary
     @State private var image: UIImage?
-
-    private let side: CGFloat = 60
 
     var body: some View {
         ZStack {

@@ -47,29 +47,30 @@ public struct TodayView: View {
 
     public var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
-                // Motion & Delight — Today's signature: sections CASCADE top→bottom, and the
-                // family grid POPS in with a sticker-slap overshoot. Replays on every (re)selection.
-                greeting.tabEntrance(.cascade, index: 0)
+            // A calmer, intentional hierarchy (top→bottom): a quiet HEADER, the BRIEFING, one
+            // consolidated "Needs you today" list, a compact "Today's plan", then quieter glances.
+            // Sections still CASCADE in on every (re)selection; the glances POP in last.
+            VStack(alignment: .leading, spacing: 26) {
+                // (a) HEADER — greeting + date, with the photo nudge demoted to a slim inline prompt
+                // that only appears when there's a fresh batch (or the one-time soft opt-in).
+                VStack(alignment: .leading, spacing: 12) {
+                    greeting
+                    PhotoNudgeCard(store: store)
+                }
+                .tabEntrance(.cascade, index: 0)
 
+                // (b) BRIEFING — the intentional "here's your day".
                 briefingCard.tabEntrance(.cascade, index: 1)
 
-                captureAnythingButton.tabEntrance(.cascade, index: 2)
+                // (c) NEEDS YOU TODAY — Family Radar + overdue care + today's chores, merged into ONE
+                // prioritized, scannable list (each row keeps its inline action). Empty = all caught up.
+                needsYouCard.tabEntrance(.cascade, index: 2)
 
-                // FL2 — the new-photo nudge (present only when there's a fresh batch / a soft opt-in).
-                PhotoNudgeCard(store: store).tabEntrance(.cascade, index: 3)
+                // (d) TODAY'S PLAN — the week strip, today's schedule, and tonight's dinner in one card.
+                todaysPlanCard.tabEntrance(.cascade, index: 3)
 
-                weekStrip.tabEntrance(.cascade, index: 3)
-                scheduleCard.tabEntrance(.cascade, index: 4)
-                dinnerCard.tabEntrance(.cascade, index: 5)
-                quickActions.tabEntrance(.cascade, index: 6)
-                captureMomentButton.tabEntrance(.cascade, index: 7)
-
-                choresCard.tabEntrance(.cascade, index: 8)
-                homeCareCard.tabEntrance(.cascade, index: 9)
-                houseCard.tabEntrance(.cascade, index: 10)
-                familyRadarCard.tabEntrance(.cascade, index: 11)
-                familyCard.tabEntrance(.pop, index: 12)
+                // (e) GLANCES — quieter, de-emphasized: the house, the family, and slim shortcuts.
+                glancesSection.tabEntrance(.pop, index: 4)
             }
             .padding(.horizontal)
             .padding(.vertical, 12)
@@ -126,37 +127,208 @@ public struct TodayView: View {
         .refreshable { await store.send(.task).finish() }
     }
 
-    /// Act V — V2-D. The hero entry to the smart-capture inbox: the single fastest way to get anything
-    /// into the app. Bacán decides where the photo/note goes; the user confirms.
-    private var captureAnythingButton: some View {
-        Button {
-            store.send(.captureTapped)
-        } label: {
-            HStack(spacing: 12) {
-                Image(systemName: "sparkles")
-                    .font(.title3.weight(.semibold))
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Capture anything")
-                        .font(.system(.headline, design: .rounded).weight(.bold))
-                    Text("A photo or a note — Bacán files it for you.")
-                        .font(.system(.caption, design: .rounded))
-                        .foregroundStyle(.white.opacity(0.85))
-                }
-                Spacer()
-                Image(systemName: "plus.circle.fill")
-                    .font(.title2)
-            }
-            .foregroundStyle(.white)
-            .padding(.horizontal, 16)
-            .padding(.vertical, 16)
-            .frame(maxWidth: .infinity)
-            .background(
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .fill(Color.bacanGreen)
-            )
+    // MARK: Needs you today (consolidated: Family Radar + overdue care + today's chores)
+
+    /// One prioritized row in the "Needs you today" list. Wraps whichever of the three merged sources
+    /// a row came from — a Family-Radar document alert, an overdue care task, a due-soon (not-yet-
+    /// overdue) care task, or a chore due today — so they can be sorted into one urgency order while
+    /// each keeps its own inline action (add-to-calendar / renew, mark-care-done + celebration,
+    /// complete-chore). The `(bucket, tiebreak)` pair is the sort key; lower = more urgent.
+    private struct NeedRow: Identifiable {
+        enum Kind {
+            case radarDoc(FamilyRadar.Item)          // a Brain doc alert (expired or upcoming)
+            case overdueCare(FamilyRadar.CareRadarItem)  // an overdue house/pet/plant task
+            case dueSoonCare(CareItem.CareDue)        // a not-yet-overdue care task, due within a week
+            case chore(Chore)                          // a chore due today / overdue / undated
         }
-        .buttonStyle(.pressable)
-        .accessibilityIdentifier("today-capture-hero")
+        let id: String
+        let kind: Kind
+        let bucket: Int
+        let tiebreak: Double
+    }
+
+    /// The urgency cap for the compact card — the rest spill into the quiet "See all" footers so the
+    /// list stays glanceable rather than a wall.
+    private let needsVisibleCap = 6
+
+    /// Build the merged, urgency-sorted "needs you" list. Overdue care comes from the radar (which
+    /// summarizes the 32-plant watering flood into one row); due-soon-but-not-overdue care comes from
+    /// the care roster (so upcoming upkeep isn't lost) — the two never overlap (overdue vs not).
+    private func needRows() -> [NeedRow] {
+        var rows: [NeedRow] = []
+        let radar = store.state.radar(now: now)
+        // Loud document alerts: expired shouted first (bucket 0), upcoming later (bucket 5).
+        for item in radar.all {
+            rows.append(NeedRow(
+                id: "radar-\(item.doc.id)", kind: .radarDoc(item),
+                bucket: item.isExpired ? 0 : 5, tiebreak: Double(item.days)
+            ))
+        }
+        // Overdue care (bucket 1) — most-overdue first.
+        for care in radar.care {
+            rows.append(NeedRow(
+                id: "care-\(care.id)", kind: .overdueCare(care),
+                bucket: 1, tiebreak: Double(-care.daysOver)
+            ))
+        }
+        // Due-soon care that ISN'T overdue (bucket 3 due-today / bucket 4 upcoming). Overdue ones are
+        // already covered by `radar.care`, so filtering them out here avoids any double-listing.
+        for due in careDue() where !due.isOverdue {
+            rows.append(NeedRow(
+                id: "duecare-\(due.id)", kind: .dueSoonCare(due),
+                bucket: due.days <= 0 ? 3 : 4, tiebreak: Double(due.days) + 0.5
+            ))
+        }
+        // Chores: overdue (bucket 2) ahead of due-today/undated (bucket 3).
+        for chore in choresToday() {
+            let days = choreDaysUntil(chore)
+            rows.append(NeedRow(
+                id: "chore-\(chore.id)", kind: .chore(chore),
+                bucket: days < 0 ? 2 : 3, tiebreak: Double(days)
+            ))
+        }
+        return rows.sorted { ($0.bucket, $0.tiebreak) < ($1.bucket, $1.tiebreak) }
+    }
+
+    /// Whole days until a chore is due (`< 0` overdue, `0` today/undated).
+    private func choreDaysUntil(_ chore: Chore) -> Int {
+        guard let due = chore.dueDate else { return 0 }
+        return cal.dateComponents([.day], from: cal.startOfDay(for: now), to: cal.startOfDay(for: due)).day ?? 0
+    }
+
+    /// The consolidated card. With work to do → a counted, prioritized list capped at `needsVisibleCap`
+    /// with quiet "See all" footers; nothing to do → a warm caught-up card.
+    @ViewBuilder
+    private var needsYouCard: some View {
+        let rows = needRows()
+        if rows.isEmpty {
+            caughtUpCard
+        } else {
+            let visible = Array(rows.prefix(needsVisibleCap))
+            card {
+                needsHeader(count: rows.count)
+                VStack(spacing: 12) {
+                    ForEach(visible) { row in needRowView(row) }
+                    needsFooters(rows: rows)
+                }
+            }
+            .accessibilityIdentifier("today-needs-you")
+        }
+    }
+
+    private func needsHeader(count: Int) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: 8) {
+                Image(systemName: "bell.badge.fill")
+                    .font(.subheadline)
+                    .foregroundStyle(Color.terracotta)
+                Text("Needs you today")
+                    .familyTitle(.headline)
+                    .foregroundStyle(Color.ink)
+                Spacer()
+                Text("\(count)")
+                    .font(.system(.caption, design: .rounded).weight(.bold))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .background(Capsule().fill(Color.terracotta))
+                    .accessibilityIdentifier("today-needs-you-count")
+            }
+            Text(count == 1 ? "1 thing needs you" : "\(count) things need you")
+                .font(.system(.caption, design: .rounded))
+                .foregroundStyle(Color.inkSoft)
+        }
+    }
+
+    @ViewBuilder
+    private func needRowView(_ row: NeedRow) -> some View {
+        switch row.kind {
+        case let .radarDoc(item):
+            RadarRow(store: store, item: item)
+        case let .overdueCare(care):
+            CareRadarRow(store: store, item: care)
+        case let .dueSoonCare(due):
+            TodayCareRow(
+                due: due,
+                isJustDone: store.careCelebration?.itemID == due.item.id
+                    && store.careCelebration?.taskID == due.task.id,
+                onOpen: { store.send(.careRowTapped(itemID: due.item.id)) },
+                onMarkDone: { store.send(.markCareTaskDone(itemID: due.item.id, taskID: due.task.id)) },
+                onUndo: { store.send(.undoCareTaskDone(itemID: due.item.id, taskID: due.task.id), animation: .snappy) },
+                onSnooze: { days in store.send(.snoozeCareTask(itemID: due.item.id, taskID: due.task.id, days: days), animation: .snappy) }
+            )
+        case let .chore(chore):
+            choreRow(chore)
+        }
+    }
+
+    /// The quiet progressive-disclosure footers for whatever spilled past the cap. Home-side overflow
+    /// (chores + due-soon care) → the Home tab; radar-side overflow (doc alerts + overdue care), or any
+    /// calm "Records", → the full Family Radar list. Two links at most, and only when there's more.
+    @ViewBuilder
+    private func needsFooters(rows: [NeedRow]) -> some View {
+        let hidden = rows.dropFirst(needsVisibleCap)
+        let hiddenHome = hidden.filter { row in
+            switch row.kind { case .chore, .dueSoonCare: return true; default: return false }
+        }.count
+        let hiddenRadar = hidden.count - hiddenHome
+        let radar = store.state.radar(now: now)
+        if hiddenHome > 0 {
+            footerLink(
+                "\(hiddenHome) more in Home", symbol: "arrow.forward.circle",
+                id: "today-needs-more-home"
+            ) { store.send(.openHomeTapped(card: "needs_you")) }
+        }
+        if hiddenRadar > 0 || !radar.records.isEmpty {
+            NavigationLink {
+                RadarDetailView(store: store)
+            } label: {
+                footerLabel("See all in Family Radar", symbol: "dot.radiowaves.left.and.right")
+            }
+            .buttonStyle(.pressable)
+            .accessibilityIdentifier("today-needs-see-all-radar")
+        }
+    }
+
+    private func footerLink(
+        _ text: String, symbol: String, id: String, _ action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) { footerLabel(text, symbol: symbol) }
+            .buttonStyle(.pressable)
+            .accessibilityIdentifier(id)
+    }
+
+    private func footerLabel(_ text: String, symbol: String) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: symbol)
+            Text(text)
+            Spacer()
+            Image(systemName: "chevron.right").font(.footnote.weight(.semibold))
+        }
+        .font(.system(.subheadline, design: .rounded).weight(.semibold))
+        .foregroundStyle(Color.bacanGreen)
+        .contentShape(Rectangle())
+    }
+
+    /// The warm empty state — nothing needs the family right now.
+    private var caughtUpCard: some View {
+        card {
+            HStack(spacing: 12) {
+                Image(systemName: "checkmark.seal.fill")
+                    .font(.title2)
+                    .foregroundStyle(Color.bacanGreen)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("You're all caught up 🌤️")
+                        .familyTitle(.headline)
+                        .foregroundStyle(Color.ink)
+                    Text("Nothing needs you right now — enjoy it.")
+                        .font(.system(.subheadline, design: .rounded))
+                        .foregroundStyle(Color.inkSoft)
+                }
+                Spacer(minLength: 0)
+            }
+        }
+        .accessibilityIdentifier("today-needs-you-caughtup")
     }
 
     // MARK: Greeting
@@ -319,37 +491,67 @@ public struct TodayView: View {
 
     // MARK: Schedule (scoped to the week strip's selected day)
 
-    /// Time-aware schedule (P17-C1, P28). For the day-of, the day is split at `now`: all-day events
+    // MARK: Today's plan (week strip + schedule + tonight's dinner, one compact card)
+
+    /// (d) The compact "Today's plan" card — the week strip up top, then today's schedule and tonight's
+    /// dinner as two light subsections divided by a hairline. Both keep every inline action they had as
+    /// standalone cards (tap-to-edit events, add-event, open-calendar, change-dinner, add-to-calendar).
+    private var todaysPlanCard: some View {
+        card {
+            cardHeader("Today's plan", symbol: "sun.max.fill")
+            weekStrip
+
+            planDivider
+
+            HStack {
+                subHeader(scheduleTitle, symbol: "calendar")
+                Spacer()
+                addEventButton
+            }
+            scheduleContent
+            openCalendarRow
+
+            planDivider
+
+            HStack {
+                subHeader("Tonight's dinner", symbol: "fork.knife")
+                Spacer()
+                changeDinnerButton
+            }
+            dinnerBody
+        }
+        .accessibilityIdentifier("today-plan")
+    }
+
+    private var planDivider: some View {
+        Divider().overlay(Color.inkSoft.opacity(0.15)).padding(.vertical, 2)
+    }
+
+    private var addEventButton: some View {
+        Button { store.send(.quickAddEventTapped) } label: {
+            Label("Add event", systemImage: "plus.circle.fill")
+                .font(.system(.caption, design: .rounded).weight(.semibold))
+                .foregroundStyle(Color.bacanGreen)
+        }
+        .buttonStyle(.pressable)
+        .accessibilityIdentifier("today-schedule-add-event")
+    }
+
+    /// Time-aware schedule body (P17-C1, P28). For the day-of, the day is split at `now`: all-day events
     /// pin at the top, upcoming/in-progress timed events follow, and events whose end already passed
     /// collapse under an "Earlier today" disclosure. For any OTHER selected day it's a plain agenda.
-    /// The header carries "+ Add event"; an "Open full calendar" row sits at the foot.
-    private var scheduleCard: some View {
+    @ViewBuilder
+    private var scheduleContent: some View {
         let isToday = cal.isDate(store.selectedDay, inSameDayAs: now)
         let all = occurrences(on: store.selectedDay)
-        return card {
-            HStack {
-                cardHeader(scheduleTitle, symbol: "calendar")
-                Spacer()
-                Button { store.send(.quickAddEventTapped) } label: {
-                    Label("Add event", systemImage: "plus.circle.fill")
-                        .font(.system(.caption, design: .rounded).weight(.semibold))
-                        .foregroundStyle(Color.bacanGreen)
-                }
-                .buttonStyle(.pressable)
-                .accessibilityIdentifier("today-schedule-add-event")
+        if all.isEmpty {
+            emptyLine(isToday ? "Nothing on the books — a rare quiet day." : "Nothing scheduled.")
+        } else if isToday {
+            todayScheduleBody(all)
+        } else {
+            VStack(spacing: 12) {
+                ForEach(all) { item in scheduleRow(item) }
             }
-
-            if all.isEmpty {
-                emptyLine(isToday ? "Nothing on the books — a rare quiet day." : "Nothing scheduled.")
-            } else if isToday {
-                todayScheduleBody(all)
-            } else {
-                VStack(spacing: 12) {
-                    ForEach(all) { item in scheduleRow(item) }
-                }
-            }
-
-            openCalendarRow
         }
     }
 
@@ -465,22 +667,16 @@ public struct TodayView: View {
     private let dinnerCutoffHour = 20
     private var isPastDinnerHour: Bool { cal.component(.hour, from: now) >= dinnerCutoffHour }
 
-    private var dinnerCard: some View {
-        card {
-            HStack {
-                cardHeader("Tonight's dinner", symbol: "fork.knife")
-                Spacer()
-                // P17-C1 — always-available "Change dinner" (opens the recipe picker).
-                Button { store.send(.changeDinnerTapped) } label: {
-                    Label("Change", systemImage: "arrow.triangle.2.circlepath")
-                        .font(.system(.caption, design: .rounded).weight(.semibold))
-                        .foregroundStyle(Color.bacanGreen)
-                }
-                .buttonStyle(.pressable)
-                .accessibilityIdentifier("today-dinner-change")
-            }
-            dinnerBody
+    /// P17-C1 — always-available "Change dinner" (opens the recipe picker). Lives in the Today's-plan
+    /// card's dinner subsection header.
+    private var changeDinnerButton: some View {
+        Button { store.send(.changeDinnerTapped) } label: {
+            Label("Change", systemImage: "arrow.triangle.2.circlepath")
+                .font(.system(.caption, design: .rounded).weight(.semibold))
+                .foregroundStyle(Color.bacanGreen)
         }
+        .buttonStyle(.pressable)
+        .accessibilityIdentifier("today-dinner-change")
     }
 
     @ViewBuilder
@@ -609,47 +805,52 @@ public struct TodayView: View {
         return store.recipes.first { $0.id == entry.recipeID }?.title ?? entry.recipeTitle
     }
 
-    // MARK: Quick actions
+    // MARK: Glances (quieter, lower — the house, the family, slim shortcuts)
 
-    private var quickActions: some View {
-        HStack(spacing: 10) {
-            quickAction("Add event", symbol: "calendar.badge.plus") { store.send(.quickAddEventTapped) }
-            quickAction("Add to list", symbol: "checklist") { store.send(.quickAddListTapped) }
-            quickAction("Plan dinner", symbol: "fork.knife") { store.send(.planDinnerTapped) }
+    /// (e) The de-emphasized bottom of Today: a quiet "Around the house" label, the (optional) house
+    /// card, the family grid, and a slim shortcuts row. Everything here is a glance or a secondary
+    /// entry point — it never competes with "Needs you today" or "Today's plan" above.
+    private var glancesSection: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            sectionLabel("Around the house")
+            houseCard
+            familyCard
+            shortcutsRow
         }
     }
 
-    /// P28-C2 — a warm entry to the family scrapbook, right in the flow of Today. Opens the same
-    /// "capture a moment" editor as the Memories tab (via the `openMemories` delegate).
-    private var captureMomentButton: some View {
-        Button {
-            store.send(.captureMomentTapped)
-        } label: {
-            HStack(spacing: 10) {
-                Image(systemName: "camera.fill")
-                    .font(.headline)
-                Text("Capture a moment 📸")
-                    .font(.system(.subheadline, design: .rounded).weight(.semibold))
-                Spacer()
-                Image(systemName: "chevron.right")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(Color.terracotta.opacity(0.6))
-            }
-            .foregroundStyle(Color.terracotta)
-            .padding(.horizontal, 16)
-            .padding(.vertical, 14)
-            .frame(maxWidth: .infinity)
-            .background(
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .fill(Color.terracotta.opacity(0.12))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .strokeBorder(Color.terracotta.opacity(0.28), lineWidth: 1)
-            )
+    /// A slim, single row of secondary entry points — the three deep-links plus a warm "capture a
+    /// moment". Demoted from the old big cards to quiet, equal-weight chips so there's one calm shelf
+    /// of shortcuts instead of several competing calls-to-action. (Smart-capture stays on the toolbar +.)
+    private var shortcutsRow: some View {
+        HStack(spacing: 10) {
+            quickAction("Event", symbol: "calendar.badge.plus") { store.send(.quickAddEventTapped) }
+            quickAction("List", symbol: "checklist") { store.send(.quickAddListTapped) }
+            quickAction("Dinner", symbol: "fork.knife") { store.send(.planDinnerTapped) }
+            quickAction("Moment", symbol: "camera.fill") { store.send(.captureMomentTapped) }
         }
-        .buttonStyle(.pressable)
-        .accessibilityIdentifier("today-capture-moment")
+        .accessibilityIdentifier("today-shortcuts")
+    }
+
+    /// A quiet, uppercase section label — creates top-level rhythm without competing with card headers.
+    private func sectionLabel(_ text: String) -> some View {
+        Text(text.uppercased())
+            .font(.system(.caption2, design: .rounded).weight(.bold))
+            .foregroundStyle(Color.inkSoft)
+            .tracking(0.8)
+            .padding(.horizontal, 4)
+    }
+
+    /// A lighter sub-section header used inside the "Today's plan" card (schedule / dinner).
+    private func subHeader(_ title: String, symbol: String) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: symbol)
+                .font(.caption)
+                .foregroundStyle(Color.inkSoft)
+            Text(title)
+                .font(.system(.subheadline, design: .rounded).weight(.bold))
+                .foregroundStyle(Color.ink)
+        }
     }
 
     private func quickAction(_ title: String, symbol: String, _ action: @escaping () -> Void) -> some View {
@@ -693,36 +894,6 @@ public struct TodayView: View {
                 if ba != bb { return ba < bb }
                 return (a.dueDate ?? a.createdAt) < (b.dueDate ?? b.createdAt)
             }
-    }
-
-    private var choresCard: some View {
-        let all = choresToday()
-        let shown = Array(all.prefix(6))
-        let overflow = all.count - shown.count
-        return card {
-            cardHeader("Chores today", symbol: "checklist")
-            if all.isEmpty {
-                emptyLine("All clear — nothing on the board today.")
-            } else {
-                VStack(spacing: 12) {
-                    ForEach(shown) { chore in choreRow(chore) }
-                    if overflow > 0 {
-                        Button { store.send(.choreRowTapped) } label: {
-                            HStack(spacing: 6) {
-                                Text("+\(overflow) more in Home")
-                                Spacer()
-                                Image(systemName: "chevron.right").font(.caption2.weight(.semibold))
-                            }
-                            .font(.system(.caption, design: .rounded).weight(.semibold))
-                            .foregroundStyle(Color.bacanGreen)
-                            .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.pressable)
-                        .accessibilityIdentifier("today-chores-more")
-                    }
-                }
-            }
-        }
     }
 
     private func choreRow(_ chore: Chore) -> some View {
@@ -773,45 +944,6 @@ public struct TodayView: View {
     /// Care tasks due or overdue within a week, same math as the Home tab's House-care banner.
     private func careDue() -> [CareItem.CareDue] {
         CareItem.dueTasks(in: store.careItems)
-    }
-
-    /// Shown only when at least one care item exists. With due/overdue tasks → a card listing up to
-    /// three (item name + due chip). All caught up → a single quiet "The house is happy." line, no
-    /// card chrome. Nothing at all when there are zero care items.
-    @ViewBuilder
-    private var homeCareCard: some View {
-        if !store.careItems.isEmpty {
-            let due = careDue()
-            if due.isEmpty {
-                HStack(spacing: 8) {
-                    Image(systemName: "checkmark.seal.fill").foregroundStyle(Color.bacanGreen)
-                    Text(HouseHealth.happyLine).foregroundStyle(Color.inkSoft)
-                }
-                .font(.system(.subheadline, design: .rounded))
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .accessibilityIdentifier("today-house-happy")
-            } else {
-                card {
-                    // Retitled "Care due" (P9): plants and house upkeep mix here. Each row already
-                    // carries its own kind icon (leaf for plants, house glyphs for upkeep).
-                    cardHeader("Care due", symbol: "checklist.checked")
-                    VStack(spacing: 12) {
-                        ForEach(Array(due.prefix(3))) { item in
-                            TodayCareRow(
-                                due: item,
-                                isJustDone: store.careCelebration?.itemID == item.item.id
-                                    && store.careCelebration?.taskID == item.task.id,
-                                onOpen: { store.send(.careRowTapped(itemID: item.item.id)) },
-                                onMarkDone: { store.send(.markCareTaskDone(itemID: item.item.id, taskID: item.task.id)) },
-                                onUndo: { store.send(.undoCareTaskDone(itemID: item.item.id, taskID: item.task.id), animation: .snappy) },
-                                onSnooze: { days in store.send(.snoozeCareTask(itemID: item.item.id, taskID: item.task.id, days: days), animation: .snappy) }
-                            )
-                        }
-                    }
-                }
-                .accessibilityIdentifier("today-home-care")
-            }
-        }
     }
 
     // MARK: The house (Philips Hue, P12-C1)
@@ -954,60 +1086,6 @@ public struct TodayView: View {
     private var isTonightHomeCooked: Bool {
         guard let entry = tonightsEntry, !entry.isEatingOut else { return false }
         return !entry.recipeID.isEmpty || !entry.recipeTitle.isEmpty
-    }
-
-    // MARK: Family Radar (P20 — proactive alerts from latent document/vaccine dates)
-
-    /// The radar's LOUD front door: EXPIRED items (a pet's rabies past its expiry) shouted first, then
-    /// due/expiring-soon items, each tappable → the linked document. When there ARE documents but
-    /// nothing needs attention, a calm caught-up line; nothing at all when the Brain is empty.
-    @ViewBuilder
-    private var familyRadarCard: some View {
-        let radar = store.state.radar()
-        if radar.isEmpty {
-            if !store.documents.isEmpty {
-                HStack(spacing: 8) {
-                    Image(systemName: "checkmark.seal.fill").foregroundStyle(Color.bacanGreen)
-                    Text("Nothing needs your attention 🟢").foregroundStyle(Color.inkSoft)
-                }
-                .font(.system(.subheadline, design: .rounded))
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .accessibilityIdentifier("today-radar-caughtup")
-            }
-        } else {
-            let top = radar.topItems()
-            // Overdue CARE rows share the card with the doc alerts — capped so the card stays
-            // glanceable (the rest live in "See all"). Plant watering is already summarized upstream.
-            let topCare = Array(radar.care.prefix(3))
-            card {
-                cardHeader("Family Radar", symbol: "dot.radiowaves.left.and.right")
-                VStack(spacing: 12) {
-                    ForEach(top) { item in RadarRow(store: store, item: item) }
-                    ForEach(topCare) { item in CareRadarRow(store: store, item: item) }
-                    // Surface the detail (which carries the care section + the calm "Records" list)
-                    // when there are more loud items than fit, more care rows, OR records to browse.
-                    if radar.all.count > top.count || radar.care.count > topCare.count
-                        || !radar.records.isEmpty {
-                        NavigationLink {
-                            RadarDetailView(store: store)
-                        } label: {
-                            HStack(spacing: 6) {
-                                Image(systemName: "list.bullet")
-                                Text("See all (\(radar.all.count + radar.care.count + radar.records.count))")
-                                Spacer()
-                                Image(systemName: "chevron.right").font(.footnote.weight(.semibold))
-                            }
-                            .font(.system(.subheadline, design: .rounded).weight(.semibold))
-                            .foregroundStyle(Color.bacanGreen)
-                            .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.pressable)
-                        .accessibilityIdentifier("today-radar-see-all")
-                    }
-                }
-            }
-            .accessibilityIdentifier("today-family-radar")
-        }
     }
 
     // MARK: The family
