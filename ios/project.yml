@@ -28,8 +28,8 @@ targets:
         INFOPLIST_FILE: App/Info.plist
         CODE_SIGN_ENTITLEMENTS: App/Menere.entitlements
         PRODUCT_BUNDLE_IDENTIFIER: com.copoche.menere
-        MARKETING_VERSION: "1.58.0"
-        CURRENT_PROJECT_VERSION: "66"
+        MARKETING_VERSION: "1.59.0"
+        CURRENT_PROJECT_VERSION: "67"
         SWIFT_VERSION: "5.0"
         TARGETED_DEVICE_FAMILY: "1,2"
         DEVELOPMENT_TEAM: Z2FNFL3X73
@@ -76,8 +76,8 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.copoche.menere.share
         PRODUCT_NAME: BacanShareExtension
         PRODUCT_MODULE_NAME: BacanShareExtension
-        MARKETING_VERSION: "1.58.0"
-        CURRENT_PROJECT_VERSION: "66"
+        MARKETING_VERSION: "1.59.0"
+        CURRENT_PROJECT_VERSION: "67"
         SWIFT_VERSION: "5.0"
         TARGETED_DEVICE_FAMILY: "1,2"
         DEVELOPMENT_TEAM: Z2FNFL3X73
