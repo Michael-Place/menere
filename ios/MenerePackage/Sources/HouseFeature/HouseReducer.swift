@@ -7,7 +7,9 @@ import HueClient
 import LutronClient
 import MerossClient
 import NestClient
+import PersistenceClient
 import SonosClient
+import UserDomain
 
 /// The granular House control surface (P12-C4) — the SUBSTRATE future family experiences (and the
 /// planned P14 agent tools) compose on. Where the Today "house" card is a read-only summary + ritual
@@ -115,6 +117,15 @@ public struct HouseReducer {
         /// Unlocking is a security action → always confirmed; locking is not (mirrors garage open/close).
         public var confirmingHomeKitUnlock: String?
 
+        // MARK: Fixtures / lamps (P16-fixtures)
+        /// When non-nil, room detail is in **combine** selection mode for this (bridge, room): the family is
+        /// picking two-or-more bulbs to fuse into one lamp. Carries the currently-checked light ids.
+        public var fixtureSelection: FixtureSelection?
+        /// The in-progress "name your lamp" sheet after Combine is tapped (nil = closed).
+        public var combineDraft: CombineDraft?
+        /// Fixture ids the user expanded to reveal/adjust their individual member bulbs.
+        public var expandedFixtures: Set<String> = []
+
         public init(
             config: HueConfig, members: [HouseholdMember] = [], bridges: [BridgeSnapshot] = [],
             lutronConfig: LutronConfig? = nil, shades: [LutronShade] = [],
@@ -178,6 +189,41 @@ public struct HouseReducer {
             guard let snap = snapshot(bridgeId), let room = snap.rooms.first(where: { $0.id == roomId }) else { return [] }
             let ids = Set(room.lightIds)
             return snap.lights.filter { ids.contains($0.id) }
+        }
+
+        // MARK: Fixture grouping (P16-fixtures)
+
+        /// A room's bulbs organized as **fixtures + loose bulbs**: each configured fixture whose members
+        /// are present in the room collapses into one entry (paired with its live member lights); every
+        /// other bulb renders on its own — exactly today's per-light row. Fixtures keep config order;
+        /// ungrouped bulbs keep the bridge's sorted order. A bulb belongs to at most one fixture (config
+        /// guarantees it), so the two lists never overlap.
+        public func roomFixtureGrouping(
+            bridgeId: String, roomId: String
+        ) -> (fixtures: [(fixture: HueFixture, lights: [HueLight])], ungrouped: [HueLight]) {
+            let roomLights = lights(inRoom: roomId, bridgeId: bridgeId)
+            let byId = Dictionary(roomLights.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+            var claimed = Set<String>()
+            var grouped: [(HueFixture, [HueLight])] = []
+            for fixture in config.fixtures(inRoom: roomId) {
+                let members = fixture.lightIds.compactMap { byId[$0] }
+                guard !members.isEmpty else { continue }   // a fixture with no live members in this room is skipped
+                claimed.formUnion(members.map(\.id))
+                grouped.append((fixture, members))
+            }
+            let ungrouped = roomLights.filter { !claimed.contains($0.id) }
+            return (grouped, ungrouped)
+        }
+
+        /// The live aggregate state of one fixture (folded from its member lights), or nil when the
+        /// fixture is unknown / has no live members.
+        public func fixtureState(bridgeId: String, fixtureId: String) -> HueFixtureState? {
+            guard let fixture = config.fixtures.first(where: { $0.id == fixtureId }),
+                  let snap = snapshot(bridgeId) else { return nil }
+            let byId = Dictionary(snap.lights.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+            let members = fixture.lightIds.compactMap { byId[$0] }
+            guard !members.isEmpty else { return nil }
+            return HueFixtureState(members: members)
         }
 
         /// Group scenes targeting a room (matched on the scene's `groupId`), by name.
@@ -320,6 +366,34 @@ public struct HouseReducer {
         public let sceneId: String
     }
 
+    /// The live "combine these bulbs into a lamp" selection in room detail (P16-fixtures).
+    public struct FixtureSelection: Equatable, Sendable {
+        public var bridgeId: String
+        public var roomId: String
+        public var lightIds: Set<String> = []
+        public init(bridgeId: String, roomId: String, lightIds: Set<String> = []) {
+            self.bridgeId = bridgeId
+            self.roomId = roomId
+            self.lightIds = lightIds
+        }
+    }
+
+    /// The in-progress fixture being named in the combine sheet (P16-fixtures).
+    public struct CombineDraft: Equatable, Sendable {
+        public var bridgeId: String
+        public var roomId: String
+        public var lightIds: [String]
+        public var name: String
+        public var kind: HueFixtureKind
+        public init(bridgeId: String, roomId: String, lightIds: [String], name: String, kind: HueFixtureKind) {
+            self.bridgeId = bridgeId
+            self.roomId = roomId
+            self.lightIds = lightIds
+            self.name = name
+            self.kind = kind
+        }
+    }
+
     public enum Action: Equatable {
         case task
         case refresh
@@ -431,6 +505,35 @@ public struct HouseReducer {
         /// The shared commit that secures/unsecures a lock (optimistic). P14 seam over `setCharacteristic`.
         /// NOTE: the agent harness must gate `secured == false` (unlock) behind its OWN confirmation.
         case commitHomeKitLock(accessoryId: String, secured: Bool)
+
+        // MARK: Fixtures / lamps (P16-fixtures) — control fan-out over a fixture's member bulbs.
+        /// Toggle a whole fixture: flips every member to the new state (new = !anyMemberOn). // SEAM (P14)
+        case toggleFixture(bridgeId: String, fixtureId: String)
+        /// Fixture brightness slider moved (0–100%) — sets every member, optimistic + debounced.
+        case fixtureBrightnessChanged(bridgeId: String, fixtureId: String, percent: Double)
+        case commitFixtureBrightness(bridgeId: String, fixtureId: String, bri: Int)
+        /// Fixture color / warm-cool changed — fans out to the members that can honor it (optimistic +
+        /// debounced, same ≥150ms floor). // SEAM (P14)
+        case fixtureColorChanged(bridgeId: String, fixtureId: String, command: HueColorCommand)
+        case commitFixtureColor(bridgeId: String, fixtureId: String, command: HueColorCommand)
+        /// Expand/collapse a fixture to reveal its individual member bulbs.
+        case toggleFixtureExpanded(fixtureId: String)
+
+        // Combine / un-combine (config CRUD, merge-written)
+        case beginFixtureSelection(bridgeId: String, roomId: String)
+        case cancelFixtureSelection
+        case toggleLightSelection(lightId: String)
+        /// From an active selection of ≥2 bulbs → open the naming sheet.
+        case startCombine
+        case combineNameChanged(String)
+        case combineKindChanged(HueFixtureKind)
+        /// Save the drafted fixture to the config (merge-write) and dismiss the flow.
+        case confirmCombine
+        case cancelCombine
+        /// Dissolve a fixture back into its individual bulbs (merge-write).
+        case uncombineFixture(fixtureId: String)
+        /// Rename (and optionally re-kind) an existing fixture (merge-write).
+        case renameFixture(fixtureId: String, name: String, kind: HueFixtureKind)
     }
 
     public init() {}
@@ -442,6 +545,8 @@ public struct HouseReducer {
     @Dependency(\.hubspace) var hubspace
     @Dependency(\.meross) var meross
     @Dependency(\.homekit) var homekit
+    @Dependency(\.persistence) var persistence
+    @Dependency(\.uuid) var uuid
     @Dependency(\.continuousClock) var clock
 
     /// ≥150ms between slider PUTs (the required floor). One quiescent tick, then one write.
@@ -469,6 +574,8 @@ public struct HouseReducer {
         case garageRefresh
         case garageSettle(Int)
         case homekitRefresh
+        case fixtureBrightness(String)
+        case fixtureColor(String)
     }
 
     public var body: some ReducerOf<Self> {
@@ -1037,11 +1144,206 @@ public struct HouseReducer {
                     .send(.recallScene(bridgeId: ritual.bridgeId, groupId: ritual.groupId, sceneId: ritual.sceneId))
                 )
 
+            // MARK: Fixtures / lamps (P16-fixtures)
+
+            case let .toggleFixture(bridgeId, fixtureId):
+                guard let bi = state.bridges.firstIndex(where: { $0.bridge.bridgeId == bridgeId }),
+                      let bridge = state.config.bridge(bridgeId),
+                      let fixture = state.config.fixtures.first(where: { $0.id == fixtureId }) else { return .none }
+                let memberIds = Set(fixture.lightIds)
+                // New state = flip the aggregate: any member on → all off; none on → all on.
+                let anyOn = state.bridges[bi].lights.contains { memberIds.contains($0.id) && $0.isOn }
+                let newOn = !anyOn
+                var targets: [String] = []
+                for li in state.bridges[bi].lights.indices
+                where memberIds.contains(state.bridges[bi].lights[li].id) && state.bridges[bi].lights[li].reachable {
+                    state.bridges[bi].lights[li].isOn = newOn
+                    targets.append(state.bridges[bi].lights[li].id)
+                }
+                recomputeRoomAnyOn(&state, bridgeIndex: bi)
+                return Self.fanOut(hue: hue, lightIds: targets) { hue, lightId in
+                    try await hue.setLightState(bridge, lightId, newOn, nil, nil)
+                }
+
+            case let .fixtureBrightnessChanged(bridgeId, fixtureId, percent):
+                guard let bi = state.bridges.firstIndex(where: { $0.bridge.bridgeId == bridgeId }),
+                      let fixture = state.config.fixtures.first(where: { $0.id == fixtureId }) else { return .none }
+                let bri = HueBrightness.bri(fromPercent: percent)
+                let memberIds = Set(fixture.lightIds)
+                for li in state.bridges[bi].lights.indices
+                where memberIds.contains(state.bridges[bi].lights[li].id) && state.bridges[bi].lights[li].reachable {
+                    state.bridges[bi].lights[li].brightness = bri
+                    state.bridges[bi].lights[li].isOn = true
+                }
+                recomputeRoomAnyOn(&state, bridgeIndex: bi)
+                return .run { send in
+                    try await clock.sleep(for: Self.sliderDebounce)
+                    await send(.commitFixtureBrightness(bridgeId: bridgeId, fixtureId: fixtureId, bri: bri))
+                }
+                .cancellable(id: CancelID.fixtureBrightness(fixtureId), cancelInFlight: true)
+
+            case let .commitFixtureBrightness(bridgeId, fixtureId, bri):
+                guard let bridge = state.config.bridge(bridgeId),
+                      let fixture = state.config.fixtures.first(where: { $0.id == fixtureId }) else { return .none }
+                let targets = Self.reachableMembers(state, bridgeId: bridgeId, fixture: fixture)
+                return Self.fanOut(hue: hue, lightIds: targets) { hue, lightId in
+                    try await hue.setLightState(bridge, lightId, nil, bri, nil)
+                }
+
+            case let .fixtureColorChanged(bridgeId, fixtureId, command):
+                guard let bi = state.bridges.firstIndex(where: { $0.bridge.bridgeId == bridgeId }),
+                      let fixture = state.config.fixtures.first(where: { $0.id == fixtureId }) else { return .none }
+                let memberIds = Set(fixture.lightIds)
+                for li in state.bridges[bi].lights.indices
+                where memberIds.contains(state.bridges[bi].lights[li].id)
+                    && state.bridges[bi].lights[li].reachable
+                    && Self.canHonor(state.bridges[bi].lights[li], command) {
+                    applyColor(&state.bridges[bi].lights[li], command)
+                    state.bridges[bi].lights[li].isOn = true
+                }
+                recomputeRoomAnyOn(&state, bridgeIndex: bi)
+                return .run { send in
+                    try await clock.sleep(for: Self.sliderDebounce)
+                    await send(.commitFixtureColor(bridgeId: bridgeId, fixtureId: fixtureId, command: command))
+                }
+                .cancellable(id: CancelID.fixtureColor(fixtureId), cancelInFlight: true)
+
+            case let .commitFixtureColor(bridgeId, fixtureId, command):
+                guard let bi = state.bridges.firstIndex(where: { $0.bridge.bridgeId == bridgeId }),
+                      let bridge = state.config.bridge(bridgeId),
+                      let fixture = state.config.fixtures.first(where: { $0.id == fixtureId }) else { return .none }
+                let memberIds = Set(fixture.lightIds)
+                // Only fan out to members that can actually honor this command (a plain bulb in a mixed
+                // fixture is left alone rather than sent an unsupported write).
+                let targets = state.bridges[bi].lights
+                    .filter { memberIds.contains($0.id) && $0.reachable && Self.canHonor($0, command) }
+                    .map(\.id)
+                return Self.fanOut(hue: hue, lightIds: targets) { hue, lightId in
+                    try await hue.setLightState(bridge, lightId, nil, nil, command)
+                }
+
+            case let .toggleFixtureExpanded(fixtureId):
+                if state.expandedFixtures.contains(fixtureId) { state.expandedFixtures.remove(fixtureId) }
+                else { state.expandedFixtures.insert(fixtureId) }
+                return .none
+
+            // MARK: Combine / un-combine
+
+            case let .beginFixtureSelection(bridgeId, roomId):
+                state.fixtureSelection = FixtureSelection(bridgeId: bridgeId, roomId: roomId)
+                return .none
+
+            case .cancelFixtureSelection:
+                state.fixtureSelection = nil
+                return .none
+
+            case let .toggleLightSelection(lightId):
+                guard state.fixtureSelection != nil else { return .none }
+                if state.fixtureSelection!.lightIds.contains(lightId) {
+                    state.fixtureSelection!.lightIds.remove(lightId)
+                } else {
+                    state.fixtureSelection!.lightIds.insert(lightId)
+                }
+                return .none
+
+            case .startCombine:
+                guard let sel = state.fixtureSelection, sel.lightIds.count >= 2 else { return .none }
+                // Preserve the room's display order for the members.
+                let order = state.lights(inRoom: sel.roomId, bridgeId: sel.bridgeId).map(\.id)
+                let orderedIds = order.filter { sel.lightIds.contains($0) }
+                let roomName = state.room(bridgeId: sel.bridgeId, roomId: sel.roomId)?.name
+                let suggested = roomName.map { "\($0) lamp" } ?? "New lamp"
+                state.combineDraft = CombineDraft(
+                    bridgeId: sel.bridgeId, roomId: sel.roomId, lightIds: orderedIds, name: suggested, kind: .lamp
+                )
+                return .none
+
+            case let .combineNameChanged(name):
+                state.combineDraft?.name = name
+                return .none
+
+            case let .combineKindChanged(kind):
+                state.combineDraft?.kind = kind
+                return .none
+
+            case .confirmCombine:
+                guard let draft = state.combineDraft, draft.lightIds.count >= 2 else { return .none }
+                let trimmed = draft.name.trimmingCharacters(in: .whitespacesAndNewlines)
+                let fixture = HueFixture(
+                    id: uuid().uuidString,
+                    name: trimmed.isEmpty ? draft.kind.label : trimmed,
+                    kind: draft.kind,
+                    lightIds: draft.lightIds,
+                    roomId: draft.roomId
+                )
+                state.config = state.config.addingFixture(fixture)
+                state.combineDraft = nil
+                state.fixtureSelection = nil
+                return persistFixtures(state.config.fixtures)
+
+            case .cancelCombine:
+                state.combineDraft = nil
+                return .none
+
+            case let .uncombineFixture(fixtureId):
+                state.config = state.config.removingFixture(fixtureId)
+                state.expandedFixtures.remove(fixtureId)
+                return persistFixtures(state.config.fixtures)
+
+            case let .renameFixture(fixtureId, name, kind):
+                let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+                state.config = state.config.renamingFixture(
+                    fixtureId, name: trimmed.isEmpty ? kind.label : trimmed, kind: kind
+                )
+                return persistFixtures(state.config.fixtures)
+
             case .writeFailed:
                 state.writeErrorTick += 1
                 return .none
             }
         }
+    }
+
+    /// Fan a per-light verb out across a fixture's member ids (P16-fixtures) — one `.run` per member,
+    /// merged. A member write that throws bumps the error toast + re-reads truth, exactly like the
+    /// single-light path. Empty targets → no effect.
+    private static func fanOut(
+        hue client: HueClient,
+        lightIds: [String],
+        _ verb: @escaping @Sendable (HueClient, String) async throws -> Void
+    ) -> Effect<Action> {
+        guard !lightIds.isEmpty else { return .none }
+        let effects = lightIds.map { lightId in
+            Effect<Action>.run { send in
+                do { try await verb(client, lightId) }
+                catch { await send(.writeFailed); await send(.refresh) }
+            }
+        }
+        return .merge(effects)
+    }
+
+    /// The reachable member light ids of a fixture in a bridge snapshot (for a fan-out commit).
+    private static func reachableMembers(_ state: State, bridgeId: String, fixture: HueFixture) -> [String] {
+        guard let bi = state.bridges.firstIndex(where: { $0.bridge.bridgeId == bridgeId }) else { return [] }
+        let memberIds = Set(fixture.lightIds)
+        return state.bridges[bi].lights.filter { memberIds.contains($0.id) && $0.reachable }.map(\.id)
+    }
+
+    /// Whether a bulb can honor a color command: color bulbs take hue/sat + xy + ct; tunable-white bulbs
+    /// take only ct. Keeps a plain bulb out of a fixture's color fan-out entirely.
+    private static func canHonor(_ light: HueLight, _ command: HueColorCommand) -> Bool {
+        switch command {
+        case .hueSat, .xy: return light.supportsColor
+        case .colorTemp:   return light.supportsColorTemp || light.supportsColor
+        }
+    }
+
+    /// Merge-write ONLY the fixtures array back to `config/hue` (never bridges/rituals/sensors). Resolves
+    /// the household id from the shared user; a signed-out/no-household state is a silent no-op (previews).
+    private func persistFixtures(_ fixtures: [HueFixture]) -> Effect<Action> {
+        @Shared(.user) var user
+        guard let hid = user?.householdId else { return .none }
+        return .run { _ in try? await persistence.updateHueFixtures(hid, fixtures) }
     }
 
     /// Turn every Hue room/zone group off — the shared body of "All lights off" and "Goodnight". Flips

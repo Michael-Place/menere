@@ -141,6 +141,11 @@ public struct PersistenceClient: Sendable {
     /// `households/{hid}/config/hue` doc is replaced, so fields dropped since a prior write (e.g. a
     /// `mock` flag from the C1 fixture) actually clear.
     public var saveHueConfig: @Sendable (_ hid: String, _ config: HueConfig) async throws -> Void
+    /// Merge just the Bacán-side `fixtures` array back into the config doc (P16-fixtures) — a true
+    /// field-level MERGE (like ``updateHueBridges``) so combining/renaming/dissolving a lamp NEVER
+    /// touches the paired bridges, rituals, or sensor maps. This is the only write the House fixture
+    /// UI performs, keeping the real `config/hue` doc's bridge/ritual/sensor data safe.
+    public var updateHueFixtures: @Sendable (_ hid: String, _ fixtures: [HueFixture]) async throws -> Void
     /// Remove the Hue config doc entirely (Settings "Remove all Hue"). Forgets every paired bridge and
     /// all rituals + sensor maps at once; the house's Hue lights + rituals then disappear.
     public var deleteHueConfig: @Sendable (_ hid: String) async throws -> Void
@@ -606,6 +611,14 @@ extension PersistenceClient: DependencyKey {
                 // Full-doc replace (merge: false) so a removed `mock` flag is cleared, not retained.
                 try await households().document(hid).collection("config").document("hue").setData(
                     Firestore.Encoder().encode(config)
+                )
+            },
+            updateHueFixtures: { hid, fixtures in
+                // Field-level MERGE of ONLY the fixtures array (mirrors updateHueBridges) — bridges,
+                // rituals, and sensor maps are never in the payload, so they can't be clobbered.
+                let encoded = try fixtures.map { try Firestore.Encoder().encode($0) }
+                try await households().document(hid).collection("config").document("hue").setData(
+                    ["fixtures": encoded], merge: true
                 )
             },
             deleteHueConfig: { hid in

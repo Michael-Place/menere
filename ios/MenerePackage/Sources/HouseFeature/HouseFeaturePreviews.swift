@@ -132,6 +132,54 @@ private func fullConfig() -> HueConfig {
     }
 }
 
+/// P16-fixtures — the "lamps & fixtures" collapse. The Downstairs zone's three color/ambiance bulbs
+/// (Living room ceiling + lamp + Kitchen counter) fuse into ONE "Living room lamp" row with fan-out
+/// controls; because the ceiling (amber) and lamp (blue) disagree, the fixture reads **Mixed**. The
+/// plain "Kitchen sink" stays ungrouped as its own row — so the same screen shows a fixture beside a
+/// loose bulb, and the "Combine" affordance is live in the header.
+private func fixturesConfig() -> HueConfig {
+    var config = fullConfig()
+    config.fixtures = [
+        HueFixture(id: "fx-living", name: "Living room lamp", kind: .lamp, lightIds: ["1", "2", "3"], roomId: "8"),
+    ]
+    return config
+}
+
+#Preview("Room detail — fixtures (Mixed lamp + loose bulb)") {
+    let snap = BridgeSnapshot(
+        bridge: fixturesConfig().bridges[0],
+        rooms: HueFixtures.rooms(for: ""),
+        lights: HueFixtures.lights(for: ""),
+        scenes: HueFixtures.scenes(for: ""),
+        temperatures: HueFixtures.temperatures(for: "")
+    )
+    let store = Store(initialState: HouseReducer.State(config: fixturesConfig(), bridges: [snap])) {
+        HouseReducer()
+    }
+    return NavigationStack {
+        RoomDetailView(store: store, bridgeId: "mock", roomId: "8")
+    }
+}
+
+/// P16-fixtures — the combine flow, pre-opened: two loose bulbs already checked, the naming sheet up.
+#Preview("Room detail — combine sheet") {
+    let snap = BridgeSnapshot(
+        bridge: fullConfig().bridges[0],
+        rooms: HueFixtures.rooms(for: ""),
+        lights: HueFixtures.lights(for: ""),
+        scenes: HueFixtures.scenes(for: ""),
+        temperatures: HueFixtures.temperatures(for: "")
+    )
+    var state = HouseReducer.State(config: fullConfig(), bridges: [snap])
+    state.combineDraft = HouseReducer.CombineDraft(
+        bridgeId: "mock", roomId: "8", lightIds: ["1", "2"], name: "Living room lamp", kind: .lamp
+    )
+    let store = Store(initialState: state) { HouseReducer() }
+    return NavigationStack {
+        RoomDetailView(store: store, bridgeId: "mock", roomId: "8")
+    }
+}
+
 #Preview("House — empty (nothing set up)") {
     let store = withDependencies {
         $0.sonos = .testValue     // no nil-config discovery

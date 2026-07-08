@@ -1224,6 +1224,12 @@ struct RoomDetailView: View {
         .background(Color.familyCanvas)
         .navigationTitle(currentRoom?.name ?? "Room")
         .navigationBarTitleDisplayMode(.inline)
+        .sheet(isPresented: Binding(
+            get: { store.combineDraft != nil },
+            set: { if !$0 { store.send(.cancelCombine) } }
+        )) {
+            CombineFixtureSheet(store: store)
+        }
     }
 
     // MARK: Live lookups (read observed `store.bridges`)
@@ -1307,24 +1313,260 @@ struct RoomDetailView: View {
         .successHaptic(store.recalledScene)
     }
 
-    // MARK: Lights
+    // MARK: Lights & fixtures (P16-fixtures)
+
+    /// Whether room detail is currently selecting bulbs to combine into a lamp (this room only).
+    private var isSelecting: Bool { store.fixtureSelection?.roomId == roomId && store.fixtureSelection?.bridgeId == bridgeId }
+    private var selectedIds: Set<String> { store.fixtureSelection?.lightIds ?? [] }
+
+    /// The room's bulbs as fixtures (collapsed) + loose bulbs (individual), from the shared store.
+    private var grouping: (fixtures: [(fixture: HueFixture, lights: [HueLight])], ungrouped: [HueLight]) {
+        store.state.roomFixtureGrouping(bridgeId: bridgeId, roomId: roomId)
+    }
 
     private var lightsCard: some View {
-        let lights = lightsInRoom
-        return card {
-            Text("Lights")
-                .font(.system(.subheadline, design: .rounded).weight(.semibold))
-                .foregroundStyle(Color.ink)
-            ForEach(Array(lights.enumerated()), id: \.element.id) { idx, light in
-                lightRow(light)
-                if idx < lights.count - 1 {
-                    Divider().overlay(Color.inkSoft.opacity(0.15))
+        let group = grouping
+        let canCombine = group.ungrouped.count >= 2   // need ≥2 loose bulbs to offer combining
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("Lights & fixtures")
+                    .font(.system(.subheadline, design: .rounded).weight(.semibold))
+                    .foregroundStyle(Color.ink)
+                Spacer()
+                if isSelecting {
+                    Button("Cancel") { store.send(.cancelFixtureSelection) }
+                        .font(.system(.subheadline, design: .rounded).weight(.semibold))
+                        .foregroundStyle(Color.inkSoft)
+                        .accessibilityIdentifier("house-fixture-select-cancel")
+                } else if canCombine {
+                    Button {
+                        MenereHaptics.softTap()
+                        store.send(.beginFixtureSelection(bridgeId: bridgeId, roomId: roomId))
+                    } label: {
+                        Label("Combine", systemImage: "square.on.square.dashed")
+                            .font(.system(.subheadline, design: .rounded).weight(.semibold))
+                            .foregroundStyle(Color.bacanGreen)
+                    }
+                    .accessibilityIdentifier("house-fixture-combine-begin")
                 }
+            }
+
+            card {
+                let fixtures = group.fixtures
+                let ungrouped = group.ungrouped
+                ForEach(Array(fixtures.enumerated()), id: \.element.fixture.id) { idx, entry in
+                    fixtureRow(entry.fixture, members: entry.lights)
+                    if idx < fixtures.count - 1 || !ungrouped.isEmpty {
+                        Divider().overlay(Color.inkSoft.opacity(0.15))
+                    }
+                }
+                ForEach(Array(ungrouped.enumerated()), id: \.element.id) { idx, light in
+                    lightRow(light)
+                    if idx < ungrouped.count - 1 {
+                        Divider().overlay(Color.inkSoft.opacity(0.15))
+                    }
+                }
+            }
+
+            if isSelecting {
+                combineBar
             }
         }
     }
 
-    private func lightRow(_ light: HueLight) -> some View {
+    /// The bottom action bar shown while selecting bulbs to combine.
+    private var combineBar: some View {
+        HStack {
+            Text(selectedIds.count < 2 ? "Pick 2 or more bulbs" : "\(selectedIds.count) bulbs selected")
+                .font(.system(.subheadline, design: .rounded))
+                .foregroundStyle(Color.inkSoft)
+            Spacer()
+            Button {
+                MenereHaptics.softTap()
+                store.send(.startCombine)
+            } label: {
+                Text("Combine into a lamp")
+                    .font(.system(.subheadline, design: .rounded).weight(.semibold))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 9)
+                    .background(Capsule(style: .continuous).fill(selectedIds.count >= 2 ? Color.bacanGreen : Color.inkSoft.opacity(0.4)))
+            }
+            .disabled(selectedIds.count < 2)
+            .accessibilityIdentifier("house-fixture-combine-confirm")
+        }
+        .padding(.horizontal, 4)
+    }
+
+    // MARK: Fixture row (collapsed lamp)
+
+    /// A collapsed fixture: the kind icon + name + "N bulbs", a fan-out toggle, a representative
+    /// brightness slider, and a shared color control (or a "Mixed" swatch when the members disagree).
+    /// Tapping the chevron expands the individual member bulbs; an un-combine action lives in the menu.
+    @ViewBuilder
+    private func fixtureRow(_ fixture: HueFixture, members: [HueLight]) -> some View {
+        let fx = HueFixtureState(members: members)
+        let expanded = store.expandedFixtures.contains(fixture.id)
+        VStack(spacing: 8) {
+            HStack(spacing: 12) {
+                // The fixture's icon (or a "Mixed" multi swatch overlaid intent via the shared swatch).
+                fixtureSwatch(fx, kind: fixture.kind)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(fixture.name)
+                        .font(.system(.body, design: .rounded).weight(.medium))
+                        .foregroundStyle(fx.anyReachable ? Color.ink : Color.inkSoft)
+                    Text(fixtureStatusLine(fixture, fx: fx))
+                        .font(.system(.caption, design: .rounded))
+                        .foregroundStyle(Color.inkSoft)
+                        .accessibilityIdentifier("house-fixture-status-\(fixture.id)")
+                }
+                Spacer(minLength: 0)
+                Menu {
+                    Button {
+                        store.send(.toggleFixtureExpanded(fixtureId: fixture.id))
+                    } label: {
+                        Label(expanded ? "Hide bulbs" : "Show bulbs", systemImage: "lightbulb")
+                    }
+                    Button(role: .destructive) {
+                        MenereHaptics.softTap()
+                        store.send(.uncombineFixture(fixtureId: fixture.id))
+                    } label: {
+                        Label("Un-combine", systemImage: "square.on.square.dashed")
+                    }
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                        .font(.system(size: 17, weight: .semibold))
+                        .foregroundStyle(Color.inkSoft)
+                }
+                .accessibilityIdentifier("house-fixture-menu-\(fixture.id)")
+
+                Toggle("", isOn: Binding(
+                    get: { fx.isOn },
+                    set: { _ in
+                        MenereHaptics.softTap()
+                        store.send(.toggleFixture(bridgeId: bridgeId, fixtureId: fixture.id))
+                    }
+                ))
+                .labelsHidden()
+                .tint(Color.bacanGreen)
+                .disabled(!fx.anyReachable)
+                .accessibilityIdentifier("house-fixture-toggle-\(fixture.id)")
+            }
+            Slider(
+                value: Binding(
+                    get: { HueBrightness.percent(fromBri: fx.brightness) ?? 0 },
+                    set: { store.send(.fixtureBrightnessChanged(bridgeId: bridgeId, fixtureId: fixture.id, percent: $0)) }
+                ),
+                in: 0...100
+            )
+            .tint(Color.bacanGreen)
+            .disabled(!fx.anyReachable)
+            .accessibilityIdentifier("house-fixture-slider-\(fixture.id)")
+
+            // Shared color control — the whole fixture at once. Full-color members → palette; if only
+            // tunable-white members → warm-cool. Mixed color reads on the swatch above.
+            if fx.supportsColor {
+                fixturePalette(fixture, fx: fx)
+            } else if fx.supportsColorTemp {
+                fixtureWarmCool(fixture, fx: fx)
+            }
+
+            if expanded {
+                Divider().overlay(Color.inkSoft.opacity(0.15))
+                Text("Bulbs in this fixture")
+                    .font(.system(.caption, design: .rounded).weight(.semibold))
+                    .foregroundStyle(Color.inkSoft)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                ForEach(members) { member in
+                    lightRow(member, inFixture: fixture.id)
+                }
+            }
+        }
+        .opacity(fx.anyReachable ? 1 : 0.5)
+        .padding(.vertical, 4)
+        .accessibilityIdentifier("house-fixture-\(fixture.id)")
+    }
+
+    /// The fixture's leading glyph: its kind icon over a soft tint, plus a small color/mixed dot when the
+    /// members carry color. A **Mixed** fixture shows a conic multi-swatch so "they disagree" reads at a
+    /// glance.
+    @ViewBuilder
+    private func fixtureSwatch(_ fx: HueFixtureState, kind: HueFixtureKind) -> some View {
+        ZStack(alignment: .bottomTrailing) {
+            Image(systemName: kind.symbolName)
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(fx.isOn ? Color.marigold : Color.inkSoft)
+                .frame(width: 30, height: 30)
+                .background(Circle().fill(Color.inkSoft.opacity(0.12)))
+            if fx.supportsColor || fx.supportsColorTemp {
+                Group {
+                    if fx.isMixedColor {
+                        Circle()
+                            .fill(AngularGradient(colors: [.red, .yellow, .green, .blue, .purple, .red], center: .center))
+                            .accessibilityIdentifier("house-fixture-mixed-\(fx.memberCount)")
+                    } else {
+                        Circle().fill(fx.swatchColor)
+                    }
+                }
+                .frame(width: 13, height: 13)
+                .overlay(Circle().strokeBorder(Color.familySurface, lineWidth: 2))
+                .opacity(fx.isOn ? 1 : 0.45)
+            }
+        }
+    }
+
+    /// "3 bulbs · Mixed" / "2 bulbs · On" — the fixture's member count + a short state word.
+    private func fixtureStatusLine(_ fixture: HueFixture, fx: HueFixtureState) -> String {
+        let count = "\(fx.memberCount) bulb\(fx.memberCount == 1 ? "" : "s")"
+        let stateWord: String
+        if !fx.anyReachable { stateWord = "Offline" }
+        else if fx.isMixedColor { stateWord = "Mixed" }
+        else if fx.isOn { stateWord = "On" }
+        else { stateWord = "Off" }
+        return "\(count) · \(stateWord)"
+    }
+
+    private func lightRow(_ light: HueLight) -> some View { lightRow(light, inFixture: nil) }
+
+    /// One loose bulb (or, when `inFixture` is set, a member bulb inside an expanded fixture). In combine
+    /// selection mode a loose bulb shows a selection circle instead of its controls.
+    @ViewBuilder
+    private func lightRow(_ light: HueLight, inFixture fixtureId: String?) -> some View {
+        if isSelecting && fixtureId == nil {
+            selectableLightRow(light)
+        } else {
+            controllableLightRow(light)
+        }
+    }
+
+    /// The combine-mode row: a checkbox + name, tap toggles selection. No controls (you're grouping).
+    private func selectableLightRow(_ light: HueLight) -> some View {
+        let selected = selectedIds.contains(light.id)
+        return Button {
+            MenereHaptics.softTap()
+            store.send(.toggleLightSelection(lightId: light.id))
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: selected ? "checkmark.circle.fill" : "circle")
+                    .font(.system(size: 20))
+                    .foregroundStyle(selected ? Color.bacanGreen : Color.inkSoft.opacity(0.5))
+                if light.supportsColor || light.supportsColorTemp {
+                    Circle().fill(light.swatchColor).frame(width: 14, height: 14)
+                        .overlay(Circle().strokeBorder(Color.ink.opacity(0.12), lineWidth: 1))
+                }
+                Text(light.name)
+                    .font(.system(.body, design: .rounded))
+                    .foregroundStyle(Color.ink)
+                Spacer(minLength: 0)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .padding(.vertical, 8)
+        .accessibilityIdentifier("house-light-select-\(light.id)")
+    }
+
+    private func controllableLightRow(_ light: HueLight) -> some View {
         VStack(spacing: 8) {
             HStack {
                 // A live color swatch for capable bulbs (color or tunable-white); plain bulbs show none.
@@ -1477,6 +1719,80 @@ struct RoomDetailView: View {
         }
     }
 
+    // MARK: Fixture color controls (fan-out)
+
+    /// The fixture-wide color palette — same presets/custom picker as a single bulb, but every tap fans
+    /// out to the fixture's color-capable members. When the members are Mixed, no preset wears the ring.
+    private func fixturePalette(_ fixture: HueFixture, fx: HueFixtureState) -> some View {
+        HStack(alignment: .center, spacing: 8) {
+            FlowRow {
+                ForEach(HueColor.presets, id: \.name) { preset in
+                    let selected = !fx.isMixedColor && isSelected(preset, swatch: fx.swatchColor, colorful: fx.supportsColor)
+                    Button {
+                        MenereHaptics.softTap()
+                        store.send(.fixtureColorChanged(
+                            bridgeId: bridgeId, fixtureId: fixture.id,
+                            command: .hueSat(hue: preset.hue, saturation: preset.saturation)
+                        ))
+                    } label: {
+                        Circle()
+                            .fill(HueColor.color(hue: preset.hue, saturation: preset.saturation))
+                            .frame(width: 26, height: 26)
+                            .overlay(Circle().strokeBorder(selected ? Color.ink : Color.ink.opacity(0.12), lineWidth: selected ? 2.5 : 1))
+                    }
+                    .buttonStyle(.pressable)
+                    .disabled(!fx.anyReachable)
+                    .accessibilityIdentifier("house-fixture-color-\(fixture.id)-\(preset.name.lowercased())")
+                }
+            }
+            Spacer(minLength: 0)
+            ColorPicker("", selection: Binding(
+                get: { fx.swatchColor },
+                set: { store.send(.fixtureColorChanged(bridgeId: bridgeId, fixtureId: fixture.id, command: hueSatCommand(from: $0))) }
+            ), supportsOpacity: false)
+            .labelsHidden()
+            .disabled(!fx.anyReachable)
+            .accessibilityIdentifier("house-fixture-colorpicker-\(fixture.id)")
+        }
+    }
+
+    /// The fixture-wide warm→cool slider (tunable-white-only fixtures), fanning out to every member.
+    private func fixtureWarmCool(_ fixture: HueFixture, fx: HueFixtureState) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: "flame.fill").font(.system(size: 12)).foregroundStyle(Color.terracotta)
+            Slider(
+                value: Binding(
+                    get: { 0.5 },   // representative center — the members may differ, so we don't imply a shared value
+                    set: { store.send(.fixtureColorChanged(
+                        bridgeId: bridgeId, fixtureId: fixture.id,
+                        command: .colorTemp(mireds: HueColor.mireds(fromWarmCool: $0))
+                    )) }
+                ),
+                in: 0...1
+            )
+            .tint(Color.clear)
+            .background(
+                Capsule().fill(LinearGradient(
+                    colors: [HueColor.color(fromMireds: HueColor.maxMireds), HueColor.color(fromMireds: HueColor.minMireds)],
+                    startPoint: .leading, endPoint: .trailing
+                )).frame(height: 4).allowsHitTesting(false)
+            )
+            .disabled(!fx.anyReachable)
+            .accessibilityIdentifier("house-fixture-ct-slider-\(fixture.id)")
+            Image(systemName: "snowflake").font(.system(size: 12)).foregroundStyle(Color.sky)
+        }
+    }
+
+    /// Whether a preset roughly matches a shared fixture swatch (only meaningful when NOT mixed).
+    private func isSelected(_ preset: (name: String, hue: Int, saturation: Int), swatch: Color, colorful: Bool) -> Bool {
+        guard colorful else { return false }
+        var ph: CGFloat = 0, ps: CGFloat = 0, pb: CGFloat = 0, pa: CGFloat = 0
+        UIColor(HueColor.color(hue: preset.hue, saturation: preset.saturation)).getHue(&ph, saturation: &ps, brightness: &pb, alpha: &pa)
+        var sh: CGFloat = 0, ss: CGFloat = 0, sb: CGFloat = 0, sa: CGFloat = 0
+        UIColor(swatch).getHue(&sh, saturation: &ss, brightness: &sb, alpha: &sa)
+        return abs(ph - sh) < 0.03 && abs(ps - ss) < 0.12
+    }
+
     // MARK: Card scaffold (mirrors TodayView's card)
 
     private func card<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
@@ -1487,6 +1803,75 @@ struct RoomDetailView: View {
                 RoundedRectangle(cornerRadius: 18, style: .continuous)
                     .fill(Color.familySurface)
             )
+    }
+}
+
+// MARK: - Combine fixture sheet (P16-fixtures)
+
+/// The "name your lamp" sheet: a name field + a kind picker (icon grid), then Save. Reads/writes the
+/// reducer's `combineDraft`. Warm + simple; Reduce-Motion friendly (no motion of its own).
+struct CombineFixtureSheet: View {
+    @Bindable var store: StoreOf<HouseReducer>
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Name") {
+                    TextField("Living room lamp", text: Binding(
+                        get: { store.combineDraft?.name ?? "" },
+                        set: { store.send(.combineNameChanged($0)) }
+                    ))
+                    .accessibilityIdentifier("house-combine-name")
+                }
+                Section("Kind") {
+                    let cols = [GridItem(.adaptive(minimum: 78), spacing: 12)]
+                    LazyVGrid(columns: cols, spacing: 12) {
+                        ForEach(HueFixtureKind.allCases, id: \.self) { kind in
+                            let selected = store.combineDraft?.kind == kind
+                            Button {
+                                MenereHaptics.softTap()
+                                store.send(.combineKindChanged(kind))
+                            } label: {
+                                VStack(spacing: 6) {
+                                    Image(systemName: kind.symbolName)
+                                        .font(.system(size: 22, weight: .semibold))
+                                        .foregroundStyle(selected ? .white : Color.ink)
+                                        .frame(width: 46, height: 46)
+                                        .background(Circle().fill(selected ? Color.bacanGreen : Color.inkSoft.opacity(0.12)))
+                                    Text(kind.label)
+                                        .font(.system(.caption2, design: .rounded))
+                                        .foregroundStyle(Color.inkSoft)
+                                        .lineLimit(1)
+                                }
+                                .frame(maxWidth: .infinity)
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityIdentifier("house-combine-kind-\(kind.rawValue)")
+                        }
+                    }
+                    .padding(.vertical, 4)
+                }
+                Section {
+                    Text("^[\(store.combineDraft?.lightIds.count ?? 0) bulb](inflect: true) will act as one.")
+                        .font(.system(.footnote, design: .rounded))
+                        .foregroundStyle(Color.inkSoft)
+                }
+            }
+            .navigationTitle("New lamp")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { store.send(.cancelCombine) }
+                        .accessibilityIdentifier("house-combine-cancel")
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save") { store.send(.confirmCombine) }
+                        .fontWeight(.semibold)
+                        .accessibilityIdentifier("house-combine-save")
+                }
+            }
+        }
     }
 }
 

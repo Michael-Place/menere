@@ -39,19 +39,28 @@ public struct HueConfig: Codable, Equatable, Sendable {
     /// time, captured for **every** sensor so a re-pair against a fresh bridge can re-match by name
     /// and carry old labels forward. Nil on docs that never captured names.
     public var sensorNames: [String: [String: String]]?
+    /// **Fixtures (P16-fixtures)** — the family's Bacán-side "lamps & fixtures": each collapses two or
+    /// more anonymous Hue bulbs into one named thing (a "Living room lamp", a "Kitchen ceiling") so a
+    /// room reads as lamps + fixtures instead of raw bulbs. Purely a Bacán soft grouping — the bridge
+    /// never learns about them; the House surface fans a fixture's control out to its member lights.
+    /// Decode-safe (`decodeIfPresent` → `[]`): a doc that never defined a fixture behaves exactly as
+    /// before. Merge-written on its own so a fixture edit never clobbers bridges/rituals/sensors.
+    public var fixtures: [HueFixture]
 
     public init(
         bridges: [HueBridgeConfig],
         rituals: [HueRitual] = [],
         roomOwners: [String: String]? = nil,
         sensorLabels: [String: [String: String]] = [:],
-        sensorNames: [String: [String: String]]? = nil
+        sensorNames: [String: [String: String]]? = nil,
+        fixtures: [HueFixture] = []
     ) {
         self.bridges = bridges
         self.rituals = rituals
         self.roomOwners = roomOwners
         self.sensorLabels = sensorLabels
         self.sensorNames = sensorNames
+        self.fixtures = fixtures
     }
 
     /// Legacy single-bridge convenience — folds top-level identity into a one-element `bridges`
@@ -66,7 +75,8 @@ public struct HueConfig: Codable, Equatable, Sendable {
         sensorLabels: [String: String] = [:],
         sensorNames: [String: String]? = nil,
         mock: Bool? = nil,
-        bridgeName: String? = nil
+        bridgeName: String? = nil,
+        fixtures: [HueFixture] = []
     ) {
         self.bridges = [HueBridgeConfig(
             bridgeId: bridgeId, bridgeIP: bridgeIP, applicationKey: applicationKey,
@@ -78,11 +88,12 @@ public struct HueConfig: Codable, Equatable, Sendable {
         self.roomOwners = roomOwners
         self.sensorLabels = sensorLabels.isEmpty ? [:] : [bridgeId: sensorLabels]
         self.sensorNames = sensorNames.map { [bridgeId: $0] }
+        self.fixtures = fixtures
     }
 
     private enum CodingKeys: String, CodingKey {
         // New shape
-        case bridges, rituals, roomOwners, sensorLabels, sensorNames
+        case bridges, rituals, roomOwners, sensorLabels, sensorNames, fixtures
         // Legacy single-bridge shape (decode-only)
         case bridgeId, bridgeIP, applicationKey, mock
     }
@@ -94,6 +105,9 @@ public struct HueConfig: Codable, Equatable, Sendable {
         // ""), so legacy rituals decode with an empty bridgeId that the migration branch fills in.
         let decodedRituals = try c.decodeIfPresent([HueRitual].self, forKey: .rituals) ?? []
         roomOwners = try c.decodeIfPresent([String: String].self, forKey: .roomOwners)
+        // Fixtures are a pure Bacán-side overlay and decode the same in either doc shape (legacy docs
+        // simply never carried the key → []).
+        fixtures = try c.decodeIfPresent([HueFixture].self, forKey: .fixtures) ?? []
 
         if let bridges = try c.decodeIfPresent([HueBridgeConfig].self, forKey: .bridges) {
             // NEW shape.
@@ -129,6 +143,7 @@ public struct HueConfig: Codable, Equatable, Sendable {
         try c.encodeIfPresent(roomOwners, forKey: .roomOwners)
         try c.encode(sensorLabels, forKey: .sensorLabels)
         try c.encodeIfPresent(sensorNames, forKey: .sensorNames)
+        try c.encode(fixtures, forKey: .fixtures)
     }
 
     // MARK: - Convenience
@@ -145,6 +160,160 @@ public struct HueConfig: Codable, Equatable, Sendable {
     /// The labels for one bridge's sensors (empty when none).
     public func sensorLabels(for bridgeId: String) -> [String: String] {
         sensorLabels[bridgeId] ?? [:]
+    }
+
+    // MARK: - Fixture CRUD (P16-fixtures)
+    //
+    // Pure value-level mutations on the `fixtures` array ONLY — every one leaves bridges / rituals /
+    // roomOwners / sensorLabels / sensorNames untouched. The reducer applies one of these, then
+    // merge-writes just the resulting `fixtures` array back to the doc (`updateHueFixtures`), so a
+    // fixture edit can never clobber the paired-bridge / ritual / sensor data.
+
+    /// The fixtures whose home is `roomId`, in insertion order.
+    public func fixtures(inRoom roomId: String) -> [HueFixture] {
+        fixtures.filter { $0.roomId == roomId }
+    }
+
+    /// The fixture that owns `lightId` (a light belongs to at most one fixture), if any.
+    public func fixture(owningLight lightId: String) -> HueFixture? {
+        fixtures.first { $0.lightIds.contains(lightId) }
+    }
+
+    /// Add a fixture, first pruning its member lights out of any *other* fixture so a bulb never lives
+    /// in two lamps at once (last write wins). Returns a mutated copy.
+    public func addingFixture(_ fixture: HueFixture) -> HueConfig {
+        var copy = self
+        let claimed = Set(fixture.lightIds)
+        copy.fixtures = copy.fixtures.compactMap { existing in
+            guard existing.id != fixture.id else { return nil }
+            var e = existing
+            e.lightIds.removeAll { claimed.contains($0) }
+            return e.lightIds.isEmpty ? nil : e   // a fixture emptied by the claim dissolves
+        }
+        copy.fixtures.append(fixture)
+        return copy
+    }
+
+    /// Remove a fixture entirely (un-combine → its bulbs render individually again). Returns a copy.
+    public func removingFixture(_ fixtureId: String) -> HueConfig {
+        var copy = self
+        copy.fixtures.removeAll { $0.id == fixtureId }
+        return copy
+    }
+
+    /// Rename a fixture (and optionally re-kind it). No-op when the id is unknown. Returns a copy.
+    public func renamingFixture(_ fixtureId: String, name: String, kind: HueFixtureKind? = nil) -> HueConfig {
+        var copy = self
+        guard let i = copy.fixtures.firstIndex(where: { $0.id == fixtureId }) else { return self }
+        copy.fixtures[i].name = name
+        if let kind { copy.fixtures[i].kind = kind }
+        return copy
+    }
+
+    /// Add a member light to a fixture (pruning it from any other fixture first). Returns a copy.
+    public func addingLight(_ lightId: String, toFixture fixtureId: String) -> HueConfig {
+        var copy = self
+        guard copy.fixtures.contains(where: { $0.id == fixtureId }) else { return self }
+        for i in copy.fixtures.indices { copy.fixtures[i].lightIds.removeAll { $0 == lightId } }
+        if let i = copy.fixtures.firstIndex(where: { $0.id == fixtureId }), !copy.fixtures[i].lightIds.contains(lightId) {
+            copy.fixtures[i].lightIds.append(lightId)
+        }
+        // Any fixture the prune emptied dissolves.
+        copy.fixtures.removeAll { $0.lightIds.isEmpty }
+        return copy
+    }
+
+    /// Remove a member light from a fixture; a fixture left with fewer than two bulbs dissolves (a
+    /// "lamp" of one bulb is just a bulb). Returns a copy.
+    public func removingLight(_ lightId: String, fromFixture fixtureId: String) -> HueConfig {
+        var copy = self
+        guard let i = copy.fixtures.firstIndex(where: { $0.id == fixtureId }) else { return self }
+        copy.fixtures[i].lightIds.removeAll { $0 == lightId }
+        if copy.fixtures[i].lightIds.count < 2 { copy.fixtures.remove(at: i) }
+        return copy
+    }
+}
+
+// MARK: - Fixtures (P16-fixtures)
+
+/// The kind of physical fixture a ``HueFixture`` represents — drives its SF Symbol + a friendly label
+/// in the combine picker. Decode-safe: an unknown raw value falls back to `.other`.
+public enum HueFixtureKind: String, Codable, Sendable, CaseIterable, Equatable {
+    case lamp
+    case ceiling
+    case sconce
+    case floorLamp
+    case pendant
+    case other
+
+    /// The SF Symbol shown on the collapsed fixture row + the kind picker.
+    public var symbolName: String {
+        switch self {
+        case .lamp:      return "lamp.table.fill"
+        case .ceiling:   return "light.recessed.fill"
+        case .sconce:    return "light.cylindrical.ceiling.fill"
+        case .floorLamp: return "lamp.floor.fill"
+        case .pendant:   return "lightbulb.led.fill"
+        case .other:     return "lightbulb.2.fill"
+        }
+    }
+
+    /// A short, warm label for the picker ("Table lamp", "Ceiling"…).
+    public var label: String {
+        switch self {
+        case .lamp:      return "Table lamp"
+        case .ceiling:   return "Ceiling"
+        case .sconce:    return "Sconce"
+        case .floorLamp: return "Floor lamp"
+        case .pendant:   return "Pendant"
+        case .other:     return "Other"
+        }
+    }
+
+    /// Decode-safe: an unknown/absent raw value resolves to `.other` rather than throwing, so a
+    /// hand-written or newer doc never breaks the whole config decode.
+    public init(from decoder: Decoder) throws {
+        let raw = try decoder.singleValueContainer().decode(String.self)
+        self = HueFixtureKind(rawValue: raw) ?? .other
+    }
+}
+
+/// One Bacán-side **fixture / lamp**: a named group of two-or-more Hue bulbs that most physical
+/// fixtures carry, collapsed into a single controllable thing. Pure config data (no transport dep) — the
+/// House surface fans a fixture's toggle / brightness / color out to `lightIds`, and reads their
+/// aggregate back for the collapsed row. `roomId` is the Hue group/zone id the fixture lives in, so a
+/// room can render `fixtures + ungrouped bulbs`. Decode-safe throughout.
+public struct HueFixture: Codable, Sendable, Equatable, Identifiable {
+    /// Stable id (a UUID string minted at combine time) — survives renames + membership edits.
+    public var id: String
+    /// Family-facing name, e.g. "Living room lamp".
+    public var name: String
+    /// What kind of fixture this is (icon + label).
+    public var kind: HueFixtureKind
+    /// The Hue V1 light ids this fixture collapses. Two or more in practice; the model doesn't hard-fail
+    /// on one (the reducer's un-combine keeps it ≥2).
+    public var lightIds: [String]
+    /// The Hue group/zone id (room) this fixture belongs to, so room detail can group by room. Optional
+    /// for a fixture that spans rooms / has no home yet.
+    public var roomId: String?
+
+    public init(id: String = UUID().uuidString, name: String, kind: HueFixtureKind, lightIds: [String], roomId: String? = nil) {
+        self.id = id
+        self.name = name
+        self.kind = kind
+        self.lightIds = lightIds
+        self.roomId = roomId
+    }
+
+    private enum CodingKeys: String, CodingKey { case id, name, kind, lightIds, roomId }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decodeIfPresent(String.self, forKey: .id) ?? UUID().uuidString
+        name = try c.decodeIfPresent(String.self, forKey: .name) ?? "Fixture"
+        kind = try c.decodeIfPresent(HueFixtureKind.self, forKey: .kind) ?? .other
+        lightIds = try c.decodeIfPresent([String].self, forKey: .lightIds) ?? []
+        roomId = try c.decodeIfPresent(String.self, forKey: .roomId)
     }
 }
 
