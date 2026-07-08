@@ -539,8 +539,9 @@ The "cellar" model doesn't fit the Place family: at most ~6 bottles in a holder,
 is heavy-handed + "never styled correctly" → remove it.
 - Root becomes a **tasting-journal feed** (wine + producer + vintage + photo + rating + note +
   occasion/date), newest first — the heart of the feature.
-- Optional lightweight **"On hand" (≤6)** strip for the current holder (drink one → it becomes a
-  journal entry) — pending Michael's call (pure journal vs journal + on-hand).
+- **DECIDED (Michael):** name = **"Wine"** (not Cellar); model = **journal + a light "On hand"**.
+- A lightweight **"On hand" (≤6)** strip for the current holder at the top, then the journal feed
+  below; drinking/opening an on-hand bottle → it becomes a journal entry.
 - **Remove/de-emphasize cellar-management:** the segmented control, the drink-window/aging gauge,
   provenance emphasis, the "by type" cellar analytics. KEEP journaling-relevant bits (rating,
   red/white/rosé type, photos, scan-a-label auto-fill).
