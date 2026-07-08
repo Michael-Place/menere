@@ -280,7 +280,7 @@ public struct ListsView: View {
                         Label {
                             Text("Cellar").foregroundStyle(Color.ink)
                         } icon: {
-                            Image(systemName: "wineglass").foregroundStyle(Color.wine)
+                            Image(systemName: "wineglass").foregroundStyle(Color.terracotta)
                         }
                         Spacer()
                         Image(systemName: "chevron.right")
@@ -414,9 +414,9 @@ public struct ListsView: View {
         .navigationDestination(
             item: $store.scope(state: \.cellar, action: \.cellar)
         ) { cellarStore in
-            // The seam: the wine stack keeps its parchment + wine "Cellar & Candlelight" chrome.
-            // Stepping from the cream Lists screen into the Cellar is meant to feel like walking
-            // into a wine cellar.
+            // The wine stack now shares the Bacán family chrome via `.wineChrome()` (familyCanvas +
+            // bacanGreen), so the Cellar reads as the same app as the rest of Lists rather than a
+            // separate parchment world.
             CellarView(store: cellarStore)
                 .toolbar {
                     ToolbarItem(placement: .primaryAction) {
@@ -457,9 +457,9 @@ public struct ListsView: View {
                         }
                     }
             }
-            // The Scan modal is part of the wine stack: pin the wine tint so the "Done" button (added
-            // here, outside ScanView's own `.wineChrome()` tint scope) doesn't stay bacanGreen.
-            .tint(.wine)
+            // The Scan modal is part of the wine stack: pin the family tint so the "Done" button
+            // (added here, outside ScanView's own `.wineChrome()` tint scope) matches bacanGreen.
+            .tint(.bacanGreen)
         }
         .sheet(isPresented: $store.showAddSheet) {
             NewListSheet(store: store)

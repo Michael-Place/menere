@@ -76,13 +76,13 @@ public struct ProvenanceBadgeStyle: Equatable, Sendable {
 }
 
 public extension ProvenanceTint {
-    /// View-layer color for the tint. Uses the Menere brand palette.
+    /// View-layer color for the tint. Uses the Bacán family accent palette.
     var color: Color {
         switch self {
-        case .verified: return .candleGold   // brand "verified = gold"
-        case .aiEstimate: return .hold        // AI estimate = slate
+        case .verified: return .marigold     // "verified = gold" (family marigold)
+        case .aiEstimate: return .sky         // AI estimate = cool sky
         case .scanned: return .inkSoft        // read off the label
-        case .user: return .wine              // user-confirmed = brand red
+        case .user: return .bacanGreen        // user-confirmed = family primary
         }
     }
 }

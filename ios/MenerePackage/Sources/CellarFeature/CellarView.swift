@@ -547,9 +547,9 @@ public struct CellarView: View {
 
     public var body: some View {
         VStack(spacing: 0) {
-            // Brand segmented control (warm parchment track + Bordeaux pill). A stock
-            // `.pickerStyle(.segmented)` renders a white/gray system pill that glares on parchment;
-            // `WineSegmentedControl` is a wine-only view, so this restyle can't leak into the
+            // Family segmented control (soft track + bacanGreen pill). A stock
+            // `.pickerStyle(.segmented)` renders a white/gray system pill that glares on the cream
+            // canvas; `WineSegmentedControl` is a wine-only view, so this restyle can't leak into the
             // family screens' stock segmented controls (e.g. Kitchen's Recipes/Meal-plan picker).
             WineSegmentedControl(
                 selection: $store.segment,
@@ -604,8 +604,7 @@ public struct CellarView: View {
                 // tasting id, matching the source row's `matchedTransitionSource` id.
                 .navigationTransition(.zoom(sourceID: detailStore.tasting.id, in: zoomNamespace))
         }
-        // Wine-stack screen: keep the parchment "Cellar & Candlelight" chrome (the global family
-        // appearance must not leak in here).
+        // Wine-stack screen: wears the shared Bacán family chrome (familyCanvas + bacanGreen tint).
         .wineChrome()
     }
 
@@ -616,7 +615,7 @@ public struct CellarView: View {
         if store.isLoading && store.rows.isEmpty {
             ProgressView()
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(Color.parchment)
+                .background(Color.familyCanvas)
         } else if let error = store.loadError {
             ContentUnavailableView {
                 Label("Couldn't load your cellar", systemImage: "exclamationmark.triangle")
@@ -630,7 +629,7 @@ public struct CellarView: View {
             }
             .onAppear { errorBounce += 1 }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(Color.parchment)
+            .background(Color.familyCanvas)
             .accessibilityIdentifier("cellar-error")
         } else if store.rows.isEmpty {
             // Genuinely empty cellar (no bottles at all — search never touches `rows`).
@@ -645,13 +644,13 @@ public struct CellarView: View {
                     .accessibilityIdentifier("cellar-empty-scan")
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(Color.parchment)
+            .background(Color.familyCanvas)
             .accessibilityIdentifier("cellar-empty")
         } else if store.isSearching && store.visibleRows.isEmpty {
             // Searching with no matches: native "No Results" view instead of an empty list.
             ContentUnavailableView.search(text: store.searchText)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(Color.parchment)
+                .background(Color.familyCanvas)
         } else {
             List {
                 // Dashboard is a browse-only affordance: hide it entirely while searching so the
@@ -674,7 +673,7 @@ public struct CellarView: View {
                         .accessibilityIdentifier("cellar-row-\(row.id)")
                         .matchedTransitionSource(id: row.id, in: zoomNamespace)
                         .shelfScrollTransition()
-                        .listRowBackground(Color.parchment)
+                        .listRowBackground(Color.familyCanvas)
                         .swipeActions(edge: .trailing) {
                             Button(role: .destructive) {
                                 store.send(.deleteBottleSwiped(row.id))
@@ -687,7 +686,7 @@ public struct CellarView: View {
                 }
             }
             .scrollContentBackground(.hidden)
-            .background(Color.parchment)
+            .background(Color.familyCanvas)
             .selectionHaptic(store.statusFilter)
         }
     }
@@ -786,7 +785,7 @@ public struct CellarView: View {
         if store.isLoading && store.tastingRows.isEmpty {
             ProgressView()
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(Color.parchment)
+                .background(Color.familyCanvas)
         } else if let error = store.loadError {
             ContentUnavailableView {
                 Label("Couldn't load your history", systemImage: "exclamationmark.triangle")
@@ -800,7 +799,7 @@ public struct CellarView: View {
             }
             .onAppear { errorBounce += 1 }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(Color.parchment)
+            .background(Color.familyCanvas)
             .accessibilityIdentifier("cellar-history-error")
         } else if store.tastingRows.isEmpty {
             ContentUnavailableView(
@@ -809,12 +808,12 @@ public struct CellarView: View {
                 description: Text("Log one from a bottle card")
             )
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(Color.parchment)
+            .background(Color.familyCanvas)
         } else if store.isSearching && store.visibleTastingRows.isEmpty {
             // Searching with no matches: native "No Results" view.
             ContentUnavailableView.search(text: store.searchText)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(Color.parchment)
+                .background(Color.familyCanvas)
         } else {
             List(store.visibleTastingRows) { row in
                 Button {
@@ -826,7 +825,7 @@ public struct CellarView: View {
                 .accessibilityIdentifier("history-row-\(row.id)")
                 .matchedTransitionSource(id: row.id, in: zoomNamespace)
                 .shelfScrollTransition()
-                .listRowBackground(Color.parchment)
+                .listRowBackground(Color.familyCanvas)
                 .swipeActions(edge: .trailing) {
                     Button(role: .destructive) {
                         store.send(.deleteTastingSwiped(row.id))
@@ -837,7 +836,7 @@ public struct CellarView: View {
                 }
             }
             .scrollContentBackground(.hidden)
-            .background(Color.parchment)
+            .background(Color.familyCanvas)
         }
     }
 
@@ -893,8 +892,8 @@ private struct CellarRowView: View {
                     .foregroundStyle(Color.inkSoft)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 2)
-                    // Warm parchment-tinted chip instead of the system `.quaternary` gray, which
-                    // read as a cool blot on the parchment cellar rows.
+                    // Soft ink-tinted chip instead of the system `.quaternary` gray, which reads as a
+                    // cool blot on the warm family canvas.
                     .background(Color.inkSoft.opacity(0.14), in: Capsule())
 
                 if let window = row.drinkWindowText {
@@ -986,7 +985,7 @@ private struct TastingRowView: View {
         .padding(.vertical, 2)
     }
 
-    /// Compact rating: a real 5-star `.candleGold` row (half-star aware) when stars exist, else the
+    /// Compact rating: a real 5-star `.marigold` row (half-star aware) when stars exist, else the
     /// 100-pt score, else an em dash. Mirrors the form/detail glyph logic.
     @ViewBuilder
     private var ratingView: some View {
@@ -995,7 +994,7 @@ private struct TastingRowView: View {
                 ForEach(1...5, id: \.self) { position in
                     Image(systemName: Self.starSymbol(for: stars, position: position))
                         .font(.caption)
-                        .foregroundStyle(Color.candleGold)
+                        .foregroundStyle(Color.marigold)
                 }
             }
             .accessibilityLabel("\(stars) stars")

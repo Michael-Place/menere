@@ -168,7 +168,7 @@ struct StatTile: View {
                 .foregroundStyle(.secondary)
                 .symbolEffect(.bounce, value: value)
             Text("\(value)")
-                .font(.system(.largeTitle, design: .serif).weight(.bold).monospacedDigit())
+                .font(.system(.largeTitle, design: .rounded).weight(.bold).monospacedDigit())
                 .contentTransition(.numericText())
                 .animation(.menereSnappy, value: value)
             Text(caption)
@@ -195,7 +195,7 @@ struct EmptyHint: View {
             .foregroundStyle(.secondary)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding()
-            .background(Color.surfaceMenere, in: RoundedRectangle(cornerRadius: 12))
+            .background(Color.familySurface, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
     }
 }
 
@@ -293,14 +293,15 @@ struct CellarCompositionChart: View {
 }
 
 private extension View {
-    /// Unified dashboard card surface: a white/parchment card with a soft shadow so tiles read as
-    /// raised surfaces against the grouped-list background. (The old `secondarySystemBackground` was
-    /// the same grey as the list, so the cards were invisible and content looked like floating text.)
+    /// Unified dashboard card surface: a `familySurface` card with a soft shadow so tiles read as
+    /// raised surfaces against the cream canvas — the same card chrome the rest of Bacán uses. (The
+    /// old `secondarySystemBackground` was the same grey as the list, so the cards were invisible and
+    /// content looked like floating text.)
     func dashboardCard() -> some View {
         self
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding()
-            .background(Color.surfaceMenere, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .background(Color.familySurface, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
             .shadow(color: Color.ink.opacity(0.06), radius: 7, y: 3)
     }
 }

@@ -264,8 +264,8 @@ public struct TastingFormView: View {
 
             Section("Note") {
                 // Rich-Text C2 — the free-form tasting note is now rich (bold/italic + Writing Tools).
-                // Persists as a portable Markdown string in `Tasting.note`. Wine keeps its parchment
-                // identity via `.wineChrome()`; the editor accepts the default family styling.
+                // Persists as a portable Markdown string in `Tasting.note`. The wine stack shares the
+                // family chrome via `.wineChrome()`; the editor accepts the default family styling.
                 RichNoteEditor(
                     markdown: $store.note,
                     placeholder: "Tasting note — what did you smell, taste, love?"
@@ -362,7 +362,7 @@ public struct TastingFormView: View {
             }
         }
         .scrollContentBackground(.hidden)
-        .background(Color.parchment)
+        .background(Color.familyCanvas)
         .selectionHaptic(store.ratingStars)
         .successHaptic(store.savedTick)
         .wineNavTitle(store.editingID == nil ? "Log a tasting" : "Edit tasting")
@@ -388,7 +388,7 @@ public struct TastingFormView: View {
                 pickerItems = []
             }
         }
-        // Wine-stack screen: keep the parchment "Cellar & Candlelight" chrome.
+        // Wine-stack screen: wears the shared Bacán family chrome (familyCanvas + bacanGreen tint).
         .wineChrome()
     }
 
@@ -422,7 +422,7 @@ public struct TastingFormView: View {
             symbol = "star"
         }
         return Image(systemName: symbol)
-            .foregroundStyle(Color.candleGold)
+            .foregroundStyle(Color.marigold)
             .contentTransition(.symbolEffect(.replace))
             .symbolEffect(.bounce, value: store.ratingStars)
             .onTapGesture {

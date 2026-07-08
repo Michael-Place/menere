@@ -106,6 +106,6 @@ public struct DrinkWindowGauge: View {
         DrinkWindowGauge(from: 2010, by: 2020, currentYear: 2026)   // past
     }
     .padding()
-    .background(Color.parchment)
+    .background(Color.familyCanvas)
 }
 #endif

@@ -130,7 +130,7 @@ public struct TastingDetailView: View {
             photosSection
         }
         .scrollContentBackground(.hidden)
-        .background(Color.parchment)
+        .background(Color.familyCanvas)
         .wineNavTitle("Tasting")
         .accessibilityIdentifier("tasting-detail")
         .toolbar {
@@ -155,7 +155,7 @@ public struct TastingDetailView: View {
                 // Pairs with the thumbnail's `matchedTransitionSource(id:)` so the photo zooms open.
                 .navigationTransition(.zoom(sourceID: photo.url, in: photoZoom))
         }
-        // Wine-stack screen: keep the parchment "Cellar & Candlelight" chrome.
+        // Wine-stack screen: wears the shared Bacán family chrome (familyCanvas + bacanGreen tint).
         .wineChrome()
     }
 
@@ -293,7 +293,7 @@ public struct TastingDetailView: View {
         HStack(spacing: 4) {
             ForEach(1...5, id: \.self) { position in
                 Image(systemName: Self.starSymbol(for: value, position: position))
-                    .foregroundStyle(Color.candleGold)
+                    .foregroundStyle(Color.marigold)
                     .symbolEffect(.bounce, value: starsAppeared)
             }
         }

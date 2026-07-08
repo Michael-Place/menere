@@ -1,8 +1,10 @@
 import SwiftUI
 
-/// A celebratory wax-seal stamp overlay — the "tucked into your cellar" flourish played when a bottle
-/// is added. Invisible at rest; replays a one-shot keyframe (scale overshoot + a slight rotation, like
-/// a stamp pressing down) and fades out whenever `trigger` bumps. Pair with a `.successHaptic`.
+/// A celebratory stamp overlay — the "tucked into your cellar" flourish played when a bottle is
+/// added. Reskinned from the old wax-seal to a light Bacán motif (a `bacanGreen` badge with a cream
+/// check + marigold ring and a rounded caption chip) so it reads as the same playful family app.
+/// Invisible at rest; replays a one-shot keyframe (scale overshoot + a slight rotation, like a sticker
+/// slapping down) and fades out whenever `trigger` bumps. Pair with a `.successHaptic`.
 ///
 /// Mount it once in an `.overlay` and drive it with a monotonic counter (e.g. the reducer's
 /// `sealStamp`); the `keyframeAnimator` fires on each change and rests transparent in between.
@@ -49,26 +51,30 @@ public struct SealStamp: View {
             .accessibilityHidden(true)
     }
 
+    /// A fixed warm cream for the check + caption text, pinned light in both appearances so it reads on
+    /// the `bacanGreen` badge (the dynamic cream token would vanish in dark mode).
+    private static var cream: Color { Color(uiColor: UIColor(hex: 0xF7F1E8)) }
+
     private var stamp: some View {
         VStack(spacing: 12) {
             ZStack {
-                Circle().fill(Color.wine)
+                Circle().fill(Color.bacanGreen)
                 Circle()
-                    .strokeBorder(Color.candleGold, lineWidth: 3)
+                    .strokeBorder(Color.marigold, lineWidth: 3)
                     .padding(7)
                 Image(systemName: "checkmark.seal.fill")
                     .font(.system(size: 52, weight: .semibold))
-                    .foregroundStyle(Color.candleGold)
+                    .foregroundStyle(Self.cream)
             }
             .frame(width: 132, height: 132)
             .shadow(color: .black.opacity(0.28), radius: 14, y: 7)
 
             Text("Tucked into your cellar")
-                .font(.system(.headline, design: .serif))
-                .foregroundStyle(Color.wine)
+                .font(.system(.headline, design: .rounded).weight(.semibold))
+                .foregroundStyle(Color.bacanGreen)
                 .padding(.horizontal, 16)
                 .padding(.vertical, 8)
-                .background(Capsule().fill(Color.parchment))
+                .background(Capsule().fill(Color.familySurface))
                 .shadow(color: .black.opacity(0.15), radius: 6, y: 3)
         }
     }
@@ -79,7 +85,7 @@ private struct SealStampDemo: View {
     @State private var trigger = 0
     var body: some View {
         ZStack {
-            Color.parchment.ignoresSafeArea()
+            Color.familyCanvas.ignoresSafeArea()
             Button("Stamp it") { trigger += 1 }
                 .buttonStyle(.borderedProminent)
             SealStamp(trigger: trigger)

@@ -205,7 +205,7 @@ public struct ScanView: View {
     public var body: some View {
         content
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(Color.parchment)
+            .background(Color.familyCanvas)
             .animation(.menereSnappy, value: store.status)
             .impactHaptic(captureTick)
             // Brand "impact on scan-success": a celebratory tick the instant the label resolves into a
@@ -223,8 +223,7 @@ public struct ScanView: View {
             ) {
                 ScanOnboardingView { store.send(.onboardingDismissed) }
             }
-            // Wine-stack screen: keep the parchment "Cellar & Candlelight" chrome (the global
-            // family appearance must not leak in here).
+            // Wine-stack screen: wears the shared Bacán family chrome (familyCanvas + bacanGreen tint).
             .wineChrome()
     }
 
@@ -303,7 +302,7 @@ public struct ScanView: View {
         VStack(spacing: 20) {
             Image(systemName: "sparkles")
                 .font(.system(size: 56))
-                .foregroundStyle(Color.candleGold)
+                .foregroundStyle(Color.marigold)
                 .symbolEffect(.variableColor.iterative)
 
             ProgressView("Identifying…")
@@ -315,11 +314,11 @@ public struct ScanView: View {
         VStack(spacing: 20) {
             Image(systemName: "camera.viewfinder")
                 .font(.system(size: 60))
-                .foregroundStyle(Color.candleGold)
+                .foregroundStyle(Color.bacanGreen)
                 .symbolEffect(.pulse, options: .repeating)
 
             Text("Scan a bottle")
-                .font(.system(.largeTitle, design: .serif).weight(.semibold))
+                .font(.system(.largeTitle, design: .rounded).weight(.semibold))
                 .foregroundStyle(Color.ink)
 
             Text("Identify a wine from its label.")
@@ -443,7 +442,7 @@ private struct ScanOnboardingView: View {
                             .font(.system(size: 56))
                             .foregroundStyle(.tint)
                         Text("Scan any bottle")
-                            .font(.system(.largeTitle, design: .serif).weight(.semibold))
+                            .font(.system(.largeTitle, design: .rounded).weight(.semibold))
                             .foregroundStyle(Color.ink)
                             .multilineTextAlignment(.center)
                         Text("Point at a wine and Bacán identifies it from the label, then builds a bottle card you can save or rate.")
@@ -493,10 +492,10 @@ private struct ScanOnboardingView: View {
             .accessibilityIdentifier("scan-onboarding-dismiss")
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color.parchment)
-        // The sheet presents in a fresh environment, so pin the wine tint here or the glyphs +
-        // "Got it" button inherit the family (bacanGreen) app tint.
-        .tint(.wine)
+        .background(Color.familyCanvas)
+        // The sheet presents in a fresh environment; pin the family tint so the glyphs + "Got it"
+        // button match the bacanGreen used across the wine stack.
+        .tint(.bacanGreen)
         .accessibilityIdentifier("scan-onboarding")
         .interactiveDismissDisabled()
     }
@@ -589,7 +588,7 @@ private struct CandidateResultView: View {
             }
         }
         .scrollContentBackground(.hidden)
-        .background(Color.parchment)
+        .background(Color.familyCanvas)
     }
 
     private var vintageText: String {

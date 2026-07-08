@@ -230,7 +230,7 @@ public struct BottleFormView: View {
             }
         }
         .scrollContentBackground(.hidden)
-        .background(Color.parchment)
+        .background(Color.familyCanvas)
         .successHaptic(store.savedTick)
         .wineNavTitle(store.editingID == nil ? "Add to cellar" : "Edit bottle")
         .toolbar {
@@ -239,7 +239,7 @@ public struct BottleFormView: View {
                     .accessibilityIdentifier("cancel-bottle-button")
             }
         }
-        // Wine-stack screen: keep the parchment "Cellar & Candlelight" chrome.
+        // Wine-stack screen: wears the shared Bacán family chrome (familyCanvas + bacanGreen tint).
         .wineChrome()
     }
 }

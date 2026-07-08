@@ -60,7 +60,7 @@ public struct BottleCardView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .scrollContentBackground(.hidden)
-        .background(Color.parchment)
+        .background(Color.familyCanvas)
         .animation(.menereBouncy, value: isResolving)
         .overlay { SealStamp(trigger: store.sealStamp) }
         .successHaptic(store.sealStamp)
@@ -75,8 +75,7 @@ public struct BottleCardView: View {
             NavigationStack { BottleFormView(store: formStore) }
         }
         .confirmationDialog($store.scope(state: \.confirmDelete, action: \.confirmDelete))
-        // Wine-stack screen: keep the parchment "Cellar & Candlelight" chrome (the global family
-        // appearance must not leak in here).
+        // Wine-stack screen: wears the shared Bacán family chrome (familyCanvas + bacanGreen tint).
         .wineChrome()
     }
 
@@ -164,14 +163,14 @@ public struct BottleCardView: View {
         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
     }
 
-    /// No label image yet → a soft, wine-type-tinted mesh behind a centered wineglass. Replaces the
-    /// former flat gray placeholder so even unenriched cards feel branded.
+    /// No label image yet → a soft, wine-type-tinted mesh (the semantic varietal color-coding) behind
+    /// a centered wineglass. The cream glyph reads cleanly across every varietal gradient.
     private var gradientPlaceholder: some View {
         WineTypeGradient(type: WineTypeGradient.Kind(rawValue: wine.type.rawValue) ?? .other)
             .overlay {
                 Image(systemName: "wineglass")
                     .font(.system(size: 56))
-                    .foregroundStyle(Color.candleGold)
+                    .foregroundStyle(Color.marigold)
                     .shadow(color: .black.opacity(0.18), radius: 5, y: 2)
             }
     }
@@ -556,8 +555,8 @@ private struct Card<Content: View>: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(16)
             .background(
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .fill(Color.surfaceMenere)
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .fill(Color.familySurface)
             )
     }
 }
@@ -662,8 +661,8 @@ private struct Chip: View {
             .padding(.horizontal, 12)
             .padding(.vertical, 6)
             .background(
-                // Warm parchment-toned pill instead of the cool system gray, so grape/pairing chips
-                // sit inside the "Cellar & Candlelight" palette.
+                // Soft ink-toned pill instead of the cool system gray, so grape/pairing chips sit
+                // naturally on the warm family surface.
                 Capsule().fill(Color.inkSoft.opacity(0.15))
             )
     }

@@ -1,12 +1,12 @@
 import SwiftUI
 
-/// A wine-stack segmented control that sits naturally on parchment. The default system
-/// `UISegmentedControl` renders a white/gray pill that glares on the "Cellar & Candlelight"
-/// parchment; this replaces it with a warm inkSoft-tinted track and a sliding Bordeaux selection
-/// pill under a fixed-cream label — legible in both light and dark.
+/// The wine-stack segmented control, now aligned to the Bacán family control: a soft inkSoft-tinted
+/// track with a sliding `bacanGreen` selection pill under a fixed-cream label — legible in both light
+/// and dark. (It formerly used a Bordeaux pill for the parchment cellar; the cellar shares the family
+/// identity now, so this matches `FamilySegmentedControl`.)
 ///
 /// Deliberately a bespoke SwiftUI view rather than a `UISegmentedControl.appearance(...)` override:
-/// appearance-proxy scoping is fragile in SwiftUI and would risk leaking into the family screens'
+/// appearance-proxy scoping is fragile in SwiftUI and would risk leaking into other screens'
 /// stock segmented controls (e.g. Kitchen's Recipes / Meal-plan picker). Because this is an ordinary
 /// view, its styling is contained to wherever it is used — zero family impact by construction. Use it
 /// only inside the wine stack; pair with `.wineChrome()`. Attach `.selectionHaptic(_:)` at the call
@@ -16,9 +16,9 @@ public struct WineSegmentedControl<Value: Hashable>: View {
     private let options: [(value: Value, label: String)]
     @Namespace private var pill
 
-    /// A fixed warm cream for the selected label. `Color.parchment` is dynamic (near-black in dark
-    /// mode) and would vanish on the fixed Bordeaux pill, so the on-pill text is pinned light in both
-    /// appearances — the same relationship as a bordered-prominent wine button.
+    /// A fixed warm cream for the selected label, pinned light in both appearances so it reads on the
+    /// `bacanGreen` pill (the dynamic cream would vanish in dark mode) — the same relationship as a
+    /// bordered-prominent family button.
     private static var selectedLabel: Color { Color(uiColor: UIColor(hex: 0xF7F1E8)) }
 
     public init(selection: Binding<Value>, options: [(value: Value, label: String)]) {
@@ -54,8 +54,8 @@ public struct WineSegmentedControl<Value: Hashable>: View {
                 .background {
                     if isSelected {
                         RoundedRectangle(cornerRadius: 9, style: .continuous)
-                            .fill(Color.wine)
-                            .shadow(color: Color.wine.opacity(0.25), radius: 3, y: 1)
+                            .fill(Color.bacanGreen)
+                            .shadow(color: Color.bacanGreen.opacity(0.25), radius: 3, y: 1)
                             .matchedGeometryEffect(id: "wineSegmentPill", in: pill)
                     }
                 }
@@ -72,7 +72,7 @@ private struct WineSegmentedControlDemo: View {
     @State private var tab: Tab = .cellar
     var body: some View {
         ZStack {
-            Color.parchment.ignoresSafeArea()
+            Color.familyCanvas.ignoresSafeArea()
             WineSegmentedControl(
                 selection: $tab,
                 options: Tab.allCases.map { ($0, $0.rawValue) }
