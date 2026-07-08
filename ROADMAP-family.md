@@ -533,6 +533,30 @@ Oliver" needs our OWN on-device Vision face clustering (FL4).
   (ties to V5 ingestion), scene/content tagging.
 Sequence: FL1 foundation solo (project.yml + new module), then FL2 + FL3 parallel on top.
 
+# Smart home — hone & perfect (2026-07-07, Michael) — audited
+Michael: the smart-home feature "is still in its infancy — really hone and perfect the UI/UX for
+every product." Full audit done (HouseFeature/HouseView.swift ~1294 lines monolith + HouseReducer
+~826). Authed/live-inspectable: **Hue, Lutron, Hubspace**; local/on-device: **Sonos, HomeKit**;
+need Michael's auth: **Nest** (Google SDM OAuth), **Meross garage**, **Ford** (parked).
+**Root problems:** (1) NO loading/error/empty/offline states — writes are optimistic + silently
+truth-restore, so a failed tap looks broken (isRefreshing set but never rendered); (2) SEVEN control
+dialects, no shared components (4 duplicated pill builders, 7 duplicated section scaffolds, AnyView
+erasure); (3) grouped by product, no "house at a glance"; (4) lots of LATENT client capability dark
+in the UI; (5) inconsistent entry cards (Today "The house" Hue-only vs Home "Smart home") + Settings
+idioms + **dev-facing copy leaking** (Michael's name, "$5 fee", "the runbook lives with Claude" in
+NestSetupFeature — a user-facing BUG to fix).
+**Wave plan:**
+- **W1 (foundation, highest leverage):** shared `SmartHomeSectionCard`/`DeviceRow`/`ControlPill`/
+  `DeviceStateBadge`; real state treatment (loading/empty/offline/failed-write feedback); a
+  house-at-a-glance header (temp roll-up, lights-on count, "All off"/"Good night", scene chips).
+- **W2 (expose latent capability):** Nest mode-switch (`setNestMode` exists) + HVAC glow; Sonos
+  next/prev + mute (+ group); Hubspace live countdown + `maxOnTime`; HomeKit jammed/stopped states
+  + room-grouped inventory. Hue COLOR needs client work (`HueLight`+`setLightState`) — biggest gap.
+- **W3 (consistency):** unify Settings (one status idiom, live reachability, warm copy replacing dev
+  copy, disconnect for live HomeKit); unify the two entry cards; optional room-based grouping.
+Key files: HouseFeature/HouseView.swift + HouseReducer.swift + HouseCardReducer.swift,
+TodayView.swift:1175, ChoresView.swift:154, SettingsView.swift:1228, per-product *Models.swift.
+
 # Wine — reframe from CELLAR to JOURNAL (2026-07-07, Michael)
 The "cellar" model doesn't fit the Place family: at most ~6 bottles in a holder, drink-then-replace
 — it's about JOURNALING the wines we have, not managing/aging a cellar. Also the segmented control
