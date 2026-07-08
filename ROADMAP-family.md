@@ -533,6 +533,21 @@ Oliver" needs our OWN on-device Vision face clustering (FL4).
   (ties to V5 ingestion), scene/content tagging.
 Sequence: FL1 foundation solo (project.yml + new module), then FL2 + FL3 parallel on top.
 
+# Hue FIXTURES — collapse bulbs into a lamp/fixture (2026-07-08, Michael)
+Michael's long-wished Hue gap: most fixtures/lamps take 2-3 bulbs; managing "the living-room lamp"
+beats managing 2-3 individual bulbs in a room. Add a **Bacán-side "fixtures" abstraction** over Hue
+bulbs (DECIDED: Bacán-only soft grouping, NOT real Hue zones on the bridge — non-invasive).
+- **Model:** `HueFixture {id, name, kind (lamp/ceiling/sconce/…), lightIds:[String], roomId}` stored
+  in the hue config doc (`households/{hid}/config/hue` — already holds sensorLabels/sensorNames; add
+  a `fixtures` map). Bulbs still exist individually in Hue; we present + control them as one.
+- **Render:** in a room, a fixture = ONE `DeviceRow` (its icon/name); toggle/brightness/color fan out
+  to member lights (setLightState per member). Ungrouped bulbs still show individually. State: on =
+  any-on; brightness/color = shared value or "mixed".
+- **Manage:** in room detail, select 2+ bulbs → "Combine into a lamp" → name + icon; un-combine.
+- Neighborhood when built: HueClient/HueModels (HueFixture + config read/write) + HouseFeature
+  (RoomDetailView grouping + control fan-out + combine/uncombine UI). SEQUENCE AFTER Sonos (both
+  touch HouseView/HouseReducer). Builds on the W2b Hue color work.
+
 # Smart home — hone & perfect (2026-07-07, Michael) — audited
 Michael: the smart-home feature "is still in its infancy — really hone and perfect the UI/UX for
 every product." Full audit done (HouseFeature/HouseView.swift ~1294 lines monolith + HouseReducer
