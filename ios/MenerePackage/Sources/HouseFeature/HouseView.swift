@@ -19,6 +19,13 @@ public struct HouseView: View {
     /// Drives the transient "couldn't reach the device" toast — flipped on for a beat whenever an
     /// optimistic write reverts (`store.writeErrorTick` bumps), so a failed tap isn't an invisible no-op.
     @State private var toastVisible = false
+    /// The House-screen organization axis, PERSISTED across launches (Michael's Rooms/Devices call).
+    /// Devices is the safe default = the untouched Wave-1 product-grouped layout.
+    @AppStorage("house.viewMode") private var viewModeRaw = HouseViewMode.devices.rawValue
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    /// The decoded view mode (tolerates a missing/garbage stored value → Devices).
+    private var viewMode: HouseViewMode { HouseViewMode(rawValue: viewModeRaw) ?? .devices }
 
     /// Seed from Today's live snapshot so the screen renders instantly, then refresh on appear. Lutron
     /// shades load on appear from `lutronConfig` (P15-C1) — no need to pre-fetch them on Today.
@@ -69,7 +76,19 @@ public struct HouseView: View {
                     // Seeded-away: Hue is configured but no bridge answered.
                     if store.isAwayFromHome { awayBanner() }
 
-                    houseSections()
+                    // Rooms | Devices — the organization toggle, persisted in @AppStorage.
+                    viewModeToggle()
+
+                    // A gentle cross-fade between the two layouts (instant when Reduce Motion is on).
+                    Group {
+                        if viewMode == .rooms {
+                            roomsSections()
+                        } else {
+                            houseSections()
+                        }
+                    }
+                    .transition(.opacity)
+                    .animation(reduceMotion ? nil : .easeInOut(duration: 0.25), value: viewMode)
                 }
             }
             .padding(.horizontal)
@@ -139,6 +158,113 @@ public struct HouseView: View {
             Button("Cancel", role: .cancel) { store.send(.cancelHomeKitUnlock) }
         } message: {
             Text("This unlocks the door.")
+        }
+    }
+
+    // MARK: View-mode toggle (Rooms / Devices)
+
+    /// The "Rooms | Devices" segmented control. Sits just under the glance header; writes straight to the
+    /// persisted `@AppStorage` so the choice survives relaunches.
+    private func viewModeToggle() -> some View {
+        Picker(
+            "Organize by",
+            selection: Binding(get: { viewMode }, set: { viewModeRaw = $0.rawValue })
+        ) {
+            Text("Rooms").tag(HouseViewMode.rooms)
+            Text("Devices").tag(HouseViewMode.devices)
+        }
+        .pickerStyle(.segmented)
+        .accessibilityIdentifier("house-view-mode")
+    }
+
+    // MARK: Rooms mode (re-layout of the SAME W1 rows, grouped by room)
+
+    /// Rooms mode: one card per room (its lights + shade + climate + speaker together), then a
+    /// "Whole house" section for the room-less devices (water / garage / room-less HomeKit). Every
+    /// subsystem that's loading or offline still shows its own placeholder (unchanged from Devices mode),
+    /// so no state is lost in the re-layout.
+    @ViewBuilder
+    private func roomsSections() -> some View {
+        VStack(alignment: .leading, spacing: 20) {
+            // Loading / offline placeholders — identical to Devices mode; only the .ok device rows move.
+            statusPlaceholders()
+
+            ForEach(store.roomGroups) { group in
+                roomCard(group)
+            }
+
+            if store.hasWholeHouseContent { wholeHouseSection() }
+        }
+    }
+
+    /// One room card: the room's Hue lights (toggle + detail nav), shades, climate, and speakers — the
+    /// exact W1 rows, re-laid-out inside a single titled card.
+    private func roomCard(_ group: HouseRoomGroup) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            SmartHomeSectionHeader(title: group.displayName)
+            SmartHomeCard {
+                let blocks: [AnyView] =
+                    group.hueRooms.map { AnyView(roomRow($0.room, bridgeId: $0.bridgeId)) }
+                    + group.shades.map { AnyView(shadeRow($0)) }
+                    + group.thermostats.map { AnyView(thermostatRow($0)) }
+                    + group.speakers.map { AnyView(speakerRow($0)) }
+                    + group.locks.map { AnyView(lockRow($0)) }
+                    + group.plugs.map { AnyView(plugRow($0)) }
+                    + group.sensors.map { AnyView(sensorRow($0)) }
+                ForEach(Array(blocks.enumerated()), id: \.offset) { idx, block in
+                    block
+                    if idx < blocks.count - 1 { SmartHomeDivider() }
+                }
+            }
+        }
+        .accessibilityIdentifier("house-room-card-\(group.key)")
+    }
+
+    /// The "Whole house" bucket (Rooms mode): water + garage (always whole-house), any room-less HomeKit
+    /// device, and the HomeKit "All devices" discovery link — reusing the same section builders.
+    @ViewBuilder
+    private func wholeHouseSection() -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            SmartHomeSectionHeader(title: "Whole house")
+            if store.hubspaceStatus == .ok { waterSection(store.spigots) }
+            if store.garageStatus == .ok { garageSection(store.garageDoors) }
+            let locks = store.wholeHouseLocks
+            let plugs = store.wholeHousePlugs
+            let sensors = store.wholeHouseSensors
+            if !locks.isEmpty { DeviceCard(data: locks) { lockRow($0) } }
+            if !plugs.isEmpty { DeviceCard(data: plugs) { plugRow($0) } }
+            if !sensors.isEmpty { DeviceCard(data: sensors) { sensorRow($0) } }
+            if store.homekitStatus == .ok, let inventory = store.homekitInventory {
+                SmartHomeCard { inventoryLinkRow(count: inventory.accessories.count) }
+            }
+        }
+        .accessibilityIdentifier("house-whole-house")
+    }
+
+    /// The loading / offline placeholders for every subsystem — the non-`.ok` branches of the Devices-mode
+    /// switch, rendered on their own so Rooms mode keeps the exact same loading/offline vocabulary.
+    @ViewBuilder
+    private func statusPlaceholders() -> some View {
+        if store.hueStatus == .unreachable || store.hueStatus == .loading {
+            statusSection("Lights", id: "house-lights", status: store.hueStatus)
+        }
+        if store.lutronStatus == .unreachable || store.lutronStatus == .loading {
+            statusSection("Shades", id: "house-shades", status: store.lutronStatus)
+        }
+        if store.sonosStatus == .unreachable || store.sonosStatus == .loading {
+            statusSection("Speakers", id: "house-speakers", status: store.sonosStatus)
+        }
+        if store.nestStatus == .unreachable || store.nestStatus == .loading {
+            statusSection("Climate", id: "house-climate", status: store.nestStatus)
+        }
+        if store.hubspaceStatus == .unreachable || store.hubspaceStatus == .loading {
+            statusSection("Water", id: "house-water", status: store.hubspaceStatus)
+        }
+        if store.garageStatus == .unreachable || store.garageStatus == .loading {
+            statusSection("Garage", id: "house-garage", status: store.garageStatus)
+        }
+        if store.homekitStatus == .unreachable || store.homekitStatus == .loading {
+            statusSection("HomeKit", id: "house-homekit", status: store.homekitStatus)
         }
     }
 

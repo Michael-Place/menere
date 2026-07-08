@@ -59,6 +59,59 @@ private func fullConfig() -> HueConfig {
     }
 }
 
+/// The SAME fully-configured house, but with the persisted view mode forced to **Rooms** — so the
+/// preview renders the room cards (each mixing a room's light + shade + climate + speaker) and the
+/// "Whole house" bucket (water + garage) at the bottom.
+#Preview("House — Rooms mode") {
+    UserDefaults.standard.set(HouseViewMode.rooms.rawValue, forKey: "house.viewMode")
+    return NavigationStack {
+        HouseView(
+            config: fullConfig(),
+            members: [],
+            bridges: [
+                BridgeSnapshot(
+                    bridge: fullConfig().bridges[0],
+                    rooms: HueFixtures.rooms(for: ""),
+                    lights: HueFixtures.lights(for: ""),
+                    scenes: HueFixtures.scenes(for: ""),
+                    temperatures: HueFixtures.temperatures(for: "")
+                )
+            ],
+            lutronConfig: LutronConfig(bridgeIP: "127.0.0.1", mock: true),
+            sonosConfig: SonosConfig(mock: true),
+            nestConfig: NestConfig(projectId: "p", oauthClientId: "c", mock: true),
+            hubspaceConfig: HubspaceConfig(mock: true),
+            merossConfig: MerossConfig(mock: true),
+            homekitConfig: HomeKitConfig(mock: true)
+        )
+    }
+}
+
+#Preview("House — Devices mode") {
+    UserDefaults.standard.set(HouseViewMode.devices.rawValue, forKey: "house.viewMode")
+    return NavigationStack {
+        HouseView(
+            config: fullConfig(),
+            members: [],
+            bridges: [
+                BridgeSnapshot(
+                    bridge: fullConfig().bridges[0],
+                    rooms: HueFixtures.rooms(for: ""),
+                    lights: HueFixtures.lights(for: ""),
+                    scenes: HueFixtures.scenes(for: ""),
+                    temperatures: HueFixtures.temperatures(for: "")
+                )
+            ],
+            lutronConfig: LutronConfig(bridgeIP: "127.0.0.1", mock: true),
+            sonosConfig: SonosConfig(mock: true),
+            nestConfig: NestConfig(projectId: "p", oauthClientId: "c", mock: true),
+            hubspaceConfig: HubspaceConfig(mock: true),
+            merossConfig: MerossConfig(mock: true),
+            homekitConfig: HomeKitConfig(mock: true)
+        )
+    }
+}
+
 #Preview("House — empty (nothing set up)") {
     let store = withDependencies {
         $0.sonos = .testValue     // no nil-config discovery
