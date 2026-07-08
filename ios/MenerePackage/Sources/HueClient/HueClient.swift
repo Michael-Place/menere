@@ -38,9 +38,11 @@ public struct HueClient: Sendable {
     /// Set a room/zone group's power and/or brightness (V1 PUT `/groups/<id>/action`). `on == nil`
     /// leaves power untouched (a pure brightness change); `brightness` is clamped to 1–254.
     public var setGroupState: @Sendable (_ bridge: HueBridgeConfig, _ groupId: String, _ on: Bool?, _ brightness: Int?) async throws -> Void
-    /// Set a single light's power and/or brightness (V1 PUT `/lights/<id>/state`). Same nil/clamp
-    /// semantics as `setGroupState`.
-    public var setLightState: @Sendable (_ bridge: HueBridgeConfig, _ lightId: String, _ on: Bool?, _ brightness: Int?) async throws -> Void
+    /// Set a single light's power, brightness, and/or **color** (V1 PUT `/lights/<id>/state`). Same
+    /// nil/clamp semantics as `setGroupState`; `color == nil` leaves color untouched. `color` carries
+    /// hue+sat, xy, or ct (mireds) — only ever sent to a capable bulb (the UI gates it), so a plain
+    /// bulb is never handed a color it can't honor. A color/ct change implies power-on (Hue behavior).
+    public var setLightState: @Sendable (_ bridge: HueBridgeConfig, _ lightId: String, _ on: Bool?, _ brightness: Int?, _ color: HueColorCommand?) async throws -> Void
     /// ZLLTemperature sensors → °F readings.
     public var temperatures: @Sendable (_ bridge: HueBridgeConfig) async throws -> [HueTemperature]
     /// ZLLTemperature sensors → id + bridge name (no reading). Used by the pairing binding step to
@@ -140,12 +142,12 @@ extension HueClient: DependencyKey {
                 }
                 try await session.setGroupState(bridge, groupId: groupId, on: on, brightness: brightness)
             },
-            setLightState: { bridge, lightId, on, brightness in
+            setLightState: { bridge, lightId, on, brightness, color in
                 if bridge.isMock {
-                    await HueMockStore.shared.setLight(bridgeId: bridge.bridgeId, lightId: lightId, on: on, brightness: brightness)
+                    await HueMockStore.shared.setLight(bridgeId: bridge.bridgeId, lightId: lightId, on: on, brightness: brightness, color: color)
                     return
                 }
-                try await session.setLightState(bridge, lightId: lightId, on: on, brightness: brightness)
+                try await session.setLightState(bridge, lightId: lightId, on: on, brightness: brightness, color: color)
             },
             temperatures: { bridge in
                 bridge.isMock ? HueFixtures.temperatures(for: bridge.bridgeId) : try await session.temperatures(bridge)
@@ -171,7 +173,7 @@ extension HueClient: DependencyKey {
         scenes: { _ in HueFixtures.scenes(for: "") },
         recallScene: { _, _, _ in },
         setGroupState: { _, _, _, _ in },
-        setLightState: { _, _, _, _ in },
+        setLightState: { _, _, _, _, _ in },
         temperatures: { _ in HueFixtures.temperatures(for: "") },
         sensors: { _ in HueFixtures.sensors(for: "") },
         rediscover: { _ in nil },
@@ -213,16 +215,28 @@ public enum HueFixtures {
         HueRoom(id: "5", name: "Bedroom", type: "Room", lightIds: ["7"], anyOn: false, brightness: 150),
         HueRoom(id: "8", name: "Downstairs", type: "Zone", lightIds: ["1", "2", "3", "4"], anyOn: true, brightness: 215),
     ]
+    // Seeded to exercise all three capability paths (P16):
+    //   • FULL COLOR (extended color light) — ceiling (1), living-room lamp (2), Oliver's lamp (5)
+    //   • TUNABLE WHITE (color temperature / ambiance) — kitchen counter (3), bedroom lamp (7)
+    //   • PLAIN (dimmable / on-off) — kitchen sink (4), Famfis's lamp (6, unreachable)
     private static let allLights: [HueLight] = [
-        HueLight(id: "1", name: "Living room ceiling", isOn: true, brightness: 203),
-        HueLight(id: "2", name: "Living room lamp", isOn: true, brightness: 178),
-        HueLight(id: "3", name: "Kitchen counter", isOn: true, brightness: 254),
+        HueLight(id: "1", name: "Living room ceiling", isOn: true, brightness: 203,
+                 colorMode: .hs, hue: 8000, saturation: 180, supportsColor: true, supportsColorTemp: true),
+        HueLight(id: "2", name: "Living room lamp", isOn: true, brightness: 178,
+                 colorMode: .hs, hue: 46920, saturation: 230, supportsColor: true, supportsColorTemp: true),
+        // Ambiance bulb — tunable white only (warm-cool slider, no color palette).
+        HueLight(id: "3", name: "Kitchen counter", isOn: true, brightness: 254,
+                 colorMode: .ct, colorTemp: 230, supportsColorTemp: true),
+        // Plain dimmable white — no color controls at all (unchanged behavior).
         HueLight(id: "4", name: "Kitchen sink", isOn: true, brightness: 220),
-        HueLight(id: "5", name: "Oliver's lamp", isOn: false, brightness: 120),
+        HueLight(id: "5", name: "Oliver's lamp", isOn: false, brightness: 120,
+                 colorMode: .hs, hue: 25500, saturation: 220, supportsColor: true, supportsColorTemp: true),
         // Famfis's lamp is powered off at the wall — the bridge can't reach it. Renders ink-soft with
-        // disabled controls in room detail (the P12-C4 unreachable case).
+        // disabled controls in room detail (the P12-C4 unreachable case). Plain white.
         HueLight(id: "6", name: "Famfis's lamp", isOn: false, brightness: 90, reachable: false),
-        HueLight(id: "7", name: "Bedroom lamp", isOn: false, brightness: 150),
+        // Ambiance bedroom lamp — tunable white only.
+        HueLight(id: "7", name: "Bedroom lamp", isOn: false, brightness: 150,
+                 colorMode: .ct, colorTemp: 400, supportsColorTemp: true),
     ]
     private static let allScenes: [HueScene] = [
         HueScene(id: "bedtime-scene", name: "Bedtime", groupId: "3"),
@@ -306,13 +320,29 @@ actor HueMockStore {
         return lightsByBridge[bridgeId] ?? []
     }
 
-    func setLight(bridgeId: String, lightId: String, on: Bool?, brightness: Int?) {
+    func setLight(bridgeId: String, lightId: String, on: Bool?, brightness: Int?, color: HueColorCommand? = nil) {
         seedIfNeeded(bridgeId)
         guard var lights = lightsByBridge[bridgeId], let i = lights.firstIndex(where: { $0.id == lightId }) else { return }
         if let on { lights[i].isOn = on }
         if let brightness {
             lights[i].brightness = max(1, min(254, brightness))
             if lights[i].isOn == false { lights[i].isOn = true }   // a bri change implies power-on (Hue behavior)
+        }
+        if let color {
+            switch color {
+            case let .hueSat(hue, saturation):
+                lights[i].colorMode = .hs
+                lights[i].hue = max(0, min(65535, hue))
+                lights[i].saturation = max(0, min(254, saturation))
+                lights[i].xy = nil
+            case let .xy(x, y):
+                lights[i].colorMode = .xy
+                lights[i].xy = [x, y]
+            case let .colorTemp(mireds):
+                lights[i].colorMode = .ct
+                lights[i].colorTemp = max(HueColor.minMireds, min(HueColor.maxMireds, mireds))
+            }
+            if on == nil, lights[i].isOn == false { lights[i].isOn = true }   // a color change implies power-on
         }
         lightsByBridge[bridgeId] = lights
         recomputeRooms(bridgeId)
@@ -416,7 +446,7 @@ private final class HueURLSession: NSObject, URLSessionDelegate, @unchecked Send
         let data = try await get("\(base(bridge))/lights")
         let dict = try decode([String: LightResponse].self, data)
         return dict
-            .map { id, l in HueLight(id: id, name: l.name, isOn: l.state.on, brightness: l.state.bri, reachable: l.state.reachable ?? true) }
+            .map { id, l in l.toLight(id: id) }
             .sorted { $0.name < $1.name }
     }
 
@@ -452,9 +482,9 @@ private final class HueURLSession: NSObject, URLSessionDelegate, @unchecked Send
 
     // MARK: State setting (P12-C4) — ported from NowSpinning's setLightState/setGroupState
 
-    func setLightState(_ bridge: HueBridgeConfig, lightId: String, on: Bool?, brightness: Int?) async throws {
+    func setLightState(_ bridge: HueBridgeConfig, lightId: String, on: Bool?, brightness: Int?, color: HueColorCommand? = nil) async throws {
         guard let url = URL(string: "\(base(bridge))/lights/\(lightId)/state") else { throw HueError.invalidResponse }
-        try await putState(url, on: on, brightness: brightness)
+        try await putState(url, on: on, brightness: brightness, color: color)
     }
 
     func setGroupState(_ bridge: HueBridgeConfig, groupId: String, on: Bool?, brightness: Int?) async throws {
@@ -464,14 +494,29 @@ private final class HueURLSession: NSObject, URLSessionDelegate, @unchecked Send
 
     /// Shared PUT for light `/state` and group `/action`. Omits `on` when nil (a pure brightness
     /// change), clamps `bri` to Hue's 1–254, and rides a ~400ms transition so slider ramps read
-    /// smoothly rather than snapping.
-    private func putState(_ url: URL, on: Bool?, brightness: Int?) async throws {
+    /// smoothly rather than snapping. `color` (light-only) encodes into the V1 `hue`+`sat` / `xy` / `ct`
+    /// keys the bridge expects; a color/ct change implies power-on, so `on: true` is sent alongside
+    /// unless the caller explicitly turned the light off.
+    private func putState(_ url: URL, on: Bool?, brightness: Int?, color: HueColorCommand? = nil) async throws {
         var request = URLRequest(url: url)
         request.httpMethod = "PUT"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         var body: [String: Any] = ["transitiontime": 4]
         if let on { body["on"] = on }
         if let brightness { body["bri"] = max(1, min(254, brightness)) }
+        if let color {
+            switch color {
+            case let .hueSat(hue, saturation):
+                body["hue"] = max(0, min(65535, hue))
+                body["sat"] = max(0, min(254, saturation))
+            case let .xy(x, y):
+                body["xy"] = [x, y]
+            case let .colorTemp(mireds):
+                body["ct"] = max(HueColor.minMireds, min(HueColor.maxMireds, mireds))
+            }
+            // A color change implies the light is on (unless the caller is explicitly turning it off).
+            if on == nil { body["on"] = true }
+        }
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
         do {
             let (data, _) = try await session.data(for: request)
@@ -683,11 +728,48 @@ private struct GroupResponse: Decodable {
 
 private struct LightResponse: Decodable {
     let name: String
+    /// V1 light `type` ("Extended color light" / "Color temperature light" / "Dimmable light" / …). A
+    /// belt-and-suspenders capability hint alongside the presence of color keys in `state`.
+    let type: String?
     let state: LightState
     struct LightState: Decodable {
         let on: Bool
         let bri: Int?
         let reachable: Bool?
+        // Color keys — all optional so a plain/older bulb decodes cleanly (decode-safe).
+        let hue: Int?
+        let sat: Int?
+        let xy: [Double]?
+        let ct: Int?
+        let colormode: String?
+    }
+
+    /// Build a `HueLight`, deriving capability flags from the reported color state (+ `type` as a
+    /// fallback). Presence-based so it never invents capabilities: a bulb reporting `hue`/`sat`/`xy`
+    /// can do color; one reporting `ct` can do tunable white; one reporting neither is plain.
+    func toLight(id: String) -> HueLight {
+        let hasHueSat = state.hue != nil && state.sat != nil
+        let hasXY = (state.xy?.count ?? 0) == 2
+        let typeLower = (type ?? "").lowercased()
+        let supportsColor = hasHueSat || hasXY
+            || typeLower.contains("color light") || typeLower.contains("extended color")
+        let supportsColorTemp = state.ct != nil
+            || typeLower.contains("color temperature") || typeLower.contains("extended color")
+        let mode = HueColorMode(rawValue: state.colormode ?? "") ?? .none
+        return HueLight(
+            id: id,
+            name: name,
+            isOn: state.on,
+            brightness: state.bri,
+            reachable: state.reachable ?? true,
+            colorMode: mode,
+            hue: state.hue,
+            saturation: state.sat,
+            xy: hasXY ? state.xy : nil,
+            colorTemp: state.ct,
+            supportsColor: supportsColor,
+            supportsColorTemp: supportsColorTemp
+        )
     }
 }
 

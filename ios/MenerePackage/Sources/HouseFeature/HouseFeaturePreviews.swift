@@ -112,6 +112,26 @@ private func fullConfig() -> HueConfig {
     }
 }
 
+/// P16 — the per-light COLOR controls in room detail. The "Downstairs" zone bundles all three
+/// capability paths on one screen: full-color bulbs (Living room ceiling + lamp) get the swatch +
+/// preset palette + custom picker; the tunable-white "Kitchen counter" gets the warm→cool slider; the
+/// plain "Kitchen sink" shows only the toggle + brightness (unchanged). Great for eyeballing before→after.
+#Preview("Room detail — color / ambiance / plain") {
+    let snap = BridgeSnapshot(
+        bridge: fullConfig().bridges[0],
+        rooms: HueFixtures.rooms(for: ""),
+        lights: HueFixtures.lights(for: ""),
+        scenes: HueFixtures.scenes(for: ""),
+        temperatures: HueFixtures.temperatures(for: "")
+    )
+    let store = Store(initialState: HouseReducer.State(config: fullConfig(), bridges: [snap])) {
+        HouseReducer()
+    }
+    return NavigationStack {
+        RoomDetailView(store: store, bridgeId: "mock", roomId: "8")
+    }
+}
+
 #Preview("House — empty (nothing set up)") {
     let store = withDependencies {
         $0.sonos = .testValue     // no nil-config discovery

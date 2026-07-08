@@ -332,6 +332,10 @@ public struct HouseReducer {
         /// The debounced write, fired only after ≥150ms of slider quiescence.
         case commitRoomBrightness(bridgeId: String, roomId: String, bri: Int)
         case commitLightBrightness(bridgeId: String, lightId: String, bri: Int)
+        /// A light's color / color-temperature changed (palette tap or warm-cool slider). Optimistic +
+        /// debounced commit (same ≥150ms floor as brightness), keyed off a per-light CancelID.
+        case lightColorChanged(bridgeId: String, lightId: String, command: HueColorCommand)
+        case commitLightColor(bridgeId: String, lightId: String, command: HueColorCommand)
         case recallScene(bridgeId: String, groupId: String, sceneId: String)
         case sceneRecalled(sceneId: String)
         case clearSceneSuccess(sceneId: String)
@@ -447,6 +451,7 @@ public struct HouseReducer {
         case sceneSuccess(String)
         case roomBrightness(String)
         case lightBrightness(String)
+        case lightColor(String)
         case shadeLevel(String)
         case sonosRefresh
         case sonosVolume(String)
@@ -888,7 +893,7 @@ public struct HouseReducer {
                 state.bridges[bi].lights[li].isOn = newOn
                 recomputeRoomAnyOn(&state, bridgeIndex: bi)
                 return .run { send in
-                    do { try await hue.setLightState(bridge, lightId, newOn, nil) }
+                    do { try await hue.setLightState(bridge, lightId, newOn, nil, nil) }
                     catch { await send(.writeFailed); await send(.refresh) }
                 }
 
@@ -934,8 +939,29 @@ public struct HouseReducer {
             case let .commitLightBrightness(bridgeId, lightId, bri):
                 guard let bridge = state.config.bridge(bridgeId) else { return .none }
                 return .run { send in
-                    do { try await hue.setLightState(bridge, lightId, nil, bri) }
+                    do { try await hue.setLightState(bridge, lightId, nil, bri, nil) }
                     catch { await send(.refresh) }
+                }
+
+            case let .lightColorChanged(bridgeId, lightId, command):
+                guard let bi = state.bridges.firstIndex(where: { $0.bridge.bridgeId == bridgeId }),
+                      let li = state.bridges[bi].lights.firstIndex(where: { $0.id == lightId }),
+                      state.bridges[bi].lights[li].reachable else { return .none }
+                // Optimistic: reflect the new color locally, powering the light on (Hue behavior).
+                applyColor(&state.bridges[bi].lights[li], command)
+                state.bridges[bi].lights[li].isOn = true
+                recomputeRoomAnyOn(&state, bridgeIndex: bi)
+                return .run { send in
+                    try await clock.sleep(for: Self.sliderDebounce)
+                    await send(.commitLightColor(bridgeId: bridgeId, lightId: lightId, command: command))
+                }
+                .cancellable(id: CancelID.lightColor(lightId), cancelInFlight: true)
+
+            case let .commitLightColor(bridgeId, lightId, command):
+                guard let bridge = state.config.bridge(bridgeId) else { return .none }
+                return .run { send in
+                    do { try await hue.setLightState(bridge, lightId, nil, nil, command) }
+                    catch { await send(.writeFailed); await send(.refresh) }
                 }
 
             case let .recallScene(bridgeId, groupId, sceneId):
@@ -1033,6 +1059,24 @@ public struct HouseReducer {
         let onIds = Set(state.bridges[bi].lights.filter(\.isOn).map(\.id))
         for ri in state.bridges[bi].rooms.indices {
             state.bridges[bi].rooms[ri].anyOn = state.bridges[bi].rooms[ri].lightIds.contains { onIds.contains($0) }
+        }
+    }
+
+    /// Optimistically fold a `HueColorCommand` into a light's color state (mirrors the mock store's own
+    /// apply) so the row swatch + picker reflect the change instantly, before the debounced write lands.
+    private func applyColor(_ light: inout HueLight, _ command: HueColorCommand) {
+        switch command {
+        case let .hueSat(hue, saturation):
+            light.colorMode = .hs
+            light.hue = hue
+            light.saturation = saturation
+            light.xy = nil
+        case let .xy(x, y):
+            light.colorMode = .xy
+            light.xy = [x, y]
+        case let .colorTemp(mireds):
+            light.colorMode = .ct
+            light.colorTemp = mireds
         }
     }
 }

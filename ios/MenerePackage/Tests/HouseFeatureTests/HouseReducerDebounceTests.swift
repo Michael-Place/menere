@@ -15,15 +15,21 @@ struct HouseReducerDebounceTests {
     private actor CallCounter {
         private(set) var groupWrites = 0
         private(set) var lightWrites: [String: Int] = [:]
+        private(set) var lastColor: HueColorCommand?
         func bumpGroup() { groupWrites += 1 }
-        func bumpLight(_ id: String) { lightWrites[id, default: 0] += 1 }
+        func bumpLight(_ id: String, color: HueColorCommand?) {
+            lightWrites[id, default: 0] += 1
+            if let color { lastColor = color }
+        }
     }
 
     private let bridge = HueBridgeConfig(bridgeId: "B", bridgeIP: "10.0.0.1", applicationKey: "k")
 
     private func makeState() -> HouseReducer.State {
         let room = HueRoom(id: "1", name: "Living room", type: "Room", lightIds: ["1", "2"], anyOn: false, brightness: 100)
-        let l1 = HueLight(id: "1", name: "Lamp", isOn: false, brightness: 100)
+        // Light 1 is a full-color bulb so the color path applies.
+        let l1 = HueLight(id: "1", name: "Lamp", isOn: false, brightness: 100,
+                          colorMode: .hs, hue: 100, saturation: 100, supportsColor: true, supportsColorTemp: true)
         let l2 = HueLight(id: "2", name: "Ceiling", isOn: false, brightness: 100)
         let snap = BridgeSnapshot(bridge: bridge, rooms: [room], lights: [l1, l2])
         return HouseReducer.State(config: HueConfig(bridges: [bridge]), bridges: [snap])
@@ -32,7 +38,7 @@ struct HouseReducerDebounceTests {
     private func countingClient(_ counter: CallCounter) -> HueClient {
         var client = HueClient.previewValue
         client.setGroupState = { _, _, _, _ in await counter.bumpGroup() }
-        client.setLightState = { _, lightId, _, _ in await counter.bumpLight(lightId) }
+        client.setLightState = { _, lightId, _, _, color in await counter.bumpLight(lightId, color: color) }
         return client
     }
 
@@ -104,5 +110,34 @@ struct HouseReducerDebounceTests {
 
         #expect(await counter.lightWrites["1"] == 1)
         #expect(await counter.lightWrites["2"] == 1)
+    }
+
+    /// Color/ct writes debounce on the same ≥150ms floor: a flurry of palette taps collapses to one PUT,
+    /// carrying the LAST chosen color; and the light updates optimistically (colorMode + power-on).
+    @Test func colorSpamCollapsesToOneWriteCarryingLastColor() async {
+        let clock = TestClock()
+        let counter = CallCounter()
+        let store = TestStore(initialState: makeState()) { HouseReducer() } withDependencies: {
+            $0.continuousClock = clock
+            $0.hue = countingClient(counter)
+        }
+        store.exhaustivity = .off
+
+        let colors: [HueColorCommand] = [
+            .hueSat(hue: 0, saturation: 254),
+            .hueSat(hue: 25500, saturation: 240),
+            .colorTemp(mireds: 300),
+        ]
+        for c in colors {
+            await store.send(.lightColorChanged(bridgeId: "B", lightId: "1", command: c))
+        }
+        #expect(await counter.lightWrites["1"] == nil)   // nothing written while tapping
+
+        await clock.advance(by: .milliseconds(150))
+        await store.receive(\.commitLightColor)
+        await store.finish()
+
+        #expect(await counter.lightWrites["1"] == 1)     // one PUT despite three taps
+        #expect(await counter.lastColor == .colorTemp(mireds: 300))
     }
 }

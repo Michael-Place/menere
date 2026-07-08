@@ -9,6 +9,7 @@ import MerossClient
 import NestClient
 import SonosClient
 import SwiftUI
+import UIKit
 
 /// The granular House control surface (P12-C4), pushed from Today's "The house ›" card. A utility
 /// screen — familyCanvas/familySurface + rounded type, `.pressable` where natural, but no celebration
@@ -1296,6 +1297,15 @@ struct RoomDetailView: View {
     private func lightRow(_ light: HueLight) -> some View {
         VStack(spacing: 8) {
             HStack {
+                // A live color swatch for capable bulbs (color or tunable-white); plain bulbs show none.
+                if light.supportsColor || light.supportsColorTemp {
+                    Circle()
+                        .fill(light.swatchColor)
+                        .frame(width: 16, height: 16)
+                        .overlay(Circle().strokeBorder(Color.ink.opacity(0.12), lineWidth: 1))
+                        .opacity(light.isOn ? 1 : 0.45)
+                        .accessibilityIdentifier("house-light-swatch-\(light.id)")
+                }
                 Text(light.name)
                     .font(.system(.body, design: .rounded))
                     .foregroundStyle(light.reachable ? Color.ink : Color.inkSoft)
@@ -1327,10 +1337,114 @@ struct RoomDetailView: View {
             .tint(Color.bacanGreen)
             .disabled(!light.reachable)
             .accessibilityIdentifier("house-light-slider-\(light.id)")
+
+            // Capability-gated color control. Full-color bulbs get the palette + custom picker; a
+            // tunable-white ("ambiance") bulb gets the warm→cool slider; plain bulbs get nothing.
+            if light.supportsColor {
+                colorPalette(light)
+            } else if light.supportsColorTemp {
+                warmCoolSlider(light)
+            }
         }
         .opacity(light.reachable ? 1 : 0.5)
         .padding(.vertical, 4)
         .accessibilityIdentifier("house-light-\(light.id)")
+    }
+
+    // MARK: Color palette (full-color bulbs)
+
+    /// A wrapped row of on-brand preset swatches + a native custom picker. Each tap sends a debounced
+    /// `hueSat` write; the currently-matched preset wears a ring.
+    private func colorPalette(_ light: HueLight) -> some View {
+        HStack(alignment: .center, spacing: 8) {
+            FlowRow {
+                ForEach(HueColor.presets, id: \.name) { preset in
+                    let selected = isSelected(preset, light)
+                    Button {
+                        MenereHaptics.softTap()
+                        store.send(.lightColorChanged(
+                            bridgeId: bridgeId,
+                            lightId: light.id,
+                            command: .hueSat(hue: preset.hue, saturation: preset.saturation)
+                        ))
+                    } label: {
+                        Circle()
+                            .fill(HueColor.color(hue: preset.hue, saturation: preset.saturation))
+                            .frame(width: 26, height: 26)
+                            .overlay(
+                                Circle().strokeBorder(
+                                    selected ? Color.ink : Color.ink.opacity(0.12),
+                                    lineWidth: selected ? 2.5 : 1
+                                )
+                            )
+                    }
+                    .buttonStyle(.pressable)
+                    .disabled(!light.reachable)
+                    .accessibilityIdentifier("house-light-color-\(light.id)-\(preset.name.lowercased())")
+                }
+            }
+            Spacer(minLength: 0)
+            // A native custom picker (system wheel/grid) for anything off-palette.
+            ColorPicker("", selection: Binding(
+                get: { light.swatchColor },
+                set: { store.send(.lightColorChanged(bridgeId: bridgeId, lightId: light.id, command: hueSatCommand(from: $0))) }
+            ), supportsOpacity: false)
+            .labelsHidden()
+            .disabled(!light.reachable)
+            .accessibilityIdentifier("house-light-colorpicker-\(light.id)")
+        }
+    }
+
+    /// Whether a preset matches the light's current hue/sat closely enough to wear the selected ring.
+    private func isSelected(_ preset: (name: String, hue: Int, saturation: Int), _ light: HueLight) -> Bool {
+        guard light.colorMode == .hs, let h = light.hue, let s = light.saturation else { return false }
+        return abs(h - preset.hue) < 1500 && abs(s - preset.saturation) < 24
+    }
+
+    /// Convert a SwiftUI `Color` (from the custom picker) into a Hue `hueSat` command.
+    private func hueSatCommand(from color: Color) -> HueColorCommand {
+        var h: CGFloat = 0, s: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+        UIColor(color).getHue(&h, saturation: &s, brightness: &b, alpha: &a)
+        return .hueSat(hue: Int((h * 65535).rounded()), saturation: Int((s * 254).rounded()))
+    }
+
+    // MARK: Warm→cool slider (tunable-white / ambiance bulbs)
+
+    /// A warm→cool color-temperature slider over a warm-white → cool-white gradient. Sends a debounced
+    /// `ct` (mireds) write. Left = warmest (2000K), right = coolest (6500K).
+    private func warmCoolSlider(_ light: HueLight) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: "flame.fill")
+                .font(.system(size: 12))
+                .foregroundStyle(Color.terracotta)
+            Slider(
+                value: Binding(
+                    get: { HueColor.warmCool(fromMireds: light.colorTemp) ?? 0.5 },
+                    set: { store.send(.lightColorChanged(
+                        bridgeId: bridgeId,
+                        lightId: light.id,
+                        command: .colorTemp(mireds: HueColor.mireds(fromWarmCool: $0))
+                    )) }
+                ),
+                in: 0...1
+            )
+            .tint(Color.clear)
+            .background(
+                Capsule().fill(
+                    LinearGradient(
+                        colors: [HueColor.color(fromMireds: HueColor.maxMireds), HueColor.color(fromMireds: HueColor.minMireds)],
+                        startPoint: .leading, endPoint: .trailing
+                    )
+                )
+                .frame(height: 4)
+                .allowsHitTesting(false)
+            )
+            .disabled(!light.reachable)
+            .accessibilityIdentifier("house-light-ct-slider-\(light.id)")
+            Image(systemName: "snowflake")
+                .font(.system(size: 12))
+                .foregroundStyle(Color.sky)
+        }
     }
 
     // MARK: Card scaffold (mirrors TodayView's card)
