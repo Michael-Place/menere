@@ -102,8 +102,8 @@ public enum HubspaceFixtures {
         id: frontYardId,
         name: "Front yard spigot",
         outlets: [
-            SpigotOutlet(instance: "spigot-1", name: "Garden beds", isOpen: false, remainingMinutes: nil),
-            SpigotOutlet(instance: "spigot-2", name: "Drip line", isOpen: true, remainingMinutes: 12),
+            SpigotOutlet(instance: "spigot-1", name: "Garden beds", isOpen: false, remainingMinutes: nil, maxOnMinutes: 20),
+            SpigotOutlet(instance: "spigot-2", name: "Drip line", isOpen: true, remainingMinutes: 12, maxOnMinutes: 20),
         ],
         batteryPercent: 87
     )

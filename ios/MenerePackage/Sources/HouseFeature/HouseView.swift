@@ -511,7 +511,7 @@ public struct HouseView: View {
                         .foregroundStyle(Color.ink)
                         .lineLimit(1)
                     HStack(spacing: 8) {
-                        modeChip(thermostat.mode)
+                        modeSwitcher(thermostat)
                         if let humidity = thermostat.humidityInt {
                             Label("\(humidity)%", systemImage: "humidity")
                                 .font(.system(.caption, design: .rounded))
@@ -541,33 +541,106 @@ public struct HouseView: View {
                 setpointStepper(thermostat, kind: .heat, label: "Heat to")
                 setpointStepper(thermostat, kind: .cool, label: "Cool to")
             case .off:
-                Text("Off — no setpoint")
-                    .font(.system(.caption, design: .rounded))
-                    .foregroundStyle(Color.inkSoft)
+                turnOnControl(thermostat)
             }
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
+        // Live HVAC glow (W2a): warm while heating, cool while cooling, nothing when idle/off.
+        .hvacGlow(hvacTint(thermostat))
         .accessibilityIdentifier("house-thermostat-\(thermostat.deviceId)")
     }
 
-    /// The mode chip — heat=terracotta / cool=sky / auto=bacanGreen / off=ink-soft.
-    private func modeChip(_ mode: NestMode) -> some View {
-        let color: Color = {
-            switch mode {
-            case .heat: return .terracotta
-            case .cool: return .sky
-            case .heatCool: return .bacanGreen
-            case .off: return .inkSoft
+    /// The tint for a thermostat's card, reading its live `hvacStatus` — terracotta while HEATING, sky
+    /// while COOLING, nil (no glow) when idle/off.
+    private func hvacTint(_ thermostat: NestThermostat) -> Color? {
+        switch thermostat.hvacStatus?.uppercased() {
+        case "HEATING": return .terracotta
+        case "COOLING": return .sky
+        default: return nil
+        }
+    }
+
+    /// The mode's chip color — heat=terracotta / cool=sky / auto=bacanGreen / off=ink-soft.
+    private func modeColor(_ mode: NestMode) -> Color {
+        switch mode {
+        case .heat: return .terracotta
+        case .cool: return .sky
+        case .heatCool: return .bacanGreen
+        case .off: return .inkSoft
+        }
+    }
+
+    /// The interactive mode switcher (W2a): the mode chip is now a menu of the thermostat's
+    /// `availableModes` (heat / cool / auto / off), each driving `setNestMode`; the current mode carries a
+    /// checkmark. Replaces the read-only chip.
+    private func modeSwitcher(_ thermostat: NestThermostat) -> some View {
+        let mode = thermostat.mode
+        let color = modeColor(mode)
+        let modes = thermostat.availableModes.isEmpty ? [mode] : thermostat.availableModes
+        return Menu {
+            ForEach(modes, id: \.self) { m in
+                Button {
+                    MenereHaptics.softTap()
+                    store.send(.setNestMode(deviceName: thermostat.id, mode: m))
+                } label: {
+                    if m == mode { Label(m.label, systemImage: "checkmark") } else { Text(m.label) }
+                }
             }
-        }()
-        return Text(mode.label.uppercased())
+        } label: {
+            HStack(spacing: 4) {
+                Text(mode.label.uppercased())
+                Image(systemName: "chevron.up.chevron.down").font(.system(size: 8, weight: .bold))
+            }
             .font(.system(.caption2, design: .rounded).weight(.bold))
             .foregroundStyle(color)
             .padding(.horizontal, 8)
             .padding(.vertical, 3)
             .background(Capsule(style: .continuous).fill(color.opacity(0.16)))
-            .accessibilityIdentifier("house-thermostat-mode-\(mode.rawValue)")
+        }
+        .accessibilityIdentifier("house-thermostat-mode-switcher-\(thermostat.deviceId)")
+    }
+
+    /// The Off-mode "turn on" affordance (W2a) — replaces the dead "Off — no setpoint" line. Offers the
+    /// thermostat's non-off modes: a single active mode → a direct "Turn on" pill; several → a menu.
+    @ViewBuilder
+    private func turnOnControl(_ thermostat: NestThermostat) -> some View {
+        let active = thermostat.availableModes.filter { $0 != .off }
+        let modes = active.isEmpty ? [.heat] : active
+        HStack(spacing: 10) {
+            Text("Off")
+                .font(.system(.caption, design: .rounded))
+                .foregroundStyle(Color.inkSoft)
+            Spacer(minLength: 0)
+            if modes.count == 1 {
+                ControlPill(title: "Turn on", systemImage: "power", tint: .bacanGreen,
+                            id: "house-thermostat-turnon-\(thermostat.deviceId)") {
+                    store.send(.setNestMode(deviceName: thermostat.id, mode: modes[0]))
+                }
+            } else {
+                Menu {
+                    ForEach(modes, id: \.self) { m in
+                        Button {
+                            MenereHaptics.softTap()
+                            store.send(.setNestMode(deviceName: thermostat.id, mode: m))
+                        } label: {
+                            Text("Turn on · \(m.label)")
+                        }
+                    }
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "power")
+                        Text("Turn on")
+                    }
+                    .font(.system(size: 14, weight: .semibold, design: .rounded))
+                    .foregroundStyle(Color.bacanGreen)
+                    .padding(.horizontal, 12)
+                    .frame(height: 32)
+                    .background(Capsule(style: .continuous).fill(Color.bacanGreen.opacity(0.14)))
+                }
+                .accessibilityIdentifier("house-thermostat-turnon-\(thermostat.deviceId)")
+            }
+        }
     }
 
     /// A labeled −/+ stepper for one setpoint (1 °F steps, optimistic; the reducer debounces the commit).
@@ -633,68 +706,13 @@ public struct HouseView: View {
                 .padding(.horizontal, 4)
             }
             DeviceCard(data: spigot.outlets) { outlet in
-                outletRow(
-                    spigot: spigot, outlet: outlet,
+                SpigotOutletRow(
+                    store: store, spigot: spigot, outlet: outlet,
                     showBattery: !showHeader && outlet.id == spigot.outlets.first?.id ? spigot.batteryPercent : nil
                 )
             }
         }
         .accessibilityIdentifier("house-spigot-\(spigot.id)")
-    }
-
-    private func outletRow(spigot: HubspaceSpigot, outlet: SpigotOutlet, showBattery: Int?) -> some View {
-        let status = showBattery.map { "\(outlet.statusLine) · 🔋\($0)%" } ?? outlet.statusLine
-        return DeviceRow(
-            icon: outlet.isOpen ? "drop.fill" : "drop",
-            iconTint: outlet.isOpen ? Color.bacanGreen : Color.inkSoft,
-            title: outlet.name,
-            status: status,
-            statusTint: outlet.isOpen ? Color.bacanGreen : Color.inkSoft,
-            statusAccessibilityId: "house-spigot-status-\(spigot.id)-\(outlet.instance)",
-            accessibilityId: "house-spigot-outlet-\(spigot.id)-\(outlet.instance)"
-        ) {
-            // When opening, offer a duration menu; when open, a plain "close" toggle.
-            if outlet.isOpen {
-                Toggle("", isOn: Binding(
-                    get: { true },
-                    set: { _ in
-                        MenereHaptics.softTap()
-                        store.send(.toggleSpigot(deviceId: spigot.id, instance: outlet.instance, open: false, durationMinutes: nil))
-                    }
-                ))
-                .labelsHidden()
-                .tint(Color.bacanGreen)
-                .accessibilityIdentifier("house-spigot-toggle-\(spigot.id)-\(outlet.instance)")
-            } else {
-                durationMenu(spigot: spigot, outlet: outlet)
-            }
-        }
-    }
-
-    /// The "open for how long" menu — the timed-run options plus "Until turned off". Tapping any option
-    /// opens the outlet (optimistically) with that duration.
-    private func durationMenu(spigot: HubspaceSpigot, outlet: SpigotOutlet) -> some View {
-        Menu {
-            ForEach(SpigotDuration.options, id: \.self) { minutes in
-                Button("Open for \(minutes) min") {
-                    store.send(.toggleSpigot(deviceId: spigot.id, instance: outlet.instance, open: true, durationMinutes: minutes))
-                }
-            }
-            Button("Open until turned off") {
-                store.send(.toggleSpigot(deviceId: spigot.id, instance: outlet.instance, open: true, durationMinutes: nil))
-            }
-        } label: {
-            HStack(spacing: 4) {
-                Image(systemName: "drop")
-                Text("Open")
-            }
-            .font(.system(size: 14, weight: .semibold, design: .rounded))
-            .foregroundStyle(Color.bacanGreen)
-            .padding(.horizontal, 12)
-            .frame(height: 32)
-            .background(Capsule(style: .continuous).fill(Color.bacanGreen.opacity(0.14)))
-        }
-        .accessibilityIdentifier("house-spigot-open-\(spigot.id)-\(outlet.instance)")
     }
 
     private func batteryLabel(_ percent: Int?) -> some View {
@@ -715,22 +733,61 @@ public struct HouseView: View {
         }
     }
 
+    /// The live HomeKit door state for a channel — nil unless HomeKit powers the Garage section and the
+    /// accessory reports a `currentDoorState`. This is what lets a jammed/stopped or mid-travel door read
+    /// truthfully instead of the Meross-shaped Bool `isOpen`.
+    private func homekitDoorState(forChannel channel: Int) -> GarageDoorDisplayState? {
+        guard store.garageSource == .homeKit,
+              let accId = store.garageHomeKitAccessoryIds[channel],
+              let accessory = store.homekitInventory?.accessories.first(where: { $0.id == accId })
+        else { return nil }
+        return accessory.garageDoorDisplayState
+    }
+
     /// One garage door row. It's a security surface, so state reads plainly (a bacanGreen shield when
     /// closed / terracotta when open), the transitional "Opening…" / "Closing…" shows while it travels,
-    /// and the action button is Open (→ confirmation) or Close (direct).
+    /// and the action button is Open (→ confirmation) or Close (direct). W2a: once an in-flight command
+    /// settles, the row reads the REAL HomeKit `currentDoorState` — a **stopped** door shows a "Stopped"
+    /// alert (and a Close recovery) rather than the 20s timer pretending it reached a resting position;
+    /// a door seen live opening/closing shows that motion.
     private func garageRow(_ door: GarageDoor) -> some View {
         let settling = store.garageSettling[door.channel]
+        let hkState = homekitDoorState(forChannel: door.channel)
+        // A command in flight (settling != nil) owns the row for its travel window; once it clears, the
+        // live door state takes over so a halted door reads "Stopped" instead of a fake resting state.
+        let stopped = settling == nil && hkState == .stopped
+        let liveMoving: HouseReducer.State.GarageTransition? = {
+            guard settling == nil else { return nil }
+            switch hkState {
+            case .opening: return .opening
+            case .closing: return .closing
+            default: return nil
+            }
+        }()
+        let effectiveSettling = settling ?? liveMoving
+        let openish = door.isOpen || stopped
         return DeviceRow(
-            icon: door.isOpen ? "door.garage.open" : "door.garage.closed",
-            iconTint: door.isOpen ? Color.terracotta : Color.bacanGreen,
+            icon: openish ? "door.garage.open" : "door.garage.closed",
+            iconTint: openish ? Color.terracotta : Color.bacanGreen,
             iconSize: 18,
             title: door.displayName,
-            status: garageStatusText(door: door, settling: settling),
-            statusTint: garageStatusColor(door: door, settling: settling),
+            status: stopped ? "Stopped" : garageStatusText(door: door, settling: effectiveSettling),
+            statusTint: stopped ? Color.terracotta : garageStatusColor(door: door, settling: effectiveSettling),
             statusAccessibilityId: "house-garage-status-\(door.channel)",
             accessibilityId: "house-garage-\(door.channel)"
         ) {
-            garageActionButton(door: door, settling: settling)
+            if stopped {
+                // Halted mid-travel — a loud alert + a Close recovery (opening stays confirmation-gated).
+                HStack(spacing: 8) {
+                    SmartHomeAlertBadge(text: "Stopped", accessibilityId: "house-garage-alert-\(door.channel)")
+                    ControlPill(title: "Close", systemImage: "door.garage.closed", tint: .bacanGreen,
+                                id: "house-garage-close-\(door.channel)") {
+                        store.send(.garageCloseRequested(channel: door.channel))
+                    }
+                }
+            } else {
+                garageActionButton(door: door, settling: effectiveSettling)
+            }
         }
     }
 
@@ -795,28 +852,52 @@ public struct HouseView: View {
     }
 
     /// A door-lock row: state (green shield when locked / terracotta when unlocked) + a Lock/Unlock button.
-    /// Unlock routes through the confirmation dialog; Lock commits directly.
+    /// Unlock routes through the confirmation dialog; Lock commits directly. W2a: a **jammed** lock
+    /// (`currentLockState` 2 jammed / 3 unknown) reads "Jammed" (terracotta warning) — no longer silently
+    /// collapsed to "Locked" — and offers both recoveries.
     private func lockRow(_ accessory: HKAccessory) -> some View {
-        let locked = accessory.lockIsLocked ?? true
+        let state = accessory.lockDisplayState ?? .locked
+        let icon: String
+        let tint: Color
+        let statusText: String
+        switch state {
+        case .locked: icon = "lock.fill"; tint = .bacanGreen; statusText = "Locked"
+        case .unlocked: icon = "lock.open.fill"; tint = .terracotta; statusText = "Unlocked"
+        case .jammed: icon = "lock.trianglebadge.exclamationmark"; tint = .terracotta; statusText = "Jammed"
+        }
         return DeviceRow(
-            icon: locked ? "lock.fill" : "lock.open.fill",
-            iconTint: locked ? Color.bacanGreen : Color.terracotta,
+            icon: icon,
+            iconTint: tint,
             iconSize: 18,
             title: accessory.name,
-            status: locked ? "Locked" : "Unlocked",
-            statusTint: locked ? Color.bacanGreen : Color.terracotta,
+            status: statusText,
+            statusTint: tint,
             statusAccessibilityId: "house-homekit-lock-status-\(accessory.id)",
             accessibilityId: "house-homekit-lock-\(accessory.id)-row"
         ) {
-            if locked {
+            switch state {
+            case .locked:
                 ControlPill(title: "Unlock", systemImage: "lock.open", tint: .terracotta,
                             id: "house-homekit-unlock-\(accessory.id)") {
                     store.send(.homekitUnlockRequested(accessoryId: accessory.id))
                 }
-            } else {
+            case .unlocked:
                 ControlPill(title: "Lock", systemImage: "lock", tint: .bacanGreen,
                             id: "house-homekit-lock-\(accessory.id)") {
                     store.send(.homekitLockRequested(accessoryId: accessory.id))
+                }
+            case .jammed:
+                // The bolt can't be trusted — offer both recoveries. Lock is safe/direct; Unlock stays
+                // confirmation-gated (the security contract is unchanged).
+                HStack(spacing: 6) {
+                    ControlPill(title: "Lock", systemImage: "lock", tint: .bacanGreen,
+                                id: "house-homekit-lock-\(accessory.id)") {
+                        store.send(.homekitLockRequested(accessoryId: accessory.id))
+                    }
+                    ControlPill(title: "Unlock", systemImage: "lock.open", tint: .terracotta,
+                                id: "house-homekit-unlock-\(accessory.id)") {
+                        store.send(.homekitUnlockRequested(accessoryId: accessory.id))
+                    }
                 }
             }
         }
@@ -1209,6 +1290,106 @@ struct HomeKitInventoryView: View {
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
         .accessibilityIdentifier("house-homekit-inventory-\(accessory.id)")
+    }
+}
+
+// MARK: - Water outlet row (P15-C4 + W2a live countdown)
+
+/// One water-timer outlet row. W2a: when the outlet is running a timed run, the "min left" now **ticks
+/// down live** every second (a local countdown anchored to when the value was last observed) instead of
+/// only refreshing on the ~30s poll, so it never reads stale between polls. The "open for how long" menu
+/// bounds its options to the device's `max-on-time` ceiling. Its own `@State` (per outlet identity) holds
+/// the countdown anchor.
+private struct SpigotOutletRow: View {
+    let store: StoreOf<HouseReducer>
+    let spigot: HubspaceSpigot
+    let outlet: SpigotOutlet
+    let showBattery: Int?
+
+    /// Anchor + baseline for the local countdown: the moment we last saw `remainingMinutes`, and how many
+    /// seconds it implied. Re-seeded whenever `remainingMinutes` changes (a poll landed).
+    @State private var anchor: Date = .now
+    @State private var baselineSeconds: Int = 0
+
+    var body: some View {
+        if outlet.isOpen, outlet.remainingMinutes != nil {
+            // Live-ticking countdown — re-render once a second and recompute the remaining time.
+            TimelineView(.periodic(from: anchor, by: 1)) { context in
+                row(status: liveStatus(at: context.date), statusTint: .bacanGreen)
+            }
+            .task(id: outlet.remainingMinutes) {
+                anchor = .now
+                baselineSeconds = (outlet.remainingMinutes ?? 0) * 60
+            }
+        } else {
+            row(status: staticStatus, statusTint: outlet.isOpen ? .bacanGreen : .inkSoft)
+        }
+    }
+
+    private var batterySuffix: String { showBattery.map { " · 🔋\($0)%" } ?? "" }
+
+    private var staticStatus: String { outlet.statusLine + batterySuffix }
+
+    /// "Open · 11:59 left" ticking down mm:ss; collapses to "Open" once the run elapses (before the poll
+    /// corrects it).
+    private func liveStatus(at date: Date) -> String {
+        let remaining = max(0, baselineSeconds - Int(date.timeIntervalSince(anchor)))
+        guard remaining > 0 else { return "Open" + batterySuffix }
+        return String(format: "Open · %d:%02d left", remaining / 60, remaining % 60) + batterySuffix
+    }
+
+    private func row(status: String, statusTint: Color) -> some View {
+        DeviceRow(
+            icon: outlet.isOpen ? "drop.fill" : "drop",
+            iconTint: outlet.isOpen ? Color.bacanGreen : Color.inkSoft,
+            title: outlet.name,
+            status: status,
+            statusTint: statusTint,
+            statusAccessibilityId: "house-spigot-status-\(spigot.id)-\(outlet.instance)",
+            accessibilityId: "house-spigot-outlet-\(spigot.id)-\(outlet.instance)"
+        ) {
+            // When open, a plain "close" toggle; when closed, the duration menu.
+            if outlet.isOpen {
+                Toggle("", isOn: Binding(
+                    get: { true },
+                    set: { _ in
+                        MenereHaptics.softTap()
+                        store.send(.toggleSpigot(deviceId: spigot.id, instance: outlet.instance, open: false, durationMinutes: nil))
+                    }
+                ))
+                .labelsHidden()
+                .tint(Color.bacanGreen)
+                .accessibilityIdentifier("house-spigot-toggle-\(spigot.id)-\(outlet.instance)")
+            } else {
+                durationMenu
+            }
+        }
+    }
+
+    /// The "open for how long" menu — the timed-run options (bounded by the device's `max-on-time`
+    /// ceiling) plus "Until turned off". Tapping any option opens the outlet (optimistically).
+    private var durationMenu: some View {
+        Menu {
+            ForEach(SpigotDuration.options(maxMinutes: outlet.maxOnMinutes), id: \.self) { minutes in
+                Button("Open for \(minutes) min") {
+                    store.send(.toggleSpigot(deviceId: spigot.id, instance: outlet.instance, open: true, durationMinutes: minutes))
+                }
+            }
+            Button("Open until turned off") {
+                store.send(.toggleSpigot(deviceId: spigot.id, instance: outlet.instance, open: true, durationMinutes: nil))
+            }
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "drop")
+                Text("Open")
+            }
+            .font(.system(size: 14, weight: .semibold, design: .rounded))
+            .foregroundStyle(Color.bacanGreen)
+            .padding(.horizontal, 12)
+            .frame(height: 32)
+            .background(Capsule(style: .continuous).fill(Color.bacanGreen.opacity(0.14)))
+        }
+        .accessibilityIdentifier("house-spigot-open-\(spigot.id)-\(outlet.instance)")
     }
 }
 

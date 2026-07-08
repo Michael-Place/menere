@@ -247,9 +247,10 @@ public enum HubspaceDevice {
 
         let values = (dict["state"] as? [String: Any])?["values"] as? [[String: Any]] ?? []
 
-        // Group per-instance toggle + timer; capture battery (instance null).
+        // Group per-instance toggle + timer + max-on-time cap; capture battery (instance null).
         var togglesByInstance: [String: Bool] = [:]
         var timerByInstance: [String: Int] = [:]
+        var maxOnByInstance: [String: Int] = [:]
         var battery: Int?
         for v in values {
             let fc = v["functionClass"] as? String
@@ -259,6 +260,8 @@ public enum HubspaceDevice {
                 if let inst = instance { togglesByInstance[inst] = (v["value"] as? String) == HubspaceFunction.on }
             case HubspaceFunction.timer:
                 if let inst = instance { timerByInstance[inst] = intValue(v["value"]) ?? 0 }
+            case HubspaceFunction.maxOnTime:
+                if let inst = instance, let m = intValue(v["value"]), m > 0 { maxOnByInstance[inst] = m }
             case HubspaceFunction.batteryLevel:
                 battery = intValue(v["value"])
             default:
@@ -278,7 +281,8 @@ public enum HubspaceDevice {
                 instance: inst,
                 name: HubspaceFunction.defaultOutletName(inst),
                 isOpen: open,
-                remainingMinutes: (open && timer > 0) ? timer : nil
+                remainingMinutes: (open && timer > 0) ? timer : nil,
+                maxOnMinutes: maxOnByInstance[inst]
             )
         }
         guard !outlets.isEmpty else { return nil }   // a water timer with no toggles isn't controllable

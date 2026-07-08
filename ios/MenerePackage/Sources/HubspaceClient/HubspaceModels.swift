@@ -85,14 +85,19 @@ public struct SpigotOutlet: Equatable, Sendable, Identifiable {
     /// reference library doesn't model `timer`, but the sibling `max-on-time` cap is in whole minutes,
     /// so we read/write `timer` as **minutes**. Verified against Michael's live device on first connect.
     public let remainingMinutes: Int?
+    /// The device-enforced maximum run length in whole minutes (`max-on-time`), when the device reports
+    /// one — the ceiling the House "open for how long" menu bounds its options to. nil = no known cap
+    /// (the menu falls back to its default option set).
+    public let maxOnMinutes: Int?
 
     public var id: String { instance }
 
-    public init(instance: String, name: String, isOpen: Bool, remainingMinutes: Int? = nil) {
+    public init(instance: String, name: String, isOpen: Bool, remainingMinutes: Int? = nil, maxOnMinutes: Int? = nil) {
         self.instance = instance
         self.name = name
         self.isOpen = isOpen
         self.remainingMinutes = remainingMinutes
+        self.maxOnMinutes = maxOnMinutes
     }
 
     /// The status line for the House row: "Open · 12 min left" / "Open" / "Closed".
@@ -102,13 +107,15 @@ public struct SpigotOutlet: Equatable, Sendable, Identifiable {
         return "Open"
     }
 
-    /// A copy flipped open/closed with an optional timed-run duration (optimistic UI edits).
+    /// A copy flipped open/closed with an optional timed-run duration (optimistic UI edits). Preserves
+    /// the device's `maxOnMinutes` cap (it's a device property, not a per-run value).
     public func setting(open: Bool, remainingMinutes minutes: Int?) -> SpigotOutlet {
         SpigotOutlet(
             instance: instance,
             name: name,
             isOpen: open,
-            remainingMinutes: open ? minutes : nil
+            remainingMinutes: open ? minutes : nil,
+            maxOnMinutes: maxOnMinutes
         )
     }
 }
@@ -147,8 +154,18 @@ public enum HubspaceFunction {
 /// turned off" (write `toggle` on with no `timer`). Kept here so the UI and the P14 agent tools share
 /// one list.
 public enum SpigotDuration {
-    /// Offered minute options.
+    /// Offered minute options (the default ceiling when the device reports no `max-on-time`).
     public static let options: [Int] = [5, 10, 15, 30]
+
+    /// The offered minute options bounded by the device's `max-on-time` ceiling (when known): the
+    /// defaults at or below the cap, plus the cap itself so the longest legal run is always reachable.
+    /// nil cap → the full default set.
+    public static func options(maxMinutes: Int?) -> [Int] {
+        guard let cap = maxMinutes, cap > 0 else { return options }
+        var out = options.filter { $0 <= cap }
+        if !out.contains(cap) { out.append(cap) }
+        return out.sorted()
+    }
 
     /// A short label ("10 min" / "Until off").
     public static func label(_ minutes: Int?) -> String {

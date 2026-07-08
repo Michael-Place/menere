@@ -63,6 +63,27 @@ struct DeviceStateBadge: View {
     }
 }
 
+/// A loud, warm-tinted alert pill in the same visual family as ``DeviceStateBadge`` (W2a) — the "state"
+/// vocabulary for a device that needs attention rather than one that's merely offline: a **jammed** lock,
+/// a **stopped**/jammed garage door. Terracotta (vs the ink-soft "Offline" chip) so a physical fault
+/// reads as urgent, not just unreachable. Icon + short word ("Jammed" / "Stopped").
+struct SmartHomeAlertBadge: View {
+    let text: String
+    var systemImage: String = "exclamationmark.triangle.fill"
+    var accessibilityId: String? = nil
+
+    var body: some View {
+        Label(text, systemImage: systemImage)
+            .labelStyle(.titleAndIcon)
+            .font(.system(.caption2, design: .rounded).weight(.bold))
+            .foregroundStyle(Color.terracotta)
+            .padding(.horizontal, 9)
+            .padding(.vertical, 4)
+            .background(Capsule(style: .continuous).fill(Color.terracotta.opacity(0.16)))
+            .axID(accessibilityId)
+    }
+}
+
 /// The section caption row: an uppercase rounded-caption title plus an optional trailing ``DeviceStateBadge``.
 /// Collapses the hand-copied `Text(title.uppercased())…` header that opened all seven sections.
 struct SmartHomeSectionHeader: View {
@@ -311,6 +332,40 @@ struct SmartHomeEmptyState: View {
         .padding(.horizontal, 24)
         .accessibilityIdentifier(accessibilityId)
     }
+}
+
+// MARK: - HVAC live glow (W2a)
+
+/// The active-HVAC tint for a Nest thermostat card: a gentle warm wash while **heating**, a cool wash
+/// while **cooling**, nothing when idle/off. Surfaces `NestThermostat.hvacStatus` — captured "for the
+/// UI's live glow" but previously invisible. Reduce-Motion friendly: a static tint (no pulse) when the
+/// user asks for reduced motion; otherwise a slow, gentle breathing opacity.
+struct HVACGlow: ViewModifier {
+    /// The tint to wash the card with, or nil when the thermostat isn't actively running.
+    let tint: Color?
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var pulse = false
+
+    func body(content: Content) -> some View {
+        content
+            .background {
+                if let tint {
+                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                        .fill(tint.opacity(reduceMotion ? 0.16 : (pulse ? 0.22 : 0.10)))
+                        .animation(
+                            reduceMotion ? nil : .easeInOut(duration: 1.6).repeatForever(autoreverses: true),
+                            value: pulse
+                        )
+                        .onAppear { if !reduceMotion { pulse = true } }
+                        .allowsHitTesting(false)
+                }
+            }
+    }
+}
+
+extension View {
+    /// Wash a thermostat card with its live-HVAC glow (see ``HVACGlow``). Pass nil for idle/off.
+    func hvacGlow(_ tint: Color?) -> some View { modifier(HVACGlow(tint: tint)) }
 }
 
 // MARK: - Helpers
