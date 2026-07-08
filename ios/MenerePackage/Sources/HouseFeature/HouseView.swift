@@ -16,6 +16,9 @@ import SwiftUI
 /// decoupled from `TodayReducer`.
 public struct HouseView: View {
     @Bindable private var store: StoreOf<HouseReducer>
+    /// Drives the transient "couldn't reach the device" toast — flipped on for a beat whenever an
+    /// optimistic write reverts (`store.writeErrorTick` bumps), so a failed tap isn't an invisible no-op.
+    @State private var toastVisible = false
 
     /// Seed from Today's live snapshot so the screen renders instantly, then refresh on appear. Lutron
     /// shades load on appear from `lutronConfig` (P15-C1) — no need to pre-fetch them on Today.
@@ -49,47 +52,42 @@ public struct HouseView: View {
     public var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
-                ForEach(store.bridges) { snap in
-                    bridgeSection(snap)
-                }
-                // Shades sections (P15-C1) live below the lights — one per area. When both a Hue room
-                // and a Lutron area share a name they still render separately this chunk (unification
-                // is future polish).
-                ForEach(store.shadesByArea, id: \.area) { group in
-                    shadesSection(area: group.area, shades: group.shades)
-                }
-                // Speakers section (P15-C2) — one row per Sonos group (coordinator), below the shades.
-                // Renders nothing when discovery found no speakers (not home / no Sonos) — silent degrade.
-                if !store.sonosGroups.isEmpty {
-                    speakersSection(store.sonosGroups)
-                }
-                // Climate section (P15-C3) — one row per Nest thermostat, below the speakers. Renders
-                // nothing when there's no thermostat (not set up / unreachable) — silent degrade.
-                if !store.thermostats.isEmpty {
-                    climateSection(store.thermostats)
-                }
-                // Water section (P15-C4) — one block per Hubspace water-timer spigot, below Climate.
-                // Renders nothing when there's no spigot (not set up / unreachable) — silent degrade.
-                if !store.spigots.isEmpty {
-                    waterSection(store.spigots)
-                }
-                // Garage section (P15-C5 / P15-C7) — one row per door, below Water. HomeKit powers this
-                // when the authorized Home has a garage opener; else the Meross/Refoss fallback. Renders
-                // nothing when there's no door — silent degrade.
-                if !store.garageDoors.isEmpty {
-                    garageSection(store.garageDoors)
-                }
-                // HomeKit section (P15-C7) — locks / plugs / sensors NOT covered by the native
-                // integrations (lights excluded — Hue owns them). Plus the "All HomeKit devices" inventory
-                // affordance. Renders when the authorized/mock Home has controllable accessories.
-                if let inventory = store.homekitInventory {
-                    homekitSection(inventory)
+                if store.isInitialLoading {
+                    // First paint with no seeded snapshot — a skeleton so the screen never opens blank.
+                    SmartHomeSkeleton()
+                } else if !store.isAnythingConfigured {
+                    // Nothing set up across any subsystem — point at Settings.
+                    SmartHomeEmptyState(
+                        systemImage: "house",
+                        title: "Nothing set up yet",
+                        message: "Add a device in Settings → Smart home and it'll show up right here.",
+                        accessibilityId: "house-empty"
+                    )
+                } else {
+                    // House at a glance — temps, lights-on, master actions, scene chips.
+                    houseGlanceHeader()
+                    // Seeded-away: Hue is configured but no bridge answered.
+                    if store.isAwayFromHome { awayBanner() }
+
+                    houseSections()
                 }
             }
             .padding(.horizontal)
             .padding(.vertical, 12)
         }
         .background(Color.familyCanvas)
+        // Every reverted optimistic write buzzes an error + drops the toast (subtle, non-blocking).
+        .errorHaptic(store.writeErrorTick)
+        // A scene recall anywhere (glance chip / room detail) lands the finished success buzz.
+        .successHaptic(store.recalledScene)
+        .overlay(alignment: .bottom) { writeToast }
+        .onChange(of: store.writeErrorTick) { _, _ in
+            withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) { toastVisible = true }
+            Task {
+                try? await Task.sleep(for: .seconds(2.2))
+                withAnimation(.easeOut(duration: 0.25)) { toastVisible = false }
+            }
+        }
         .navigationTitle("The house")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
@@ -144,6 +142,206 @@ public struct HouseView: View {
         }
     }
 
+    // MARK: Section orchestration (Wave 1)
+
+    /// The ordered stack of device sections. Each subsystem renders its rich section when reachable, a
+    /// dimmed OFFLINE placeholder when configured-but-unreachable (so it no longer silently vanishes), a
+    /// LOADING placeholder while its first fetch is still in flight, and nothing when not configured.
+    @ViewBuilder
+    private func houseSections() -> some View {
+        // Lights (Hue) — rooms/zones per bridge.
+        switch store.hueStatus {
+        case .ok: ForEach(store.bridges) { bridgeSection($0) }
+        case .unreachable, .loading: statusSection("Lights", id: "house-lights", status: store.hueStatus)
+        case .notConfigured: EmptyView()
+        }
+
+        // Shades (Lutron) — one section per area.
+        switch store.lutronStatus {
+        case .ok:
+            ForEach(store.shadesByArea, id: \.area) { group in
+                shadesSection(area: group.area, shades: group.shades)
+            }
+        case .unreachable, .loading: statusSection("Shades", id: "house-shades", status: store.lutronStatus)
+        case .notConfigured: EmptyView()
+        }
+
+        // Speakers (Sonos).
+        switch store.sonosStatus {
+        case .ok: speakersSection(store.sonosGroups)
+        case .unreachable, .loading: statusSection("Speakers", id: "house-speakers", status: store.sonosStatus)
+        case .notConfigured: EmptyView()
+        }
+
+        // Climate (Nest).
+        switch store.nestStatus {
+        case .ok: climateSection(store.thermostats)
+        case .unreachable, .loading: statusSection("Climate", id: "house-climate", status: store.nestStatus)
+        case .notConfigured: EmptyView()
+        }
+
+        // Water (Hubspace).
+        switch store.hubspaceStatus {
+        case .ok: waterSection(store.spigots)
+        case .unreachable, .loading: statusSection("Water", id: "house-water", status: store.hubspaceStatus)
+        case .notConfigured: EmptyView()
+        }
+
+        // Garage (HomeKit-first, Meross fallback).
+        switch store.garageStatus {
+        case .ok: garageSection(store.garageDoors)
+        case .unreachable, .loading: statusSection("Garage", id: "house-garage", status: store.garageStatus)
+        case .notConfigured: EmptyView()
+        }
+
+        // HomeKit (locks / plugs / sensors).
+        switch store.homekitStatus {
+        case .ok: if let inventory = store.homekitInventory { homekitSection(inventory) }
+        case .unreachable, .loading: statusSection("HomeKit", id: "house-homekit", status: store.homekitStatus)
+        case .notConfigured: EmptyView()
+        }
+    }
+
+    /// A visible placeholder for a section that is configured-but-unreachable (dimmed "Offline" badge) or
+    /// still loading (spinner badge) — the fix for sections that used to silently disappear.
+    private func statusSection(_ title: String, id: String, status: DeviceStatus) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            SmartHomeSectionHeader(title: title, badge: status)
+            SmartHomeCard(dimmed: status == .unreachable) {
+                HStack(spacing: 10) {
+                    Image(systemName: status == .loading ? "arrow.triangle.2.circlepath" : "wifi.slash")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(Color.inkSoft)
+                        .frame(width: 26)
+                    Text(status == .loading ? "Checking…" : "Not reachable right now — try again in a moment.")
+                        .font(.system(.subheadline, design: .rounded))
+                        .foregroundStyle(Color.inkSoft)
+                    Spacer(minLength: 0)
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 14)
+            }
+        }
+        .accessibilityIdentifier(id)
+    }
+
+    // MARK: House at a glance (Wave 1)
+
+    /// The calm, glanceable header: a lights-on headline, a temperature roll-up (labeled Hue thermometers
+    /// + Nest ambient), master actions ("All lights off" / "Goodnight"), and the scene/ritual chips
+    /// (previously buried in room detail) surfaced at the top.
+    private func houseGlanceHeader() -> some View {
+        let temps = store.glanceTemperatures
+        let scenes = store.glanceScenes
+        return VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text(store.lightsOnCount == 0 ? "All lights off" : "\(store.lightsOnCount) light\(store.lightsOnCount == 1 ? "" : "s") on")
+                    .font(.system(.title3, design: .rounded).weight(.semibold))
+                    .foregroundStyle(Color.ink)
+                    .contentTransition(.numericText())
+                    .accessibilityIdentifier("house-glance-lights")
+                if !temps.isEmpty {
+                    FlowRow(spacing: 8) {
+                        ForEach(Array(temps.enumerated()), id: \.offset) { _, t in
+                            tempChip(label: t.label, tempF: t.tempF)
+                        }
+                    }
+                }
+            }
+            HStack(spacing: 10) {
+                ControlPill(title: "All lights off", systemImage: "lightbulb.slash.fill", tint: .bacanGreen,
+                            id: "house-all-lights-off") { store.send(.allLightsOff) }
+                    .disabled(!store.hasReachableLights)
+                    .opacity(store.hasReachableLights ? 1 : 0.5)
+                ControlPill(title: "Goodnight", systemImage: "moon.stars.fill", tint: .sky, fill: 0.18,
+                            id: "house-goodnight") { store.send(.goodnight) }
+                    .disabled(!store.hasReachableLights)
+                    .opacity(store.hasReachableLights ? 1 : 0.5)
+                Spacer(minLength: 0)
+            }
+            if !scenes.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("SCENES")
+                        .font(.system(.caption2, design: .rounded).weight(.semibold))
+                        .foregroundStyle(Color.inkSoft)
+                    FlowRow(spacing: 8) {
+                        ForEach(scenes) { scene in
+                            Button {
+                                MenereHaptics.softTap()
+                                store.send(.recallScene(bridgeId: scene.bridgeId, groupId: scene.groupId, sceneId: scene.sceneId))
+                            } label: {
+                                HStack(spacing: 5) {
+                                    Image(systemName: "sparkles")
+                                    Text(scene.name)
+                                }
+                                .font(.system(.subheadline, design: .rounded).weight(.semibold))
+                                .foregroundStyle(Color.marigold)
+                                .padding(.horizontal, 14)
+                                .padding(.vertical, 9)
+                                .background(Capsule(style: .continuous).fill(Color.marigold.opacity(0.18)))
+                            }
+                            .buttonStyle(.pressable)
+                            .accessibilityIdentifier("house-glance-scene-\(scene.id)")
+                        }
+                    }
+                }
+            }
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .fill(Color.familySurface)
+        )
+        .accessibilityIdentifier("house-glance")
+    }
+
+    private func tempChip(label: String, tempF: Double) -> some View {
+        HStack(spacing: 4) {
+            Image(systemName: "thermometer.medium").font(.caption2)
+            Text("\(label) \(Int(tempF.rounded()))°")
+                .contentTransition(.numericText())
+        }
+        .font(.system(.caption, design: .rounded).weight(.medium))
+        .foregroundStyle(Color.inkSoft)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 5)
+        .background(Capsule(style: .continuous).fill(Color.inkSoft.opacity(0.10)))
+    }
+
+    private func awayBanner() -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: "moon.zzz.fill").foregroundStyle(Color.inkSoft)
+            Text("Not home — showing last known.")
+                .font(.system(.subheadline, design: .rounded).weight(.medium))
+                .foregroundStyle(Color.inkSoft)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Color.inkSoft.opacity(0.10)))
+        .accessibilityIdentifier("house-away")
+    }
+
+    @ViewBuilder
+    private var writeToast: some View {
+        if toastVisible {
+            HStack(spacing: 8) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                Text("Couldn't reach the device")
+            }
+            .font(.system(.subheadline, design: .rounded).weight(.semibold))
+            .foregroundStyle(.white)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 11)
+            .background(Capsule(style: .continuous).fill(Color.terracotta))
+            .shadow(color: .black.opacity(0.15), radius: 8, y: 3)
+            .padding(.bottom, 24)
+            .transition(.move(edge: .bottom).combined(with: .opacity))
+            .accessibilityIdentifier("house-write-error-toast")
+        }
+    }
+
     // MARK: Bridge section (rooms then zones)
 
     @ViewBuilder
@@ -158,82 +356,44 @@ public struct HouseView: View {
                     .accessibilityIdentifier("house-bridge-\(snap.bridge.bridgeId)")
             }
             if !rooms.isEmpty {
-                subsection("Rooms", rooms: rooms, bridgeId: snap.bridge.bridgeId)
-            }
-            if !zones.isEmpty {
-                subsection("Zones", rooms: zones, bridgeId: snap.bridge.bridgeId)
-            }
-        }
-    }
-
-    private func subsection(_ title: String, rooms: [HueRoom], bridgeId: String) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Text(title.uppercased())
-                .font(.system(.caption, design: .rounded).weight(.semibold))
-                .foregroundStyle(Color.inkSoft)
-                .padding(.bottom, 6)
-            VStack(spacing: 0) {
-                ForEach(Array(rooms.enumerated()), id: \.element.id) { idx, room in
-                    roomRow(room, bridgeId: bridgeId)
-                    if idx < rooms.count - 1 {
-                        Divider().overlay(Color.inkSoft.opacity(0.15)).padding(.leading, 16)
-                    }
+                SmartHomeSection(title: "Rooms", data: rooms) { room in
+                    roomRow(room, bridgeId: snap.bridge.bridgeId)
                 }
             }
-            .background(
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .fill(Color.familySurface)
-            )
+            if !zones.isEmpty {
+                SmartHomeSection(title: "Zones", data: zones) { room in
+                    roomRow(room, bridgeId: snap.bridge.bridgeId)
+                }
+            }
         }
     }
 
     // MARK: Shades section (P15-C1)
 
     private func shadesSection(area: String, shades: [LutronShade]) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Text("\(area) · Shades".uppercased())
-                .font(.system(.caption, design: .rounded).weight(.semibold))
-                .foregroundStyle(Color.inkSoft)
-                .padding(.bottom, 6)
-            VStack(spacing: 0) {
-                ForEach(Array(shades.enumerated()), id: \.element.id) { idx, shade in
-                    shadeRow(shade)
-                    if idx < shades.count - 1 {
-                        Divider().overlay(Color.inkSoft.opacity(0.15)).padding(.leading, 16)
-                    }
-                }
-            }
-            .background(
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .fill(Color.familySurface)
-            )
+        SmartHomeSection(title: "\(area) · Shades", data: shades, accessibilityId: "house-shades-\(area)") { shade in
+            shadeRow(shade)
         }
-        .accessibilityIdentifier("house-shades-\(area)")
     }
 
     private func shadeRow(_ shade: LutronShade) -> some View {
         VStack(spacing: 8) {
-            HStack(spacing: 12) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(shade.name)
-                        .font(.system(.body, design: .rounded).weight(.medium))
-                        .foregroundStyle(Color.ink)
-                    Text(LutronLevel.label(shade.level))
-                        .font(.system(.caption, design: .rounded))
-                        .foregroundStyle(Color.inkSoft)
-                        .contentTransition(.numericText())
-                        .accessibilityIdentifier("house-shade-level-\(shade.zoneId)")
-                }
-                Spacer(minLength: 0)
-                // Up · Stop · Down (raise / stop / lower).
+            // Top row via the shared DeviceRow (unpadded — this composite adds its own padding + slider).
+            DeviceRow(
+                title: shade.name,
+                status: LutronLevel.label(shade.level),
+                statusAccessibilityId: "house-shade-level-\(shade.zoneId)",
+                padded: false
+            ) {
+                // Up · Stop · Down — the icon-only ``ControlPill`` (was `shadeButton`).
                 HStack(spacing: 6) {
-                    shadeButton("chevron.up", id: "house-shade-raise-\(shade.zoneId)") {
+                    IconButton("chevron.up", id: "house-shade-raise-\(shade.zoneId)") {
                         store.send(.raiseShade(zoneId: shade.zoneId))
                     }
-                    shadeButton("stop.fill", id: "house-shade-stop-\(shade.zoneId)") {
+                    IconButton("stop.fill", id: "house-shade-stop-\(shade.zoneId)") {
                         store.send(.stopShade(zoneId: shade.zoneId))
                     }
-                    shadeButton("chevron.down", id: "house-shade-lower-\(shade.zoneId)") {
+                    IconButton("chevron.down", id: "house-shade-lower-\(shade.zoneId)") {
                         store.send(.lowerShade(zoneId: shade.zoneId))
                     }
                 }
@@ -253,40 +413,12 @@ public struct HouseView: View {
         .accessibilityIdentifier("house-shade-\(shade.zoneId)")
     }
 
-    private func shadeButton(_ systemName: String, id: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: systemName)
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundStyle(Color.bacanGreen)
-                .frame(width: 34, height: 30)
-                .background(Capsule(style: .continuous).fill(Color.bacanGreen.opacity(0.14)))
-        }
-        .buttonStyle(.pressable)
-        .accessibilityIdentifier(id)
-    }
-
     // MARK: Speakers section (P15-C2)
 
     private func speakersSection(_ groups: [SonosGroup]) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Text("Speakers".uppercased())
-                .font(.system(.caption, design: .rounded).weight(.semibold))
-                .foregroundStyle(Color.inkSoft)
-                .padding(.bottom, 6)
-            VStack(spacing: 0) {
-                ForEach(Array(groups.enumerated()), id: \.element.id) { idx, group in
-                    speakerRow(group)
-                    if idx < groups.count - 1 {
-                        Divider().overlay(Color.inkSoft.opacity(0.15)).padding(.leading, 16)
-                    }
-                }
-            }
-            .background(
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .fill(Color.familySurface)
-            )
+        SmartHomeSection(title: "Speakers", data: groups, accessibilityId: "house-speakers") { group in
+            speakerRow(group)
         }
-        .accessibilityIdentifier("house-speakers")
     }
 
     private func speakerRow(_ group: SonosGroup) -> some View {
@@ -305,17 +437,11 @@ public struct HouseView: View {
                         .accessibilityIdentifier("house-speaker-nowplaying-\(group.id)")
                 }
                 Spacer(minLength: 0)
-                Button {
+                // Play / pause via the shared icon-only ``ControlPill``.
+                IconButton(group.nowPlaying.isPlaying ? "pause.fill" : "play.fill",
+                           id: "house-speaker-playpause-\(group.id)") {
                     store.send(.toggleSonosPlayback(groupId: group.id))
-                } label: {
-                    Image(systemName: group.nowPlaying.isPlaying ? "pause.fill" : "play.fill")
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundStyle(Color.bacanGreen)
-                        .frame(width: 38, height: 32)
-                        .background(Capsule(style: .continuous).fill(Color.bacanGreen.opacity(0.14)))
                 }
-                .buttonStyle(.pressable)
-                .accessibilityIdentifier("house-speaker-playpause-\(group.id)")
             }
             HStack(spacing: 10) {
                 Image(systemName: "speaker.fill")
@@ -371,25 +497,9 @@ public struct HouseView: View {
     // MARK: Climate section (P15-C3)
 
     private func climateSection(_ thermostats: [NestThermostat]) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Text("Climate".uppercased())
-                .font(.system(.caption, design: .rounded).weight(.semibold))
-                .foregroundStyle(Color.inkSoft)
-                .padding(.bottom, 6)
-            VStack(spacing: 0) {
-                ForEach(Array(thermostats.enumerated()), id: \.element.id) { idx, thermostat in
-                    thermostatRow(thermostat)
-                    if idx < thermostats.count - 1 {
-                        Divider().overlay(Color.inkSoft.opacity(0.15)).padding(.leading, 16)
-                    }
-                }
-            }
-            .background(
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .fill(Color.familySurface)
-            )
+        SmartHomeSection(title: "Climate", data: thermostats, accessibilityId: "house-climate") { thermostat in
+            thermostatRow(thermostat)
         }
-        .accessibilityIdentifier("house-climate")
     }
 
     private func thermostatRow(_ thermostat: NestThermostat) -> some View {
@@ -469,7 +579,7 @@ public struct HouseView: View {
                 .font(.system(.subheadline, design: .rounded))
                 .foregroundStyle(Color.inkSoft)
             Spacer(minLength: 0)
-            stepperButton("minus", id: "house-thermostat-\(thermostat.deviceId)-\(kind.rawValue)-minus", tint: tint) {
+            IconButton("minus", tint: tint, id: "house-thermostat-\(thermostat.deviceId)-\(kind.rawValue)-minus") {
                 store.send(.nestSetpointStepped(deviceName: thermostat.id, kind: kind, deltaF: -1))
             }
             Text(value.map { "\($0)°" } ?? "—")
@@ -479,22 +589,10 @@ public struct HouseView: View {
                 .monospacedDigit()
                 .frame(minWidth: 44)
                 .accessibilityIdentifier("house-thermostat-\(thermostat.deviceId)-\(kind.rawValue)-value")
-            stepperButton("plus", id: "house-thermostat-\(thermostat.deviceId)-\(kind.rawValue)-plus", tint: tint) {
+            IconButton("plus", tint: tint, id: "house-thermostat-\(thermostat.deviceId)-\(kind.rawValue)-plus") {
                 store.send(.nestSetpointStepped(deviceName: thermostat.id, kind: kind, deltaF: 1))
             }
         }
-    }
-
-    private func stepperButton(_ systemName: String, id: String, tint: Color, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: systemName)
-                .font(.system(size: 15, weight: .bold))
-                .foregroundStyle(tint)
-                .frame(width: 38, height: 32)
-                .background(Capsule(style: .continuous).fill(tint.opacity(0.16)))
-        }
-        .buttonStyle(.pressable)
-        .accessibilityIdentifier(id)
     }
 
     /// Ambient label: whole degrees when it lands on one, else one decimal (e.g. "71.6°").
@@ -509,11 +607,8 @@ public struct HouseView: View {
     // MARK: Water section (P15-C4)
 
     private func waterSection(_ spigots: [HubspaceSpigot]) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Text("Water".uppercased())
-                .font(.system(.caption, design: .rounded).weight(.semibold))
-                .foregroundStyle(Color.inkSoft)
-                .padding(.bottom, 6)
+        VStack(alignment: .leading, spacing: 6) {
+            SmartHomeSectionHeader(title: "Water")
             VStack(spacing: 14) {
                 ForEach(spigots) { spigot in
                     spigotCard(spigot, showHeader: spigots.count > 1)
@@ -537,51 +632,35 @@ public struct HouseView: View {
                 }
                 .padding(.horizontal, 4)
             }
-            VStack(spacing: 0) {
-                ForEach(Array(spigot.outlets.enumerated()), id: \.element.id) { idx, outlet in
-                    outletRow(spigot: spigot, outlet: outlet, showBattery: !showHeader && idx == 0 ? spigot.batteryPercent : nil)
-                    if idx < spigot.outlets.count - 1 {
-                        Divider().overlay(Color.inkSoft.opacity(0.15)).padding(.leading, 16)
-                    }
-                }
+            DeviceCard(data: spigot.outlets) { outlet in
+                outletRow(
+                    spigot: spigot, outlet: outlet,
+                    showBattery: !showHeader && outlet.id == spigot.outlets.first?.id ? spigot.batteryPercent : nil
+                )
             }
-            .background(
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .fill(Color.familySurface)
-            )
         }
         .accessibilityIdentifier("house-spigot-\(spigot.id)")
     }
 
     private func outletRow(spigot: HubspaceSpigot, outlet: SpigotOutlet, showBattery: Int?) -> some View {
-        HStack(spacing: 12) {
-            Image(systemName: outlet.isOpen ? "drop.fill" : "drop")
-                .font(.system(size: 16, weight: .semibold))
-                .foregroundStyle(outlet.isOpen ? Color.bacanGreen : Color.inkSoft)
-                .frame(width: 22)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(outlet.name)
-                    .font(.system(.body, design: .rounded).weight(.medium))
-                    .foregroundStyle(Color.ink)
-                    .lineLimit(1)
-                HStack(spacing: 8) {
-                    Text(outlet.statusLine)
-                        .font(.system(.caption, design: .rounded))
-                        .foregroundStyle(outlet.isOpen ? Color.bacanGreen : Color.inkSoft)
-                        .accessibilityIdentifier("house-spigot-status-\(spigot.id)-\(outlet.instance)")
-                    if let battery = showBattery {
-                        Text("· 🔋\(battery)%")
-                            .font(.system(.caption, design: .rounded))
-                            .foregroundStyle(Color.inkSoft)
-                    }
-                }
-            }
-            Spacer(minLength: 0)
+        let status = showBattery.map { "\(outlet.statusLine) · 🔋\($0)%" } ?? outlet.statusLine
+        return DeviceRow(
+            icon: outlet.isOpen ? "drop.fill" : "drop",
+            iconTint: outlet.isOpen ? Color.bacanGreen : Color.inkSoft,
+            title: outlet.name,
+            status: status,
+            statusTint: outlet.isOpen ? Color.bacanGreen : Color.inkSoft,
+            statusAccessibilityId: "house-spigot-status-\(spigot.id)-\(outlet.instance)",
+            accessibilityId: "house-spigot-outlet-\(spigot.id)-\(outlet.instance)"
+        ) {
             // When opening, offer a duration menu; when open, a plain "close" toggle.
             if outlet.isOpen {
                 Toggle("", isOn: Binding(
                     get: { true },
-                    set: { _ in store.send(.toggleSpigot(deviceId: spigot.id, instance: outlet.instance, open: false, durationMinutes: nil)) }
+                    set: { _ in
+                        MenereHaptics.softTap()
+                        store.send(.toggleSpigot(deviceId: spigot.id, instance: outlet.instance, open: false, durationMinutes: nil))
+                    }
                 ))
                 .labelsHidden()
                 .tint(Color.bacanGreen)
@@ -590,9 +669,6 @@ public struct HouseView: View {
                 durationMenu(spigot: spigot, outlet: outlet)
             }
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 12)
-        .accessibilityIdentifier("house-spigot-outlet-\(spigot.id)-\(outlet.instance)")
     }
 
     /// The "open for how long" menu — the timed-run options plus "Until turned off". Tapping any option
@@ -634,25 +710,9 @@ public struct HouseView: View {
     // MARK: Garage section (P15-C5)
 
     private func garageSection(_ doors: [GarageDoor]) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Text("Garage".uppercased())
-                .font(.system(.caption, design: .rounded).weight(.semibold))
-                .foregroundStyle(Color.inkSoft)
-                .padding(.bottom, 6)
-            VStack(spacing: 0) {
-                ForEach(Array(doors.enumerated()), id: \.element.id) { idx, door in
-                    garageRow(door)
-                    if idx < doors.count - 1 {
-                        Divider().overlay(Color.inkSoft.opacity(0.15)).padding(.leading, 16)
-                    }
-                }
-            }
-            .background(
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .fill(Color.familySurface)
-            )
+        SmartHomeSection(title: "Garage", data: doors, accessibilityId: "house-garage") { door in
+            garageRow(door)
         }
-        .accessibilityIdentifier("house-garage")
     }
 
     /// One garage door row. It's a security surface, so state reads plainly (a bacanGreen shield when
@@ -660,28 +720,18 @@ public struct HouseView: View {
     /// and the action button is Open (→ confirmation) or Close (direct).
     private func garageRow(_ door: GarageDoor) -> some View {
         let settling = store.garageSettling[door.channel]
-        return HStack(spacing: 12) {
-            Image(systemName: door.isOpen ? "door.garage.open" : "door.garage.closed")
-                .font(.system(size: 18, weight: .semibold))
-                .foregroundStyle(door.isOpen ? Color.terracotta : Color.bacanGreen)
-                .frame(width: 26)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(door.displayName)
-                    .font(.system(.body, design: .rounded).weight(.medium))
-                    .foregroundStyle(Color.ink)
-                    .lineLimit(1)
-                Text(garageStatusText(door: door, settling: settling))
-                    .font(.system(.caption, design: .rounded))
-                    .foregroundStyle(garageStatusColor(door: door, settling: settling))
-                    .contentTransition(.opacity)
-                    .accessibilityIdentifier("house-garage-status-\(door.channel)")
-            }
-            Spacer(minLength: 0)
+        return DeviceRow(
+            icon: door.isOpen ? "door.garage.open" : "door.garage.closed",
+            iconTint: door.isOpen ? Color.terracotta : Color.bacanGreen,
+            iconSize: 18,
+            title: door.displayName,
+            status: garageStatusText(door: door, settling: settling),
+            statusTint: garageStatusColor(door: door, settling: settling),
+            statusAccessibilityId: "house-garage-status-\(door.channel)",
+            accessibilityId: "house-garage-\(door.channel)"
+        ) {
             garageActionButton(door: door, settling: settling)
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 12)
-        .accessibilityIdentifier("house-garage-\(door.channel)")
     }
 
     @ViewBuilder
@@ -699,32 +749,16 @@ public struct HouseView: View {
             .background(Capsule(style: .continuous).fill(Color.inkSoft.opacity(0.12)))
             .accessibilityIdentifier("house-garage-settling-\(door.channel)")
         } else if door.isOpen {
-            garageButton("Close", systemImage: "door.garage.closed", tint: .bacanGreen,
-                         id: "house-garage-close-\(door.channel)") {
+            ControlPill(title: "Close", systemImage: "door.garage.closed", tint: .bacanGreen,
+                        id: "house-garage-close-\(door.channel)") {
                 store.send(.garageCloseRequested(channel: door.channel))
             }
         } else {
-            garageButton("Open", systemImage: "door.garage.open", tint: .terracotta,
-                         id: "house-garage-open-\(door.channel)") {
+            ControlPill(title: "Open", systemImage: "door.garage.open", tint: .terracotta,
+                        id: "house-garage-open-\(door.channel)") {
                 store.send(.garageOpenRequested(channel: door.channel))
             }
         }
-    }
-
-    private func garageButton(_ title: String, systemImage: String, tint: Color, id: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            HStack(spacing: 4) {
-                Image(systemName: systemImage)
-                Text(title)
-            }
-            .font(.system(size: 14, weight: .semibold, design: .rounded))
-            .foregroundStyle(tint)
-            .padding(.horizontal, 12)
-            .frame(height: 32)
-            .background(Capsule(style: .continuous).fill(tint.opacity(0.14)))
-        }
-        .buttonStyle(.pressable)
-        .accessibilityIdentifier(id)
     }
 
     private func garageStatusText(door: GarageDoor, settling: HouseReducer.State.GarageTransition?) -> String {
@@ -747,145 +781,86 @@ public struct HouseView: View {
         let locks = inventory.lockAccessories
         let plugs = inventory.powerAccessories
         let sensors = inventory.sensorAccessories
-        if !locks.isEmpty || !plugs.isEmpty || !sensors.isEmpty || !inventory.accessories.isEmpty {
-            VStack(alignment: .leading, spacing: 12) {
-                Text("HomeKit".uppercased())
-                    .font(.system(.caption, design: .rounded).weight(.semibold))
-                    .foregroundStyle(Color.inkSoft)
-
-                if !locks.isEmpty {
-                    homekitCard(locks.map { lockRow($0) })
-                }
-                if !plugs.isEmpty {
-                    homekitCard(plugs.map { plugRow($0) })
-                }
-                if !sensors.isEmpty {
-                    homekitCard(sensors.map { sensorRow($0) })
-                }
-                // "All HomeKit devices" — the superpower-discovery surface (read-only, every accessory).
-                homekitCard([AnyView(inventoryLinkRow(count: inventory.accessories.count))])
-            }
-            .accessibilityIdentifier("house-homekit")
+        VStack(alignment: .leading, spacing: 12) {
+            SmartHomeSectionHeader(title: "HomeKit")
+            // Each sub-group is a homogeneous DeviceCard — no more AnyView erasure (the rows return
+            // concrete DeviceRow types).
+            if !locks.isEmpty { DeviceCard(data: locks) { lockRow($0) } }
+            if !plugs.isEmpty { DeviceCard(data: plugs) { plugRow($0) } }
+            if !sensors.isEmpty { DeviceCard(data: sensors) { sensorRow($0) } }
+            // "All HomeKit devices" — the superpower-discovery surface (read-only, every accessory).
+            SmartHomeCard { inventoryLinkRow(count: inventory.accessories.count) }
         }
-    }
-
-    /// A rounded card wrapping a set of already-built rows with dividers between them.
-    private func homekitCard(_ rows: [AnyView]) -> some View {
-        VStack(spacing: 0) {
-            ForEach(Array(rows.enumerated()), id: \.offset) { idx, row in
-                row
-                if idx < rows.count - 1 {
-                    Divider().overlay(Color.inkSoft.opacity(0.15)).padding(.leading, 16)
-                }
-            }
-        }
-        .background(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .fill(Color.familySurface)
-        )
+        .accessibilityIdentifier("house-homekit")
     }
 
     /// A door-lock row: state (green shield when locked / terracotta when unlocked) + a Lock/Unlock button.
     /// Unlock routes through the confirmation dialog; Lock commits directly.
-    private func lockRow(_ accessory: HKAccessory) -> AnyView {
+    private func lockRow(_ accessory: HKAccessory) -> some View {
         let locked = accessory.lockIsLocked ?? true
-        return AnyView(
-            HStack(spacing: 12) {
-                Image(systemName: locked ? "lock.fill" : "lock.open.fill")
-                    .font(.system(size: 18, weight: .semibold))
-                    .foregroundStyle(locked ? Color.bacanGreen : Color.terracotta)
-                    .frame(width: 26)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(accessory.name)
-                        .font(.system(.body, design: .rounded).weight(.medium))
-                        .foregroundStyle(Color.ink)
-                        .lineLimit(1)
-                    Text(locked ? "Locked" : "Unlocked")
-                        .font(.system(.caption, design: .rounded))
-                        .foregroundStyle(locked ? Color.bacanGreen : Color.terracotta)
-                        .accessibilityIdentifier("house-homekit-lock-status-\(accessory.id)")
+        return DeviceRow(
+            icon: locked ? "lock.fill" : "lock.open.fill",
+            iconTint: locked ? Color.bacanGreen : Color.terracotta,
+            iconSize: 18,
+            title: accessory.name,
+            status: locked ? "Locked" : "Unlocked",
+            statusTint: locked ? Color.bacanGreen : Color.terracotta,
+            statusAccessibilityId: "house-homekit-lock-status-\(accessory.id)",
+            accessibilityId: "house-homekit-lock-\(accessory.id)-row"
+        ) {
+            if locked {
+                ControlPill(title: "Unlock", systemImage: "lock.open", tint: .terracotta,
+                            id: "house-homekit-unlock-\(accessory.id)") {
+                    store.send(.homekitUnlockRequested(accessoryId: accessory.id))
                 }
-                Spacer(minLength: 0)
-                if locked {
-                    homekitPill("Unlock", systemImage: "lock.open", tint: .terracotta,
-                                id: "house-homekit-unlock-\(accessory.id)") {
-                        store.send(.homekitUnlockRequested(accessoryId: accessory.id))
-                    }
-                } else {
-                    homekitPill("Lock", systemImage: "lock", tint: .bacanGreen,
-                                id: "house-homekit-lock-\(accessory.id)") {
-                        store.send(.homekitLockRequested(accessoryId: accessory.id))
-                    }
+            } else {
+                ControlPill(title: "Lock", systemImage: "lock", tint: .bacanGreen,
+                            id: "house-homekit-lock-\(accessory.id)") {
+                    store.send(.homekitLockRequested(accessoryId: accessory.id))
                 }
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 12)
-            .accessibilityIdentifier("house-homekit-lock-\(accessory.id)-row")
-        )
+        }
     }
 
     /// A smart-plug / switch row: name + on/off status + a power toggle.
-    private func plugRow(_ accessory: HKAccessory) -> AnyView {
+    private func plugRow(_ accessory: HKAccessory) -> some View {
         let on = accessory.powerIsOn ?? false
-        return AnyView(
-            HStack(spacing: 12) {
-                Image(systemName: "powerplug.fill")
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundStyle(on ? Color.bacanGreen : Color.inkSoft)
-                    .frame(width: 22)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(accessory.name)
-                        .font(.system(.body, design: .rounded).weight(.medium))
-                        .foregroundStyle(Color.ink)
-                        .lineLimit(1)
-                    Text(on ? "On" : "Off")
-                        .font(.system(.caption, design: .rounded))
-                        .foregroundStyle(on ? Color.bacanGreen : Color.inkSoft)
-                        .accessibilityIdentifier("house-homekit-plug-status-\(accessory.id)")
+        return DeviceRow(
+            icon: "powerplug.fill",
+            iconTint: on ? Color.bacanGreen : Color.inkSoft,
+            title: accessory.name,
+            status: on ? "On" : "Off",
+            statusTint: on ? Color.bacanGreen : Color.inkSoft,
+            statusAccessibilityId: "house-homekit-plug-status-\(accessory.id)",
+            accessibilityId: "house-homekit-plug-\(accessory.id)-row"
+        ) {
+            Toggle("", isOn: Binding(
+                get: { on },
+                set: { _ in
+                    MenereHaptics.softTap()
+                    store.send(.homekitToggleOutlet(accessoryId: accessory.id))
                 }
-                Spacer(minLength: 0)
-                Toggle("", isOn: Binding(
-                    get: { on },
-                    set: { _ in store.send(.homekitToggleOutlet(accessoryId: accessory.id)) }
-                ))
-                .labelsHidden()
-                .tint(Color.bacanGreen)
-                .accessibilityIdentifier("house-homekit-plug-toggle-\(accessory.id)")
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 12)
-            .accessibilityIdentifier("house-homekit-plug-\(accessory.id)-row")
-        )
+            ))
+            .labelsHidden()
+            .tint(Color.bacanGreen)
+            .accessibilityIdentifier("house-homekit-plug-toggle-\(accessory.id)")
+        }
     }
 
     /// A read-only sensor row: temperature (°F) or contact (open/closed).
-    private func sensorRow(_ accessory: HKAccessory) -> AnyView {
-        AnyView(
-            HStack(spacing: 12) {
-                Image(systemName: accessory.hasService(.contactSensor) ? "sensor.fill" : "thermometer.medium")
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundStyle(Color.inkSoft)
-                    .frame(width: 22)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(accessory.name)
-                        .font(.system(.body, design: .rounded).weight(.medium))
-                        .foregroundStyle(Color.ink)
-                        .lineLimit(1)
-                    Text(accessory.room ?? "HomeKit")
-                        .font(.system(.caption, design: .rounded))
-                        .foregroundStyle(Color.inkSoft)
-                }
-                Spacer(minLength: 0)
-                Text(sensorReading(accessory))
-                    .font(.system(.title3, design: .rounded).weight(.semibold))
-                    .foregroundStyle(Color.ink)
-                    .monospacedDigit()
-                    .accessibilityIdentifier("house-homekit-sensor-value-\(accessory.id)")
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 12)
-            .accessibilityIdentifier("house-homekit-sensor-\(accessory.id)-row")
-        )
+    private func sensorRow(_ accessory: HKAccessory) -> some View {
+        DeviceRow(
+            icon: accessory.hasService(.contactSensor) ? "sensor.fill" : "thermometer.medium",
+            title: accessory.name,
+            status: accessory.room ?? "HomeKit",
+            accessibilityId: "house-homekit-sensor-\(accessory.id)-row"
+        ) {
+            Text(sensorReading(accessory))
+                .font(.system(.title3, design: .rounded).weight(.semibold))
+                .foregroundStyle(Color.ink)
+                .monospacedDigit()
+                .accessibilityIdentifier("house-homekit-sensor-value-\(accessory.id)")
+        }
     }
 
     private func sensorReading(_ accessory: HKAccessory) -> String {
@@ -898,52 +873,24 @@ public struct HouseView: View {
         return "—"
     }
 
-    private func inventoryLinkRow(count: Int) -> AnyView {
-        AnyView(
-            NavigationLink {
-                HomeKitInventoryView(store: store)
-            } label: {
-                HStack(spacing: 12) {
-                    Image(systemName: "square.grid.2x2.fill")
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundStyle(Color.bacanGreen)
-                        .frame(width: 22)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("All HomeKit devices")
-                            .font(.system(.body, design: .rounded).weight(.medium))
-                            .foregroundStyle(Color.ink)
-                        Text("\(count) accessor\(count == 1 ? "y" : "ies")")
-                            .font(.system(.caption, design: .rounded))
-                            .foregroundStyle(Color.inkSoft)
-                    }
-                    Spacer(minLength: 0)
-                    Image(systemName: "chevron.right")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(Color.inkSoft.opacity(0.6))
-                }
-                .contentShape(Rectangle())
-                .padding(.horizontal, 16)
-                .padding(.vertical, 12)
+    private func inventoryLinkRow(count: Int) -> some View {
+        NavigationLink {
+            HomeKitInventoryView(store: store)
+        } label: {
+            DeviceRow(
+                icon: "square.grid.2x2.fill",
+                iconTint: .bacanGreen,
+                title: "All HomeKit devices",
+                status: "\(count) accessor\(count == 1 ? "y" : "ies")"
+            ) {
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(Color.inkSoft.opacity(0.6))
             }
-            .buttonStyle(.plain)
-            .accessibilityIdentifier("house-homekit-all-devices")
-        )
-    }
-
-    private func homekitPill(_ title: String, systemImage: String, tint: Color, id: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            HStack(spacing: 4) {
-                Image(systemName: systemImage)
-                Text(title)
-            }
-            .font(.system(size: 14, weight: .semibold, design: .rounded))
-            .foregroundStyle(tint)
-            .padding(.horizontal, 12)
-            .frame(height: 32)
-            .background(Capsule(style: .continuous).fill(tint.opacity(0.14)))
+            .contentShape(Rectangle())
         }
-        .buttonStyle(.pressable)
-        .accessibilityIdentifier(id)
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("house-homekit-all-devices")
     }
 
     // MARK: Room row
@@ -993,7 +940,10 @@ public struct HouseView: View {
 
             Toggle("", isOn: Binding(
                 get: { room.anyOn },
-                set: { _ in store.send(.toggleRoom(bridgeId: bridgeId, roomId: room.id)) }
+                set: { _ in
+                    MenereHaptics.softTap()
+                    store.send(.toggleRoom(bridgeId: bridgeId, roomId: room.id))
+                }
             ))
             .labelsHidden()
             .tint(Color.bacanGreen)
@@ -1071,7 +1021,10 @@ struct RoomDetailView: View {
                 Spacer()
                 Toggle("", isOn: Binding(
                     get: { room.anyOn },
-                    set: { _ in store.send(.toggleRoom(bridgeId: bridgeId, roomId: roomId)) }
+                    set: { _ in
+                        MenereHaptics.softTap()
+                        store.send(.toggleRoom(bridgeId: bridgeId, roomId: roomId))
+                    }
                 ))
                 .labelsHidden()
                 .tint(Color.bacanGreen)
@@ -1147,7 +1100,10 @@ struct RoomDetailView: View {
                 Spacer()
                 Toggle("", isOn: Binding(
                     get: { light.isOn },
-                    set: { _ in store.send(.toggleLight(bridgeId: bridgeId, lightId: light.id)) }
+                    set: { _ in
+                        MenereHaptics.softTap()
+                        store.send(.toggleLight(bridgeId: bridgeId, lightId: light.id))
+                    }
                 ))
                 .labelsHidden()
                 .tint(Color.bacanGreen)

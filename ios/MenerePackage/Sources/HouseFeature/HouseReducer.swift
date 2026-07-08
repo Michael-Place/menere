@@ -38,6 +38,23 @@ public struct HouseReducer {
         /// The scene id whose recall just succeeded — drives the room-detail success haptic.
         public var recalledScene: String?
 
+        // MARK: Per-section load tracking (Wave 1)
+        /// Each subsystem sets its flag when its FIRST fetch lands (even when the result is empty). Paired
+        /// with config presence this is what lets the view tell *configured-but-unreachable* (loaded &&
+        /// empty && configured → a dimmed "Offline" badge, section stays visible) apart from
+        /// *not-configured* (section hides) and *still-loading* (a spinner badge). Derived purely from
+        /// config presence + fetch success — never an invented hardware probe.
+        public var hueLoaded = false
+        public var lutronLoaded = false
+        public var sonosLoaded = false
+        public var nestLoaded = false
+        public var hubspaceLoaded = false
+        public var garageLoaded = false
+        public var homekitLoaded = false
+        /// Bumped whenever an optimistic write reverts (the device didn't answer) — the view watches this
+        /// with `.errorHaptic` + a transient toast so a failed tap is no longer an invisible no-op.
+        public var writeErrorTick = 0
+
         // MARK: Lutron shades (P15-C1)
         /// The household's Lutron config (nil = no shades). Stable for the screen's lifetime.
         public var lutronConfig: LutronConfig?
@@ -169,6 +186,138 @@ public struct HouseReducer {
                 .filter { $0.groupId == roomId }
                 .sorted { $0.name < $1.name }
         }
+
+        // MARK: Section status (Wave 1)
+
+        /// Fold (configured?, loaded?, empty?) into the four-way ``DeviceStatus`` the header badge reads.
+        private func status(configured: Bool, loaded: Bool, isEmpty: Bool) -> DeviceStatus {
+            guard configured else { return .notConfigured }
+            if !loaded { return .loading }
+            return isEmpty ? .unreachable : .ok
+        }
+
+        /// Hue is "configured" once any bridge doc exists; unreachable when the read returned no bridges.
+        public var hueStatus: DeviceStatus {
+            status(configured: !config.bridges.isEmpty, loaded: hueLoaded, isEmpty: bridges.isEmpty)
+        }
+        public var lutronStatus: DeviceStatus {
+            status(configured: lutronConfig != nil, loaded: lutronLoaded, isEmpty: shades.isEmpty)
+        }
+        /// Sonos needs no pairing (nil config still discovers), so it's only "configured" with an explicit
+        /// config; a nil-config discovery that finds nothing simply doesn't show (notConfigured).
+        public var sonosStatus: DeviceStatus {
+            status(configured: sonosConfig != nil, loaded: sonosLoaded, isEmpty: sonosGroups.isEmpty)
+        }
+        public var nestStatus: DeviceStatus {
+            status(configured: nestConfig?.isConnected == true, loaded: nestLoaded, isEmpty: thermostats.isEmpty)
+        }
+        public var hubspaceStatus: DeviceStatus {
+            status(configured: hubspaceConfig?.isConnected == true, loaded: hubspaceLoaded, isEmpty: spigots.isEmpty)
+        }
+        /// Garage is configured when either the Meross opener is set up OR HomeKit has claimed the section.
+        public var garageStatus: DeviceStatus {
+            let configured = merossConfig?.isConnected == true || garageSource == .homeKit
+            return status(configured: configured, loaded: garageLoaded || homekitLoaded, isEmpty: garageDoors.isEmpty)
+        }
+        /// HomeKit is configured once the app is authorized (or a mock config forces it); unreachable when
+        /// the authorized Home surfaced no controllable accessories.
+        public var homekitStatus: DeviceStatus {
+            let configured = homekitAuth == .authorized || homekitConfig != nil
+            // "Empty" = the authorized Home surfaced no accessories at all. A Home with only lights (Hue
+            // owns those) still shows the section for its "All HomeKit devices" discovery affordance.
+            let empty = homekitInventory.map { $0.accessories.isEmpty } ?? true
+            return status(configured: configured, loaded: homekitLoaded, isEmpty: empty)
+        }
+
+        // MARK: House-at-a-glance (Wave 1)
+
+        /// Labeled temperature readings for the glance header: every *labeled* Hue thermometer plus each
+        /// Nest thermostat's ambient. `(label, °F)`, in a stable order (Hue first, then climate).
+        public var glanceTemperatures: [(label: String, tempF: Double)] {
+            var out: [(label: String, tempF: Double)] = []
+            for snap in bridges {
+                let labels = config.sensorLabels(for: snap.bridge.bridgeId)
+                for t in snap.temperatures {
+                    if let label = labels[t.sensorId] { out.append((label, t.tempF)) }
+                }
+            }
+            for thermostat in thermostats {
+                if let ambient = thermostat.ambientF { out.append((thermostat.roomName, ambient)) }
+            }
+            return out
+        }
+
+        /// Reachable lights currently on, summed across bridges — the header's lights-on count.
+        public var lightsOnCount: Int {
+            bridges.flatMap(\.lights).filter { $0.isOn && $0.reachable }.count
+        }
+
+        /// True when a Hue bridge is reachable (so "All lights off" / "Goodnight" can actually do something).
+        public var hasReachableLights: Bool { !bridges.isEmpty }
+
+        /// The night/bedtime ritual, if the family curated one — recalled as the second half of "Goodnight".
+        public var nightRitual: HueRitual? {
+            config.rituals.first { r in
+                let hay = (r.key + " " + r.label).lowercased()
+                return hay.contains("night") || hay.contains("bed")
+            }
+        }
+
+        /// Ritual chips surfaced at the top of the House screen. Prefer the family-curated rituals; when
+        /// none exist, fall back to the distinct scene names across reachable bridges so there's still a
+        /// one-tap scene surface up top (matched by name to its bridge/group for recall).
+        public var glanceScenes: [GlanceScene] {
+            if !config.rituals.isEmpty {
+                return config.rituals.compactMap { ritual in
+                    guard config.bridge(ritual.bridgeId) != nil else { return nil }
+                    return GlanceScene(id: ritual.id, name: ritual.label, bridgeId: ritual.bridgeId,
+                                       groupId: ritual.groupId, sceneId: ritual.sceneId)
+                }
+            }
+            var seen = Set<String>()
+            var out: [GlanceScene] = []
+            for snap in bridges {
+                for scene in snap.scenes.sorted(by: { $0.name < $1.name }) {
+                    guard let groupId = scene.groupId, !seen.contains(scene.name) else { continue }
+                    seen.insert(scene.name)
+                    out.append(GlanceScene(id: "\(snap.bridge.bridgeId)/\(scene.id)", name: scene.name,
+                                           bridgeId: snap.bridge.bridgeId, groupId: groupId, sceneId: scene.id))
+                }
+            }
+            return out
+        }
+
+        /// True when NOTHING is set up (no config across any subsystem, nothing discovered) — drives the
+        /// top-level "Nothing set up yet" empty state.
+        public var isAnythingConfigured: Bool {
+            !config.bridges.isEmpty || lutronConfig != nil || sonosConfig != nil
+                || nestConfig?.isConnected == true || hubspaceConfig?.isConnected == true
+                || merossConfig?.isConnected == true || homekitConfig != nil
+                || !sonosGroups.isEmpty || homekitInventory != nil
+        }
+
+        /// True only on the very first paint with no seeded snapshot — drives the loading skeleton. Once
+        /// Today has seeded `bridges`, or any section has answered, this is false.
+        public var isInitialLoading: Bool {
+            isRefreshing && !hueLoaded && !lutronLoaded && !sonosLoaded && !nestLoaded
+                && !hubspaceLoaded && !garageLoaded && !homekitLoaded
+                && bridges.isEmpty && shades.isEmpty && sonosGroups.isEmpty
+                && thermostats.isEmpty && spigots.isEmpty && garageDoors.isEmpty && homekitInventory == nil
+        }
+
+        /// True when Hue is configured but no bridge answered (seeded-away) — drives the "Not home —
+        /// showing last known" banner.
+        public var isAwayFromHome: Bool { hueStatus == .unreachable }
+    }
+
+    /// A one-tap scene chip surfaced at the top of the House screen (a curated ritual, or a fallback
+    /// distinct scene). Carries everything `recallScene` needs.
+    public struct GlanceScene: Equatable, Sendable, Identifiable {
+        public let id: String
+        public let name: String
+        public let bridgeId: String
+        public let groupId: String
+        public let sceneId: String
     }
 
     public enum Action: Equatable {
@@ -186,6 +335,16 @@ public struct HouseReducer {
         case recallScene(bridgeId: String, groupId: String, sceneId: String)
         case sceneRecalled(sceneId: String)
         case clearSceneSuccess(sceneId: String)
+
+        // House-at-a-glance master actions (Wave 1)
+        /// Turn every Hue room/zone group off (optimistic) — the header's "All lights off".
+        case allLightsOff
+        /// All-off + recall any curated night/bedtime ritual — the header's "Goodnight".
+        case goodnight
+        /// An optimistic write reverted (the device didn't answer). Bumps `writeErrorTick` so the view can
+        /// surface the subtle toast + error haptic. Purely a feedback signal — the truth-restore re-read is
+        /// dispatched alongside it by the failing handler.
+        case writeFailed
 
         // Lutron shades (P15-C1)
         case shadesReloaded([LutronShade])
@@ -326,7 +485,9 @@ public struct HouseReducer {
                     // One topology read + a now-playing/volume read per group; empty = silent degrade.
                     .run { send in
                         let speakers = (try? await sonos.discover(sonosConfig)) ?? []
-                        guard !speakers.isEmpty else { return }
+                        // Always send (even empty) so a *configured* Sonos that discovers nothing reads as
+                        // unreachable rather than spinning forever (Wave 1: distinguishable states).
+                        guard !speakers.isEmpty else { await send(.sonosReloaded([])); return }
                         var groups: [SonosGroup] = []
                         for row in SonosGroup.assemble(from: speakers, order: sonosConfig?.roomOrder) {
                             let np = (try? await sonos.nowPlaying(sonosConfig, row.coordinator)) ?? SonosNowPlaying(state: .stopped)
@@ -367,10 +528,12 @@ public struct HouseReducer {
 
             case let .houseReloaded(snapshots):
                 state.isRefreshing = false
+                state.hueLoaded = true
                 state.bridges = snapshots
                 return .none
 
             case let .shadesReloaded(shades):
+                state.lutronLoaded = true
                 state.shades = shades
                 return .none
 
@@ -415,6 +578,7 @@ public struct HouseReducer {
             // MARK: Sonos speakers (P15-C2)
 
             case let .sonosReloaded(groups):
+                state.sonosLoaded = true
                 state.sonosGroups = groups
                 return .none
 
@@ -451,6 +615,7 @@ public struct HouseReducer {
             // MARK: Nest thermostat (P15-C3)
 
             case let .nestReloaded(thermostats):
+                state.nestLoaded = true
                 state.thermostats = thermostats
                 return .none
 
@@ -485,6 +650,7 @@ public struct HouseReducer {
             // MARK: Hubspace water timer (P15-C4)
 
             case let .spigotsReloaded(spigots):
+                state.hubspaceLoaded = true
                 state.spigots = spigots
                 return .none
 
@@ -511,7 +677,7 @@ public struct HouseReducer {
                 state.spigots[si] = HubspaceSpigot(id: spigot.id, name: spigot.name, outlets: outlets, batteryPercent: spigot.batteryPercent)
                 return .run { send in
                     do { try await hubspace.setSpigot(config, deviceId, instance, open, durationMinutes) }
-                    catch { await send(.waterPoll) }   // silent truth-restore
+                    catch { await send(.writeFailed); await send(.waterPoll) }   // toast + truth-restore
                 }
 
             // MARK: Meross/Refoss garage opener (P15-C5)
@@ -520,6 +686,7 @@ public struct HouseReducer {
                 // Meross-sourced re-read. If HomeKit has claimed the Garage section (precedence), ignore
                 // the Meross truth so the two sources never fight over `garageDoors`.
                 guard state.garageSource == .meross else { return .none }
+                state.garageLoaded = true
                 state.garageDoors = doors
                 return .none
 
@@ -557,7 +724,8 @@ public struct HouseReducer {
                     return .run { send in
                         do { try await meross.setGarage(config, channel, open) }
                         catch {
-                            // Write failed — restore truth immediately (clear settling + re-read).
+                            // Write failed — toast + restore truth immediately (clear settling + re-read).
+                            await send(.writeFailed)
                             await send(.garageSettleElapsed(channel: channel))
                             return
                         }
@@ -577,6 +745,7 @@ public struct HouseReducer {
                     return .run { send in
                         do { try await homekit.setCharacteristic(config, accessoryId, .garageDoorOpener, .targetDoorState, target) }
                         catch {
+                            await send(.writeFailed)
                             await send(.garageSettleElapsed(channel: channel))
                             return
                         }
@@ -623,9 +792,13 @@ public struct HouseReducer {
 
             case let .homekitAuthLoaded(status):
                 state.homekitAuth = status
+                // When not authorized the inventory read never fires, so conclude the first-load here so
+                // the section doesn't spin forever (it just won't render unless a config forces it).
+                if status != .authorized { state.homekitLoaded = true }
                 return .none
 
             case let .homekitInventoryLoaded(inventory):
+                state.homekitLoaded = true
                 state.homekitInventory = inventory
                 guard let inventory else { return .none }
                 // GARAGE PRECEDENCE (P15-C7): a HomeKit garage-door opener takes over the Garage section
@@ -660,7 +833,7 @@ public struct HouseReducer {
                 let config = state.homekitConfig
                 return .run { send in
                     do { try await homekit.setCharacteristic(config, accessoryId, serviceType, .powerState, .bool(newOn)) }
-                    catch { await send(.homekitLoad) }   // silent truth-restore
+                    catch { await send(.writeFailed); await send(.homekitLoad) }   // toast + truth-restore
                 }
 
             case let .homekitLockRequested(accessoryId):
@@ -687,7 +860,7 @@ public struct HouseReducer {
                 let config = state.homekitConfig
                 return .run { send in
                     do { try await homekit.setCharacteristic(config, accessoryId, .lockMechanism, .targetLockState, .int(secured ? 1 : 0)) }
-                    catch { await send(.homekitLoad) }   // silent truth-restore
+                    catch { await send(.writeFailed); await send(.homekitLoad) }   // toast + truth-restore
                 }
 
             case let .toggleRoom(bridgeId, roomId):
@@ -703,7 +876,7 @@ public struct HouseReducer {
                 }
                 return .run { send in
                     do { try await hue.setGroupState(bridge, roomId, newOn, nil) }
-                    catch { await send(.refresh) }   // silent truth-restore
+                    catch { await send(.writeFailed); await send(.refresh) }   // toast + truth-restore
                 }
 
             case let .toggleLight(bridgeId, lightId):
@@ -716,7 +889,7 @@ public struct HouseReducer {
                 recomputeRoomAnyOn(&state, bridgeIndex: bi)
                 return .run { send in
                     do { try await hue.setLightState(bridge, lightId, newOn, nil) }
-                    catch { await send(.refresh) }
+                    catch { await send(.writeFailed); await send(.refresh) }
                 }
 
             case let .roomBrightnessChanged(bridgeId, roomId, percent):
@@ -788,8 +961,47 @@ public struct HouseReducer {
             case let .clearSceneSuccess(sceneId):
                 if state.recalledScene == sceneId { state.recalledScene = nil }
                 return .none
+
+            case .allLightsOff:
+                return Self.turnAllLightsOff(&state, hue: hue)
+
+            case .goodnight:
+                // All-off, then recall the curated night/bedtime ritual (if any) so "Goodnight" lands the
+                // house on its bedtime look rather than pitch dark.
+                let off = Self.turnAllLightsOff(&state, hue: hue)
+                guard let ritual = state.nightRitual else { return off }
+                return .merge(
+                    off,
+                    .send(.recallScene(bridgeId: ritual.bridgeId, groupId: ritual.groupId, sceneId: ritual.sceneId))
+                )
+
+            case .writeFailed:
+                state.writeErrorTick += 1
+                return .none
             }
         }
+    }
+
+    /// Turn every Hue room/zone group off — the shared body of "All lights off" and "Goodnight". Flips
+    /// room `anyOn` + member-light `isOn` optimistically, then fires one `setGroupState(off)` per group
+    /// across every reachable bridge (reusing the exact verb the P14 agent harness wraps).
+    private static func turnAllLightsOff(_ state: inout State, hue: HueClient) -> Effect<Action> {
+        var effects: [Effect<Action>] = []
+        for bi in state.bridges.indices {
+            guard let bridge = state.config.bridge(state.bridges[bi].bridge.bridgeId) else { continue }
+            for ri in state.bridges[bi].rooms.indices {
+                state.bridges[bi].rooms[ri].anyOn = false
+                let roomId = state.bridges[bi].rooms[ri].id
+                effects.append(.run { send in
+                    do { try await hue.setGroupState(bridge, roomId, false, nil) }
+                    catch { await send(.writeFailed); await send(.refresh) }
+                })
+            }
+            for li in state.bridges[bi].lights.indices where state.bridges[bi].lights[li].reachable {
+                state.bridges[bi].lights[li].isOn = false
+            }
+        }
+        return effects.isEmpty ? .none : .merge(effects)
     }
 
     /// Optimistically rewrite one characteristic's value across every matching service on a HomeKit
