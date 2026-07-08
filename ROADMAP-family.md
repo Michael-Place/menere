@@ -533,6 +533,22 @@ Oliver" needs our OWN on-device Vision face clustering (FL4).
   (ties to V5 ingestion), scene/content tagging.
 Sequence: FL1 foundation solo (project.yml + new module), then FL2 + FL3 parallel on top.
 
+# Wine — reframe from CELLAR to JOURNAL (2026-07-07, Michael)
+The "cellar" model doesn't fit the Place family: at most ~6 bottles in a holder, drink-then-replace
+— it's about JOURNALING the wines we have, not managing/aging a cellar. Also the segmented control
+is heavy-handed + "never styled correctly" → remove it.
+- Root becomes a **tasting-journal feed** (wine + producer + vintage + photo + rating + note +
+  occasion/date), newest first — the heart of the feature.
+- Optional lightweight **"On hand" (≤6)** strip for the current holder (drink one → it becomes a
+  journal entry) — pending Michael's call (pure journal vs journal + on-hand).
+- **Remove/de-emphasize cellar-management:** the segmented control, the drink-window/aging gauge,
+  provenance emphasis, the "by type" cellar analytics. KEEP journaling-relevant bits (rating,
+  red/white/rosé type, photos, scan-a-label auto-fill).
+- Rename Cellar → "Wine" / "Wine journal"; update the Lists pinned card + nav.
+- Neighborhood when built: CellarFeature (root → journal-first), JournalFeature (tastings become
+  primary), BottleCardFeature, ScanFeature, MenereUI wine components (drop segmented control + gauge).
+  SEQUENCE AFTER the Lists-overview build (both touch ListsFeature wine state/entry).
+
 # Lists tab — overview-focused root (2026-07-07, Michael requested)
 A 2nd pass on the **Lists tab ROOT** to make it overview-focused like the other tab roots (the Today
 dashboard, the Home hub — P16/P17), instead of today's flat list-of-lists + pinned feature rows
