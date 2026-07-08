@@ -533,6 +533,19 @@ Oliver" needs our OWN on-device Vision face clustering (FL4).
   (ties to V5 ingestion), scene/content tagging.
 Sequence: FL1 foundation solo (project.yml + new module), then FL2 + FL3 parallel on top.
 
+# Lists tab — overview-focused root (2026-07-07, Michael requested)
+A 2nd pass on the **Lists tab ROOT** to make it overview-focused like the other tab roots (the Today
+dashboard, the Home hub — P16/P17), instead of today's flat list-of-lists + pinned feature rows
+(Cellar, Family Brain, Money, Projects). Give it a hub root:
+- **Rich module cards** for the pinned surfaces (Cellar / Family Brain / Money / Projects) with live
+  preview content — mirror the P16-C2 Home hub cards — instead of plain navigation rows.
+- **Lists overview:** the family's actual lists grouped by type (grocery / packing / gift /
+  home-projects / wishlist / standard), each with progress (checked/total) + last-updated, surfacing
+  the most active / what needs attention, plus a quick-add. Calm hierarchy, glances, breathing room —
+  consistent with the Today redesign + Home hub patterns.
+- Lose NO destinations: tap a list → its detail; the pinned features unchanged behind their cards.
+- Neighborhood when built: ListsFeature (+ reuse MenereUI hub-card patterns). Solo, mostly assembly.
+
 # Projects — family initiative workspaces (2026-07-07, Michael requested)
 A rich gathering-place per big undertaking (pool build, Oliver's school search, reno, trip) —
 photos, quotes/docs, links, contacts, tasks, budget, dates collect around ONE goal. Grows the
