@@ -40,6 +40,9 @@ public struct TodayView: View {
     /// The single injected "now" that drives every time-aware decision (schedule split, dinner
     /// evening state, greeting). Reads the sim/device clock live; overridable in previews/tests.
     @Dependency(\.date.now) private var now
+    /// Respect Reduce Motion — the active→done and undo→active row moves cross-fade calmly (no spring)
+    /// when it's on. The "Done today" section is deliberately quiet regardless.
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     public init(store: StoreOf<TodayReducer>) {
         self.store = store
@@ -66,11 +69,16 @@ public struct TodayView: View {
                 // prioritized, scannable list (each row keeps its inline action). Empty = all caught up.
                 needsYouCard.tabEntrance(.cascade, index: 2)
 
+                // (c2) DONE TODAY — what's been completed today, kept visible in a calm, struck-through
+                // state until day rollover so a just-finished item never just vanishes (Michael's ask).
+                // Every row is one tap to undo. Hidden only when there are genuinely zero completions today.
+                doneTodayCard.tabEntrance(.cascade, index: 3)
+
                 // (d) TODAY'S PLAN — the week strip, today's schedule, and tonight's dinner in one card.
-                todaysPlanCard.tabEntrance(.cascade, index: 3)
+                todaysPlanCard.tabEntrance(.cascade, index: 4)
 
                 // (e) GLANCES — quieter, de-emphasized: the house, the family, and slim shortcuts.
-                glancesSection.tabEntrance(.pop, index: 4)
+                glancesSection.tabEntrance(.pop, index: 5)
             }
             .padding(.horizontal)
             .padding(.vertical, 12)
@@ -366,6 +374,122 @@ public struct TodayView: View {
             }
         }
         .accessibilityIdentifier("today-needs-you-caughtup")
+    }
+
+    // MARK: Done today (Michael feedback 2026-07-07)
+
+    /// One settled completion shown in the calm "Done today" list. Purely a view model derived from
+    /// state — its `kind` carries what to undo (the care task, or the chore's un-complete).
+    private struct DoneRow: Identifiable {
+        enum Kind: Equatable {
+            case care(itemID: String, taskID: String)
+            case chore(Chore)
+        }
+        let id: String
+        let title: String
+        /// When it was finished — the list sorts newest-first and the caption reads off this.
+        let doneAt: Date
+        /// "done {time} · {who}" (or just the time when the doer is unknown).
+        let caption: String
+        let kind: Kind
+    }
+
+    /// Everything the family completed TODAY, newest first. **Derived** from the same live state the
+    /// active list reads — a care task whose `lastDoneAt` is today, or a chore completed today — so at
+    /// tomorrow's rollover this list is empty automatically: no persistence, no schema, no manual clear.
+    /// A completion still inside its ~1.6s celebration/undo window is deliberately excluded (it's held,
+    /// uncommitted, and still celebrating up in "Needs you today").
+    private func doneToday() -> [DoneRow] {
+        var rows: [DoneRow] = []
+        for item in store.careItems {
+            for task in item.tasks {
+                guard let done = task.lastDoneAt, cal.isDateInToday(done) else { continue }
+                if store.careCelebration?.itemID == item.id,
+                   store.careCelebration?.taskID == task.id { continue }
+                rows.append(DoneRow(
+                    id: "care-\(item.id)-\(task.id)",
+                    title: item.name,
+                    doneAt: done,
+                    caption: doneCaption(at: done, by: task.lastDoneBy),
+                    kind: .care(itemID: item.id, taskID: task.id)
+                ))
+            }
+        }
+        for chore in store.chores where chore.isCompleted {
+            guard let at = chore.completedAt, cal.isDateInToday(at) else { continue }
+            rows.append(DoneRow(
+                id: "chore-\(chore.id)",
+                title: chore.title,
+                doneAt: at,
+                caption: doneCaption(at: at, by: chore.completedByMemberID),
+                kind: .chore(chore)
+            ))
+        }
+        return rows.sorted { $0.doneAt > $1.doneAt }
+    }
+
+    /// The quiet "Done today" card — hidden entirely when nothing's been finished today (so an all-done
+    /// day shows only the caught-up card), otherwise a calm, low-contrast list of what got done. It sits
+    /// directly under "Needs you today" and above "Today's plan", and COEXISTS with the caught-up card.
+    @ViewBuilder
+    private var doneTodayCard: some View {
+        let rows = doneToday()
+        if !rows.isEmpty {
+            card {
+                doneTodayHeader(count: rows.count)
+                VStack(spacing: 12) {
+                    ForEach(rows) { doneRowView($0) }
+                }
+            }
+            .accessibilityIdentifier("today-done-today")
+        }
+    }
+
+    private func doneTodayHeader(count: Int) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "checkmark.circle.fill")
+                .font(.subheadline)
+                .foregroundStyle(Color.bacanGreen.opacity(0.75))
+            Text("Done today")
+                .familyTitle(.headline)
+                .foregroundStyle(Color.ink)
+            Spacer()
+            Text("\(count)")
+                .font(.system(.caption, design: .rounded).weight(.bold))
+                .foregroundStyle(Color.inkSoft)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 3)
+                .background(Capsule().fill(Color.inkSoft.opacity(0.12)))
+                .accessibilityIdentifier("today-done-count")
+        }
+    }
+
+    private func doneRowView(_ row: DoneRow) -> some View {
+        DoneTodayRow(title: row.title, caption: row.caption) {
+            // Reuse the existing reversal paths so undo is a true, server-consistent un-do (never a
+            // celebration): care → delete today's journal event; chore → the shared un-complete (reverses
+            // XP), exactly like the Chores tab. Reduce Motion → no spring on the row's hop back.
+            switch row.kind {
+            case let .care(itemID, taskID):
+                store.send(.undoCareDone(itemID: itemID, taskID: taskID),
+                           animation: reduceMotion ? nil : .snappy)
+            case let .chore(chore):
+                store.send(.toggleChore(chore), animation: reduceMotion ? nil : .snappy)
+            }
+        }
+        .accessibilityIdentifier("today-done-undo-\(row.id)")
+    }
+
+    /// "done {time} · {who}" (first name), or just "done {time}" when the doer is unknown.
+    private func doneCaption(at date: Date, by uid: String?) -> String {
+        if let name = memberName(uid) { return "done \(timeString(date)) · \(name)" }
+        return "done \(timeString(date))"
+    }
+
+    /// The doer's first name, looked up in the loaded roster (nil when unknown / unattributed).
+    private func memberName(_ uid: String?) -> String? {
+        guard let uid, let member = store.members.first(where: { $0.id == uid }) else { return nil }
+        return firstName(member.name)
     }
 
     // MARK: Greeting
@@ -1426,6 +1550,52 @@ private struct TodayCareRow: View {
     }
 }
 
+/// A single calm "Done today" row: a filled success check, the item name struck through + dimmed, a
+/// quiet "done {time} · {who}" caption, and an obvious trailing "Undo" chip. The WHOLE row is the undo
+/// target (with a `softTap`, never a celebration) so an accidental completion is one calm tap from being
+/// reversed — the heart of Michael's ask: completed things stay visible and are easy to take back.
+private struct DoneTodayRow: View {
+    let title: String
+    let caption: String
+    let onUndo: () -> Void
+
+    var body: some View {
+        Button {
+            MenereHaptics.softTap()
+            onUndo()
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: "checkmark.circle.fill")
+                    .font(.subheadline)
+                    .foregroundStyle(Color.bacanGreen.opacity(0.7))
+                    .frame(width: 22)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title)
+                        .strikethrough(true, color: Color.inkSoft)
+                        .foregroundStyle(Color.inkSoft)
+                        .lineLimit(1)
+                    Text(caption)
+                        .font(.system(.caption2, design: .rounded))
+                        .foregroundStyle(Color.inkSoft.opacity(0.7))
+                }
+                Spacer()
+                HStack(spacing: 4) {
+                    Image(systemName: "arrow.uturn.backward")
+                    Text("Undo")
+                }
+                .font(.system(.caption2, design: .rounded).weight(.semibold))
+                .foregroundStyle(Color.bacanGreen)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 3)
+                .background(Capsule().fill(Color.bacanGreen.opacity(0.12)))
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.pressable)
+        .accessibilityLabel("Undo \(title)")
+    }
+}
+
 /// A single Family Radar row (P20), shared by the Today card and the Radar detail list so they speak
 /// with one voice. The leading region (icon + humanized label + date chip) is a tap target → opens the
 /// linked document; the trailing region carries the item's one-tap, idempotent action (add-to-calendar
@@ -2132,6 +2302,35 @@ private struct ProjectDeadlineRow: View {
     .padding(16)
     .background(RoundedRectangle(cornerRadius: 18, style: .continuous).fill(Color.familySurface))
     .padding()
+    .background(Color.familyCanvas)
+}
+
+// The calm "Done today" section — completed items kept visible, struck through + dimmed, until day
+// rollover, each one obvious to undo. Renders the row + header chrome standalone (no store), exactly
+// as `doneTodayCard` composes them.
+#Preview("Done today") {
+    ScrollView {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 8) {
+                Image(systemName: "checkmark.circle.fill")
+                    .font(.subheadline)
+                    .foregroundStyle(Color.bacanGreen.opacity(0.75))
+                Text("Done today").familyTitle(.headline).foregroundStyle(Color.ink)
+                Spacer()
+                Text("3")
+                    .font(.system(.caption, design: .rounded).weight(.bold))
+                    .foregroundStyle(Color.inkSoft)
+                    .padding(.horizontal, 8).padding(.vertical, 3)
+                    .background(Capsule().fill(Color.inkSoft.opacity(0.12)))
+            }
+            DoneTodayRow(title: "Monstera", caption: "done 8:14 AM · Valentina") {}
+            DoneTodayRow(title: "Take out the recycling", caption: "done 9:02 AM · Michael") {}
+            DoneTodayRow(title: "Sprinkle's morning meds", caption: "done 7:30 AM") {}
+        }
+        .padding(16)
+        .background(RoundedRectangle(cornerRadius: 18, style: .continuous).fill(Color.familySurface))
+        .padding()
+    }
     .background(Color.familyCanvas)
 }
 #endif

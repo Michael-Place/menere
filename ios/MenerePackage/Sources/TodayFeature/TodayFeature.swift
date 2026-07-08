@@ -299,6 +299,14 @@ public struct TodayReducer {
         /// D1.5 — reverse an accidental care completion: restore the prior stamp + delete its activity,
         /// and cancel the pending commit (the celebration toast's Undo + the tap-to-toggle both route here).
         case undoCareTaskDone(itemID: String, taskID: String)
+        /// "Done today" undo (Michael feedback 2026-07-07): reverse a care completion that has already
+        /// SETTLED into the "Done today" section — its ~1.6s celebration window is long over, so
+        /// `careCelebration` is nil and `undoCareTaskDone` can't help. Reuses the canonical care
+        /// "un-water": delete today's newest journal event via ``CareTask/deleteEvent(id:)``, which
+        /// recomputes `lastDoneAt`/streak from what remains, so the item flips back into "Needs you
+        /// today". Fully revertible, no schema change. Also covers a care task completed today from
+        /// another surface (Home tab) — anything the "done today" list can show can be undone here.
+        case undoCareDone(itemID: String, taskID: String)
         /// D1.5 — "not yet, the soil's still damp": push this care task's next-due out `days` without
         /// marking it done (kind-agnostic snooze via ``CareCompletion/snoozed(item:taskID:days:now:)``).
         case snoozeCareTask(itemID: String, taskID: String, days: Int)
@@ -710,6 +718,28 @@ public struct TodayReducer {
                         if let activityID { try? await persistence.deleteActivity(hid, activityID) }
                     }
                 )
+
+            case let .undoCareDone(itemID, taskID):
+                // Undo from a settled "Done today" row. The completion is committed (no live signal), so
+                // reverse it the canonical way: delete TODAY's newest journal event, which recomputes
+                // `lastDoneAt`/streak from what remains — the item then reads as due again and hops back
+                // into "Needs you today". This fires only from a Done-today row (derived from a today
+                // stamp), so the guard also confirms the newest event actually landed today.
+                guard let (hid, _) = ctx(),
+                      let i = state.careItems.firstIndex(where: { $0.id == itemID }),
+                      let t = state.careItems[i].tasks.firstIndex(where: { $0.id == taskID }),
+                      let latest = state.careItems[i].tasks[t].displayHistory.last,
+                      Calendar.current.isDateInToday(latest.date)
+                else { return .none }
+                @Dependency(\.analytics) var analytics
+                analytics.log("care_marked_done_undone", ["surface": "today_done"])
+                var reverted = state.careItems[i]
+                reverted.tasks[t].deleteEvent(id: latest.id)
+                state.careItems[i] = reverted
+                return .run { [reverted] _ in
+                    @Dependency(\.persistence) var persistence
+                    try await persistence.saveCareItem(hid, reverted)
+                }
 
             case let .snoozeCareTask(itemID, taskID, days):
                 guard let (hid, _) = ctx(),
