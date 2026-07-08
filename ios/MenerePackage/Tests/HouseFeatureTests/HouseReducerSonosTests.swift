@@ -72,4 +72,36 @@ struct HouseReducerSonosTests {
         #expect(await counter.count == 1)   // one SetVolume despite five deltas
         #expect(await counter.last == 50)
     }
+
+    /// Mute toggles the coordinator's mute flag locally before the write lands, and flips back.
+    @Test func muteIsOptimistic() async {
+        let store = TestStore(initialState: makeState()) { HouseReducer() } withDependencies: {
+            $0.sonos = .previewValue
+        }
+        store.exhaustivity = .off
+
+        await store.send(.toggleSonosMute(groupId: SonosFixtures.living.groupKey)) {
+            $0.sonosGroups[0].isMuted = true
+        }
+        await store.send(.toggleSonosMute(groupId: SonosFixtures.living.groupKey)) {
+            $0.sonosGroups[0].isMuted = false
+        }
+    }
+
+    /// Skip fires next/previous, then re-reads now-playing and folds the new track into the row.
+    @Test func skipRereadsNowPlaying() async {
+        let advanced = SonosNowPlaying(title: "So What", artist: "Miles Davis", state: .playing)
+        var client = SonosClient.previewValue
+        client.nowPlaying = { _, _ in advanced }
+
+        let store = TestStore(initialState: makeState()) { HouseReducer() } withDependencies: {
+            $0.sonos = client
+        }
+        store.exhaustivity = .off
+
+        await store.send(.skipSonos(groupId: SonosFixtures.living.groupKey, forward: true))
+        await store.receive(\.sonosTrackReread) {
+            $0.sonosGroups[0].nowPlaying = advanced
+        }
+    }
 }

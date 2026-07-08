@@ -67,6 +67,12 @@ enum SonosSOAP {
         firstValue(of: "CurrentVolume", in: xml).flatMap { Int($0.trimmingCharacters(in: .whitespaces)) }
     }
 
+    /// RenderingControl `GetMute` → `CurrentMute` (`0`/`1` → false/true).
+    static func parseMute(_ xml: String) -> Bool? {
+        guard let raw = firstValue(of: "CurrentMute", in: xml)?.trimmingCharacters(in: .whitespaces) else { return nil }
+        return raw == "1" || raw.lowercased() == "true"
+    }
+
     /// AVTransport `GetPositionInfo` → now-playing. `TrackMetaData` holds an *escaped* DIDL-Lite doc;
     /// unescape it, then pull `dc:title` / `dc:creator` / `upnp:albumArtURI` (album art resolved to an
     /// absolute URL on the speaker).

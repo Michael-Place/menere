@@ -549,7 +549,10 @@ public struct HouseView: View {
     }
 
     private func speakerRow(_ group: SonosGroup) -> some View {
-        VStack(spacing: 8) {
+        // Show the ⏮/⏯/⏭ transport cluster only when the group has a now-playing context (playing OR
+        // paused with a track); a truly idle group (stopped) stays calm with a single play pill.
+        let hasContext = group.nowPlaying.state != .stopped
+        return VStack(spacing: 8) {
             HStack(spacing: 12) {
                 albumArt(group.nowPlaying)
                 VStack(alignment: .leading, spacing: 2) {
@@ -561,19 +564,46 @@ public struct HouseView: View {
                         .font(.system(.caption, design: .rounded))
                         .foregroundStyle(Color.inkSoft)
                         .lineLimit(1)
+                        .contentTransition(.opacity)
                         .accessibilityIdentifier("house-speaker-nowplaying-\(group.id)")
                 }
                 Spacer(minLength: 0)
-                // Play / pause via the shared icon-only ``ControlPill``.
-                IconButton(group.nowPlaying.isPlaying ? "pause.fill" : "play.fill",
-                           id: "house-speaker-playpause-\(group.id)") {
-                    store.send(.toggleSonosPlayback(groupId: group.id))
+                // Transport cluster (prev · play/pause · next) via the shared icon-only ``ControlPill``s
+                // when there's something to skip; otherwise a calm single play pill for an idle group.
+                if hasContext {
+                    HStack(spacing: 6) {
+                        IconButton("backward.fill", id: "house-speaker-prev-\(group.id)") {
+                            store.send(.skipSonos(groupId: group.id, forward: false))
+                        }
+                        IconButton(group.nowPlaying.isPlaying ? "pause.fill" : "play.fill",
+                                   id: "house-speaker-playpause-\(group.id)") {
+                            store.send(.toggleSonosPlayback(groupId: group.id))
+                        }
+                        IconButton("forward.fill", id: "house-speaker-next-\(group.id)") {
+                            store.send(.skipSonos(groupId: group.id, forward: true))
+                        }
+                    }
+                } else {
+                    IconButton(group.nowPlaying.isPlaying ? "pause.fill" : "play.fill",
+                               id: "house-speaker-playpause-\(group.id)") {
+                        store.send(.toggleSonosPlayback(groupId: group.id))
+                    }
                 }
             }
             HStack(spacing: 10) {
-                Image(systemName: "speaker.fill")
-                    .font(.caption2)
-                    .foregroundStyle(Color.inkSoft)
+                // Mute toggle — reflects and flips the group's mute (a speaker.slash when muted).
+                Button {
+                    MenereHaptics.softTap()
+                    store.send(.toggleSonosMute(groupId: group.id))
+                } label: {
+                    Image(systemName: group.isMuted ? "speaker.slash.fill" : "speaker.fill")
+                        .font(.caption2)
+                        .foregroundStyle(group.isMuted ? Color.terracotta : Color.inkSoft)
+                        .frame(width: 18)
+                }
+                .buttonStyle(.pressable)
+                .accessibilityLabel(group.isMuted ? "Unmute" : "Mute")
+                .accessibilityIdentifier("house-speaker-mute-\(group.id)")
                 Slider(
                     value: Binding(
                         get: { Double(group.volume) },
@@ -581,7 +611,7 @@ public struct HouseView: View {
                     ),
                     in: 0...100
                 )
-                .tint(Color.bacanGreen)
+                .tint(group.isMuted ? Color.inkSoft : Color.bacanGreen)
                 .accessibilityIdentifier("house-speaker-slider-\(group.id)")
                 Image(systemName: "speaker.wave.3.fill")
                     .font(.caption2)
@@ -1667,5 +1697,39 @@ private struct FlowRow: Layout {
             x += size.width + spacing
             rowHeight = max(rowHeight, size.height)
         }
+    }
+}
+
+// MARK: - Previews (P15-C2 Sonos transport)
+
+/// The Speakers section across the three states the transport controls exercise: a playing group
+/// (⏮/⏯/⏭ cluster + green volume), a playing-but-MUTED group (terracotta speaker.slash + dimmed
+/// slider), and an idle group (calm single play pill, no skip cluster). Mock store only — no hardware.
+#Preview("Sonos speakers — transport + mute") {
+    let living = SonosGroup(
+        coordinator: SonosFixtures.living, members: [SonosFixtures.living],
+        nowPlaying: SonosNowPlaying(title: "Kind of Blue", artist: "Miles Davis", state: .playing),
+        volume: 28, isMuted: false
+    )
+    let kitchen = SonosGroup(
+        coordinator: SonosFixtures.kitchen, members: [SonosFixtures.kitchen],
+        nowPlaying: SonosNowPlaying(title: "Old Man", artist: "Neil Young", state: .playing),
+        volume: 40, isMuted: true
+    )
+    let office = SonosGroup(
+        coordinator: SonosFixtures.office, members: [SonosFixtures.office],
+        nowPlaying: SonosNowPlaying(state: .stopped),
+        volume: 20, isMuted: false
+    )
+    var state = HouseReducer.State(
+        config: HueConfig(bridges: []),
+        sonosConfig: SonosConfig(mock: true),
+        sonosGroups: [living, kitchen, office]
+    )
+    state.sonosLoaded = true
+    return NavigationStack {
+        HouseView(store: Store(initialState: state) { HouseReducer() } withDependencies: {
+            $0.sonos = .previewValue
+        })
     }
 }

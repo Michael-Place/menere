@@ -363,6 +363,13 @@ public struct HouseReducer {
         case sonosReloaded([SonosGroup])
         /// Play/pause the group's coordinator (optimistic).
         case toggleSonosPlayback(groupId: String)
+        /// Skip to the next (`forward: true`) or previous track on the group's coordinator. Fires the
+        /// verb, then re-reads the coordinator's now-playing so the row reflects the new track.
+        case skipSonos(groupId: String, forward: Bool)
+        /// The re-read now-playing that lands after a skip (or any single-group now-playing refresh).
+        case sonosTrackReread(groupId: String, SonosNowPlaying)
+        /// Mute/unmute the group's coordinator (optimistic).
+        case toggleSonosMute(groupId: String)
         /// Volume slider moved (0–100). Optimistic + debounced commit (same ≥150ms floor as sliders).
         case sonosVolumeChanged(groupId: String, volume: Int)
         case commitSonosVolume(groupId: String, volume: Int)
@@ -455,6 +462,7 @@ public struct HouseReducer {
         case shadeLevel(String)
         case sonosRefresh
         case sonosVolume(String)
+        case sonosSkip(String)
         case nestRefresh
         case nestSetpoint(String)
         case waterRefresh
@@ -497,7 +505,8 @@ public struct HouseReducer {
                         for row in SonosGroup.assemble(from: speakers, order: sonosConfig?.roomOrder) {
                             let np = (try? await sonos.nowPlaying(sonosConfig, row.coordinator)) ?? SonosNowPlaying(state: .stopped)
                             let vol = (try? await sonos.volume(sonosConfig, row.coordinator)) ?? 0
-                            groups.append(SonosGroup(coordinator: row.coordinator, members: row.members, nowPlaying: np, volume: vol))
+                            let muted = (try? await sonos.mute(sonosConfig, row.coordinator)) ?? false
+                            groups.append(SonosGroup(coordinator: row.coordinator, members: row.members, nowPlaying: np, volume: vol, isMuted: muted))
                         }
                         await send(.sonosReloaded(groups))
                     }
@@ -600,6 +609,33 @@ public struct HouseReducer {
                     if wasPlaying { try? await sonos.pause(config, coordinator) }
                     else { try? await sonos.play(config, coordinator) }
                 }
+
+            case let .skipSonos(groupId, forward):
+                guard let gi = state.sonosGroups.firstIndex(where: { $0.id == groupId }) else { return .none }
+                let coordinator = state.sonosGroups[gi].coordinator
+                let config = state.sonosConfig
+                return .run { send in
+                    // Skip on the coordinator (SoCo pattern), then re-read the now-playing so the row shows
+                    // the new track. Best-effort — a failed skip leaves the re-read to restore truth.
+                    if forward { try? await sonos.next(config, coordinator) }
+                    else { try? await sonos.previous(config, coordinator) }
+                    let np = (try? await sonos.nowPlaying(config, coordinator)) ?? SonosNowPlaying(state: .stopped)
+                    await send(.sonosTrackReread(groupId: groupId, np))
+                }
+                .cancellable(id: CancelID.sonosSkip(groupId), cancelInFlight: true)
+
+            case let .sonosTrackReread(groupId, nowPlaying):
+                guard let gi = state.sonosGroups.firstIndex(where: { $0.id == groupId }) else { return .none }
+                state.sonosGroups[gi].nowPlaying = nowPlaying
+                return .none
+
+            case let .toggleSonosMute(groupId):
+                guard let gi = state.sonosGroups.firstIndex(where: { $0.id == groupId }) else { return .none }
+                let coordinator = state.sonosGroups[gi].coordinator
+                let newMuted = !state.sonosGroups[gi].isMuted
+                state.sonosGroups[gi].isMuted = newMuted   // optimistic
+                let config = state.sonosConfig
+                return .run { _ in try? await sonos.setMute(config, coordinator, newMuted) }
 
             case let .sonosVolumeChanged(groupId, volume):
                 guard let gi = state.sonosGroups.firstIndex(where: { $0.id == groupId }) else { return .none }

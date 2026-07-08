@@ -161,6 +161,14 @@ enum SonosTransport {
         _ = try await soapCall(ip: speaker.ip, service: .avTransport, action: "Pause", args: [("InstanceID", "0")])
     }
 
+    static func next(_ speaker: SonosSpeaker) async throws {
+        _ = try await soapCall(ip: speaker.ip, service: .avTransport, action: "Next", args: [("InstanceID", "0")])
+    }
+
+    static func previous(_ speaker: SonosSpeaker) async throws {
+        _ = try await soapCall(ip: speaker.ip, service: .avTransport, action: "Previous", args: [("InstanceID", "0")])
+    }
+
     static func volume(_ speaker: SonosSpeaker) async throws -> Int {
         let xml = try await soapCall(ip: speaker.ip, service: .renderingControl, action: "GetVolume", args: [("InstanceID", "0"), ("Channel", "Master")])
         guard let v = SonosSOAP.parseVolume(xml) else { throw SonosError.invalidResponse }
@@ -171,6 +179,19 @@ enum SonosTransport {
         _ = try await soapCall(
             ip: speaker.ip, service: .renderingControl, action: "SetVolume",
             args: [("InstanceID", "0"), ("Channel", "Master"), ("DesiredVolume", String(SonosVolume.clamp(volume)))]
+        )
+    }
+
+    static func mute(_ speaker: SonosSpeaker) async throws -> Bool {
+        let xml = try await soapCall(ip: speaker.ip, service: .renderingControl, action: "GetMute", args: [("InstanceID", "0"), ("Channel", "Master")])
+        guard let muted = SonosSOAP.parseMute(xml) else { throw SonosError.invalidResponse }
+        return muted
+    }
+
+    static func setMute(_ speaker: SonosSpeaker, _ muted: Bool) async throws {
+        _ = try await soapCall(
+            ip: speaker.ip, service: .renderingControl, action: "SetMute",
+            args: [("InstanceID", "0"), ("Channel", "Master"), ("DesiredMute", muted ? "1" : "0")]
         )
     }
 

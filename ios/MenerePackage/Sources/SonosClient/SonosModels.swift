@@ -87,13 +87,17 @@ public struct SonosGroup: Equatable, Sendable, Identifiable {
     public var nowPlaying: SonosNowPlaying
     /// The group volume (coordinator's `RenderingControl` Master volume) 0–100.
     public var volume: Int
+    /// The group's mute state (coordinator's `RenderingControl` Master `GetMute`). Independent of
+    /// volume — a muted group keeps its volume level, it's just silenced. Drives the row's mute toggle.
+    public var isMuted: Bool
 
-    public init(coordinator: SonosSpeaker, members: [SonosSpeaker], nowPlaying: SonosNowPlaying, volume: Int) {
+    public init(coordinator: SonosSpeaker, members: [SonosSpeaker], nowPlaying: SonosNowPlaying, volume: Int, isMuted: Bool = false) {
         self.id = coordinator.groupKey
         self.coordinator = coordinator
         self.members = members.sorted { $0.name < $1.name }
         self.nowPlaying = nowPlaying
         self.volume = SonosVolume.clamp(volume)
+        self.isMuted = isMuted
     }
 
     /// The display room label: a single room, or joined rooms for a bonded/grouped set

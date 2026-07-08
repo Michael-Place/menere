@@ -47,4 +47,45 @@ struct SonosMockStoreTests {
         try await client.setVolume(mockConfig, SonosFixtures.kitchen, 250)
         #expect(try await client.volume(mockConfig, SonosFixtures.kitchen) == 100)   // clamped
     }
+
+    /// Next/previous walk the fixture queue and wrap at the ends; a re-read reflects the new track.
+    @Test func skipAdvancesAndWrapsTheQueue() async throws {
+        await SonosMockStore.shared.reset()
+        let client = SonosClient.liveValue
+        // Living room seeds on "Kind of Blue" (queue index 0).
+        #expect(try await client.nowPlaying(mockConfig, SonosFixtures.living).title == "Kind of Blue")
+        try await client.next(mockConfig, SonosFixtures.living)
+        #expect(try await client.nowPlaying(mockConfig, SonosFixtures.living).title == "So What")
+        try await client.next(mockConfig, SonosFixtures.living)
+        #expect(try await client.nowPlaying(mockConfig, SonosFixtures.living).title == "Blue in Green")
+        // Wrap forward → back to the top of the queue.
+        try await client.next(mockConfig, SonosFixtures.living)
+        #expect(try await client.nowPlaying(mockConfig, SonosFixtures.living).title == "Kind of Blue")
+        // Previous wraps backward to the tail.
+        try await client.previous(mockConfig, SonosFixtures.living)
+        let np = try await client.nowPlaying(mockConfig, SonosFixtures.living)
+        #expect(np.title == "Blue in Green")
+        #expect(np.state == .playing)   // a skip resumes playback
+    }
+
+    /// A skip on a speaker with no fixture queue (idle Kitchen) is a no-op.
+    @Test func skipIsNoOpWithoutAQueue() async throws {
+        await SonosMockStore.shared.reset()
+        let client = SonosClient.liveValue
+        try await client.next(mockConfig, SonosFixtures.kitchen)
+        #expect(try await client.nowPlaying(mockConfig, SonosFixtures.kitchen).line == "Idle")
+    }
+
+    /// SetMute persists across reads and starts unmuted.
+    @Test func muteTogglePersistsAcrossReads() async throws {
+        await SonosMockStore.shared.reset()
+        let client = SonosClient.liveValue
+        #expect(try await client.mute(mockConfig, SonosFixtures.office) == false)
+        try await client.setMute(mockConfig, SonosFixtures.office, true)
+        #expect(try await client.mute(mockConfig, SonosFixtures.office) == true)
+        // Muting doesn't touch the volume level.
+        #expect(try await client.volume(mockConfig, SonosFixtures.office) == 20)
+        try await client.setMute(mockConfig, SonosFixtures.office, false)
+        #expect(try await client.mute(mockConfig, SonosFixtures.office) == false)
+    }
 }
