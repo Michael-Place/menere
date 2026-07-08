@@ -10,10 +10,6 @@ import WineDomain
 public struct BottleCardView: View {
     @Bindable var store: StoreOf<BottleCardFeature>
 
-    /// Current wall-clock — sourced the same way as the cellar's drink-window classification
-    /// (`Calendar.current.component(.year, from: date.now)`), so the gauge agrees with the cellar.
-    @Dependency(\.date.now) private var now
-
     public init(store: StoreOf<BottleCardFeature>) {
         self.store = store
     }
@@ -40,8 +36,6 @@ public struct BottleCardView: View {
     private var wine: Wine { store.wine }
     /// Whether enrichment is still resolving — drives the shimmer placeholders for enrichment rows.
     private var isResolving: Bool { store.isResolving }
-    /// The current calendar year, used to position the drink-window gauge needle.
-    private var currentYear: Int { Calendar.current.component(.year, from: now) }
 
     public var body: some View {
         ScrollView {
@@ -49,11 +43,10 @@ public struct BottleCardView: View {
                 heroBlock
                 factsBlock
                 ownedCellarBlock
-                drinkWindowBlock
                 summaryBlock
                 pairingsBlock
                 producerNoteBlock
-                legend
+                journalBlock
                 actionsBlock
             }
             .padding(20)
@@ -81,14 +74,14 @@ public struct BottleCardView: View {
 
     // MARK: - Actions
 
-    /// "Add to cellar" / "Log a tasting" — the M5 journaling entry points. Hidden while enrichment is
+    /// "Keep on hand" / "Log a tasting" — the journaling entry points. Hidden while enrichment is
     /// still resolving (no point journaling an unresolved wine).
     @ViewBuilder private var actionsBlock: some View {
         if !isResolving {
             VStack(spacing: 12) {
                 if store.ownedBottle == nil {
                     Button { store.send(.addToCellarTapped) } label: {
-                        Label("Add to cellar", systemImage: "plus.square.on.square").frame(maxWidth: .infinity)
+                        Label("Keep on hand", systemImage: "plus.square.on.square").frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.borderedProminent)
                     .accessibilityIdentifier("add-to-cellar-button")
@@ -187,20 +180,12 @@ public struct BottleCardView: View {
             Card {
                 VStack(alignment: .leading, spacing: 14) {
                     if let region {
-                        factRow(
-                            title: "Region",
-                            badgeField: ProvenanceField.region,
-                            icon: "map"
-                        ) {
+                        factRow(title: "Region", icon: "map") {
                             Text(region)
                         }
                     }
                     if !wine.grapes.isEmpty {
-                        factRow(
-                            title: "Grapes",
-                            badgeField: ProvenanceField.grapes,
-                            icon: "leaf"
-                        ) {
+                        factRow(title: "Grapes", icon: "leaf") {
                             ChipFlow(items: wine.grapes)
                         }
                     }
@@ -210,20 +195,12 @@ public struct BottleCardView: View {
                         placeholderFactRow(title: "ABV", icon: "percent", sample: "13.5%")
                     } else {
                         if wine.type != .other {
-                            factRow(
-                                title: "Style",
-                                badgeField: ProvenanceField.type,
-                                icon: "wineglass"
-                            ) {
+                            factRow(title: "Style", icon: "wineglass") {
                                 Text(humanizedType)
                             }
                         }
                         if let abv = wine.abv {
-                            factRow(
-                                title: "ABV",
-                                badgeField: ProvenanceField.abv,
-                                icon: "percent"
-                            ) {
+                            factRow(title: "ABV", icon: "percent") {
                                 Text(abvText(abv))
                                     .contentTransition(.numericText())
                                     .animation(.menereBouncy, value: abv)
@@ -235,24 +212,17 @@ public struct BottleCardView: View {
         }
     }
 
-    /// A labeled fact row: title + optional provenance badge, then content.
+    /// A labeled fact row: title, then content. (The provenance badges were retired in the reframe.)
     private func factRow<Content: View>(
         title: String,
-        badgeField: String,
         icon: String,
         @ViewBuilder content: () -> Content
     ) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 6) {
-                Label(title, systemImage: icon)
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                    .labelStyle(.titleOnly)
-                Spacer(minLength: 8)
-                if let badge = wine.provenanceBadge(for: badgeField) {
-                    ProvenanceBadge(style: badge)
-                }
-            }
+            Label(title, systemImage: icon)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .labelStyle(.titleOnly)
             content()
                 .font(.body)
                 .foregroundStyle(.primary)
@@ -261,25 +231,19 @@ public struct BottleCardView: View {
 
     // MARK: - Owned cellar facts
 
-    /// When the card renders an owned bottle, surface the user's known cellar facts (quantity, status,
-    /// drink window, storage, store, price, purchase date). Each row appears only if present. Nil
-    /// `ownedBottle` (scan path) renders nothing.
+    /// When the card renders an owned bottle, surface the on-hand facts (quantity, status, storage,
+    /// store, price, purchase date). Each row appears only if present. Nil `ownedBottle` (scan path)
+    /// renders nothing. The reframe drops the aging/drink-window emphasis.
     @ViewBuilder private var ownedCellarBlock: some View {
         if let bottle = store.ownedBottle {
             Card {
                 VStack(alignment: .leading, spacing: 14) {
-                    Text("In your cellar")
+                    Text("On hand")
                         .font(.headline)
                         .foregroundStyle(.primary)
                     cellarFactRow(title: "Quantity", icon: "number") { Text("×\(bottle.quantity)") }
                     cellarFactRow(title: "Status", icon: "tag") {
                         Text(bottle.status.rawValue.capitalized)
-                    }
-                    // Full numeric window is rendered as the living gauge in `drinkWindowBlock`; here
-                    // we only surface a partial (from-only / by-only) window as text to avoid dupes.
-                    if bottle.drinkFrom == nil || bottle.drinkBy == nil,
-                       let window = ownedDrinkWindowText(bottle) {
-                        cellarFactRow(title: "Drink window", icon: "calendar") { Text(window) }
                     }
                     if let location = bottle.storageLocation, !location.isEmpty {
                         cellarFactRow(title: "Storage", icon: "archivebox") { Text(location) }
@@ -314,15 +278,6 @@ public struct BottleCardView: View {
             content()
                 .font(.body)
                 .foregroundStyle(.primary)
-        }
-    }
-
-    private func ownedDrinkWindowText(_ bottle: Bottle) -> String? {
-        switch (bottle.drinkFrom, bottle.drinkBy) {
-        case let (from?, by?): return "\(from)–\(by)"
-        case let (from?, nil): return "From \(from)"
-        case let (nil, by?): return "By \(by)"
-        case (nil, nil): return nil
         }
     }
 
@@ -384,32 +339,6 @@ public struct BottleCardView: View {
         .shimmering()
     }
 
-    // MARK: - Drink window
-
-    @ViewBuilder
-    private var drinkWindowBlock: some View {
-        if isResolving {
-            Card {
-                placeholderFactRow(title: "Drink window", icon: "calendar", sample: "2025–2050")
-            }
-        } else if let from = store.ownedBottle?.drinkFrom, let by = store.ownedBottle?.drinkBy {
-            // Owned bottle with a numeric window → the living gauge (it carries its own label + status).
-            Card {
-                DrinkWindowGauge(from: from, by: by, currentYear: currentYear)
-            }
-        } else if let window = wine.enrichment?.drinkingWindow, !window.isEmpty {
-            Card {
-                factRow(
-                    title: "Drink window",
-                    badgeField: ProvenanceField.drinkingWindow,
-                    icon: "calendar"
-                ) {
-                    Text(window)
-                }
-            }
-        }
-    }
-
     // MARK: - Summary
 
     @ViewBuilder
@@ -424,7 +353,7 @@ public struct BottleCardView: View {
         } else if let summary = wine.enrichment?.summary, !summary.isEmpty {
             Card {
                 VStack(alignment: .leading, spacing: 8) {
-                    sectionHeader("Tasting summary", badgeField: ProvenanceField.summary)
+                    sectionHeader("Tasting summary")
                     Text(summary)
                         .font(.body)
                         .foregroundStyle(.primary)
@@ -449,7 +378,7 @@ public struct BottleCardView: View {
         } else if let pairings = wine.enrichment?.foodPairings, !pairings.isEmpty {
             Card {
                 VStack(alignment: .leading, spacing: 8) {
-                    sectionHeader("Food pairings", badgeField: ProvenanceField.foodPairings)
+                    sectionHeader("Food pairings")
                     ChipFlow(items: pairings)
                 }
             }
@@ -470,7 +399,7 @@ public struct BottleCardView: View {
         } else if let note = wine.enrichment?.producerNote, !note.isEmpty {
             Card {
                 VStack(alignment: .leading, spacing: 8) {
-                    sectionHeader("From the producer", badgeField: ProvenanceField.producerNote)
+                    sectionHeader("From the producer")
                     Text(note)
                         .font(.body)
                         .italic()
@@ -480,38 +409,81 @@ public struct BottleCardView: View {
         }
     }
 
-    private func sectionHeader(_ title: String, badgeField: String) -> some View {
-        HStack(spacing: 6) {
-            Text(title)
-                .font(.headline)
-                .foregroundStyle(.primary)
-            Spacer(minLength: 8)
-            if let badge = wine.provenanceBadge(for: badgeField) {
-                ProvenanceBadge(style: badge)
-            }
-        }
+    private func sectionHeader(_ title: String) -> some View {
+        Text(title)
+            .font(.headline)
+            .foregroundStyle(.primary)
     }
 
-    // MARK: - Legend
+    // MARK: - Journal entries
 
+    /// This wine's journal entries (tastings), read-only. Passed in by the Wine root so a bottle card
+    /// reads as "the wine + its journal". Hidden while resolving or when there are none.
     @ViewBuilder
-    private var legend: some View {
-        // Only show the legend once resolved and there's at least one enriched field to explain.
-        if !isResolving, wine.enrichment?.provenance.isEmpty == false {
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Where facts come from")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                ChipFlow(spacing: 8, rowSpacing: 6) {
-                    ProvenanceBadge(style: .verified)
-                    ProvenanceBadge(style: .aiEstimate)
-                    ProvenanceBadge(style: .scanned)
-                    ProvenanceBadge(style: .you)
+    private var journalBlock: some View {
+        if !isResolving, !store.journalEntries.isEmpty {
+            Card {
+                VStack(alignment: .leading, spacing: 12) {
+                    sectionHeader("Journal")
+                    ForEach(Array(store.journalEntries.enumerated()), id: \.element.id) { index, tasting in
+                        if index > 0 { Divider() }
+                        journalEntryRow(tasting)
+                    }
                 }
             }
-            .padding(.top, 4)
         }
     }
+
+    private func journalEntryRow(_ tasting: Tasting) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(Self.entryDateFormatter.string(from: tasting.date))
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                Spacer(minLength: 8)
+                miniStars(tasting)
+            }
+            if let note = tasting.note, !note.isEmpty {
+                Text(note)
+                    .font(.callout)
+                    .foregroundStyle(.primary)
+                    .lineLimit(3)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func miniStars(_ tasting: Tasting) -> some View {
+        if let stars = tasting.ratingStars {
+            HStack(spacing: 2) {
+                ForEach(1...5, id: \.self) { position in
+                    Image(systemName: Self.starSymbol(for: stars, position: position))
+                        .font(.caption2)
+                        .foregroundStyle(Color.marigold)
+                }
+            }
+            .accessibilityLabel("\(stars) stars")
+        } else if let pts = tasting.rating100 {
+            Text("\(pts) pts")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private static func starSymbol(for value: Double, position: Int) -> String {
+        let full = Double(position)
+        let half = full - 0.5
+        if value >= full { return "star.fill" }
+        if value >= half { return "star.leadinghalf.filled" }
+        return "star"
+    }
+
+    private static let entryDateFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateStyle = .medium
+        f.timeStyle = .none
+        return f
+    }()
 
     // MARK: - Derived
 
@@ -696,7 +668,7 @@ private struct Chip: View {
     )
 }
 
-// The same card resolved: real enrichment + provenance badges, captured image shown.
+// The same card resolved: real enrichment, captured image shown.
 #Preview("Resolved (enriched + image)") {
     BottleCardView(
         state: BottleCardFeature.State(
@@ -705,5 +677,32 @@ private struct Chip: View {
             isResolving: false
         )
     )
+}
+
+// On-hand bottle with a couple of journal entries — the reframed "wine + its journal" card.
+#Preview("On hand + journal") {
+    NavigationStack {
+        BottleCardView(
+            state: BottleCardFeature.State(
+                wine: BottleCardFixtures.richlyEnriched,
+                ownedBottle: Bottle(
+                    id: "b1", wineId: BottleCardFixtures.richlyEnriched.id,
+                    quantity: 2, storageLocation: "Kitchen holder", status: .cellared
+                ),
+                journalEntries: [
+                    Tasting(
+                        id: "t1", wineId: BottleCardFixtures.richlyEnriched.id,
+                        date: Date(timeIntervalSince1970: 1_700_000_000), ratingStars: 4.5,
+                        note: "Perfumed and silky — cassis, violet, a long graphite finish."
+                    ),
+                    Tasting(
+                        id: "t2", wineId: BottleCardFixtures.richlyEnriched.id,
+                        date: Date(timeIntervalSince1970: 1_600_000_000), rating100: 95,
+                        note: "Still tight — decanted two hours, blossomed beautifully."
+                    ),
+                ]
+            )
+        )
+    }
 }
 #endif

@@ -43,9 +43,10 @@ public struct NearestProject: Equatable, Sendable {
 /// Live, glanceable preview stats for the four pinned module cards (Cellar / Family Brain / Money /
 /// Projects). Loaded READ-ONLY on the Lists root — mirrors the Home hub's per-card preview content.
 public struct ModuleOverview: Equatable, Sendable {
-    // Cellar
+    // Wine — bottles on hand + journal entries logged
     public var bottleCount: Int = 0
     public var recentBottle: String?
+    public var journalCount: Int = 0
     // Family Brain
     public var docCount: Int = 0
     public var docsNeedAttention: Int = 0
@@ -143,7 +144,7 @@ public struct ListsReducer {
         @Dependency(\.persistence) var persistence
         var overview = ModuleOverview()
 
-        // Cellar — cellared bottle count + the most-recently-added bottle's wine name.
+        // Wine — bottles on hand + the most-recently-added bottle's wine name.
         if let bottles = try? await persistence.bottles(hid) {
             let cellared = bottles.filter { $0.status == .cellared }
             overview.bottleCount = cellared.reduce(0) { $0 + max($1.quantity, 1) }
@@ -155,6 +156,10 @@ public struct ListsReducer {
                 if let name = wine.name, !name.isEmpty { parts.append(name) }
                 overview.recentBottle = parts.joined(separator: " ")
             }
+        }
+        // Wine journal — how many tastings have been logged.
+        if let tastings = try? await persistence.tastings(hid) {
+            overview.journalCount = tastings.count
         }
 
         // Family Brain — document count + how many need attention (due/expiry soon).
@@ -428,7 +433,7 @@ public struct ListsView: View {
             VStack(spacing: 14) {
                 // Rich module cards for the pinned surfaces. Whole-card taps open the exact same
                 // destinations as before (Cellar → CellarView, etc.); previews are read-only stats.
-                moduleCard(icon: "wineglass", tint: .terracotta, title: "Cellar",
+                moduleCard(icon: "wineglass", tint: .terracotta, title: "Wine",
                            status: cellarStatus, id: "cellar", index: 0,
                            action: { store.send(.cellarTapped) }) { cellarPreview }
                 moduleCard(icon: "brain", tint: .sky, title: "Family Brain",
@@ -587,21 +592,31 @@ private extension ListsView {
         .background(Capsule(style: .continuous).fill(tint.opacity(0.14)))
     }
 
-    // MARK: Cellar card
+    // MARK: Wine card
 
     var cellarStatus: String {
         let n = store.overview.bottleCount
-        return n == 0 ? "Your wine, tracked" : "\(n) \(n == 1 ? "bottle" : "bottles") cellared"
+        return n == 0 ? "Your wine journal" : "\(n) on hand"
     }
 
     @ViewBuilder var cellarPreview: some View {
+        let journalCount = store.overview.journalCount
         if let recent = store.overview.recentBottle, !recent.isEmpty {
             HStack(spacing: 8) {
-                previewChip(recent, icon: "sparkles", tint: .terracotta)
+                previewChip(recent, icon: "wineglass", tint: .terracotta)
+                if journalCount > 0 {
+                    previewChip("\(journalCount) journaled", icon: "book", tint: .marigold)
+                }
+                Spacer(minLength: 0)
+            }
+        } else if journalCount > 0 {
+            HStack(spacing: 8) {
+                previewChip("\(journalCount) \(journalCount == 1 ? "wine" : "wines") journaled",
+                            icon: "book", tint: .marigold)
                 Spacer(minLength: 0)
             }
         } else {
-            previewLine("Scan a label to start the cellar.")
+            previewLine("Scan a label and start your journal.")
         }
     }
 

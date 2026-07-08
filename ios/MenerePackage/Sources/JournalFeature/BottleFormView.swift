@@ -189,7 +189,7 @@ public struct BottleFormView: View {
                 }
             }
 
-            Section("Cellar") {
+            Section("Details") {
                 TextField("Storage location", text: $store.storageLocation)
                     .accessibilityIdentifier("storage-location-field")
                 TextField("Drink from (year)", text: $store.drinkFromText)
@@ -220,7 +220,7 @@ public struct BottleFormView: View {
                         ProgressView()
                             .frame(maxWidth: .infinity)
                     } else {
-                        Text(store.editingID == nil ? "Save to cellar" : "Save changes")
+                        Text(store.editingID == nil ? "Keep on hand" : "Save changes")
                             .frame(maxWidth: .infinity)
                     }
                 }
@@ -232,7 +232,7 @@ public struct BottleFormView: View {
         .scrollContentBackground(.hidden)
         .background(Color.familyCanvas)
         .successHaptic(store.savedTick)
-        .wineNavTitle(store.editingID == nil ? "Add to cellar" : "Edit bottle")
+        .wineNavTitle(store.editingID == nil ? "Keep on hand" : "Edit bottle")
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {
                 Button("Cancel") { store.send(.cancelTapped) }

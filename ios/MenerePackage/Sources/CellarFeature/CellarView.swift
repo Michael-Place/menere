@@ -9,48 +9,39 @@ import WineDomain
 
 // MARK: - Row model
 
-/// A single cellar entry: the owned `Bottle` joined to its catalog `Wine`, with a drink-window
-/// classification computed once at load time so the view (and `visibleRows`) stay pure.
+/// A single bottle we hold: the owned `Bottle` joined to its catalog `Wine`. Built once at load time
+/// so the view stays pure. The reframe drops the old drink-window/aging classification — this is now
+/// just "a bottle on the holder", not a cellar-managed inventory item.
 public struct CellarRow: Equatable, Identifiable, Sendable {
     public var id: String { bottle.id }
     public let bottle: Bottle
     public let wine: Wine
-    public let drinkStatus: DrinkStatus
 
-    public enum DrinkStatus: String, Equatable, Sendable {
-        case hold
-        case drinkNow
-        case past
-        case unknown
-    }
-
-    public init(bottle: Bottle, wine: Wine, drinkStatus: DrinkStatus) {
+    public init(bottle: Bottle, wine: Wine) {
         self.bottle = bottle
         self.wine = wine
-        self.drinkStatus = drinkStatus
     }
 
     public var producer: String { wine.producer }
 
-    /// Human-facing drink window: prefer the enriched string, else format the bottle's year range.
-    public var drinkWindowText: String? {
-        if let window = wine.enrichment?.drinkingWindow, !window.isEmpty { return window }
-        switch (bottle.drinkFrom, bottle.drinkBy) {
-        case let (from?, by?): return "\(from)–\(by)"
-        case let (from?, nil): return "From \(from)"
-        case let (nil, by?): return "By \(by)"
-        case (nil, nil): return nil
-        }
+    /// Cuvée name and/or vintage, e.g. "Grand Vin · 2018", "2018", or nil.
+    public var nameVintage: String? {
+        var parts: [String] = []
+        if let name = wine.name, !name.isEmpty { parts.append(name) }
+        if let vintage = wine.vintage { parts.append(String(vintage)) }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
 
-    /// Sort key for vintage; nil vintages sort last.
-    public var sortByVintage: Int { wine.vintage ?? Int.max }
+    /// Bridge to the semantic red/white/rosé color coding (kept from the old cellar).
+    public var typeKind: WineTypeGradient.Kind {
+        WineTypeGradient.Kind(rawValue: wine.type.rawValue) ?? .other
+    }
 }
 
 // MARK: - Tasting row model
 
-/// A single tasting-history entry: the private `Tasting` joined to its catalog `Wine`. Built once at
-/// load time so the view (and `visibleTastingRows`) stay pure.
+/// A single journal entry: the private `Tasting` joined to its catalog `Wine`. Built once at load
+/// time so the view stays pure.
 public struct TastingRow: Equatable, Identifiable, Sendable {
     public var id: String { tasting.id }
     public let tasting: Tasting
@@ -63,20 +54,28 @@ public struct TastingRow: Equatable, Identifiable, Sendable {
 
     public var producer: String { wine.producer }
 
-    /// Human-facing rating: prefer stars, then 100-point score, else em dash.
-    public var ratingText: String {
-        if let stars = tasting.ratingStars {
-            let trimmed = stars.truncatingRemainder(dividingBy: 1) == 0
-                ? String(Int(stars))
-                : String(stars)
-            return "★ \(trimmed)"
-        }
-        if let pts = tasting.rating100 { return "\(pts) pts" }
-        return "—"
+    /// Cuvée name and/or vintage, e.g. "Grand Vin · 2018", "2018", or nil.
+    public var nameVintage: String? {
+        var parts: [String] = []
+        if let name = wine.name, !name.isEmpty { parts.append(name) }
+        if let vintage = wine.vintage { parts.append(String(vintage)) }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    }
+
+    public var typeKind: WineTypeGradient.Kind {
+        WineTypeGradient.Kind(rawValue: wine.type.rawValue) ?? .other
     }
 
     public var dateText: String {
         TastingRow.dateFormatter.string(from: tasting.date)
+    }
+
+    /// "With whom · Occasion" if either is present, else nil.
+    public var context: String? {
+        var parts: [String] = []
+        if let withWhom = tasting.withWhom, !withWhom.isEmpty { parts.append(withWhom) }
+        if let occasion = tasting.occasion, !occasion.isEmpty { parts.append(occasion) }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
 
     private static let dateFormatter: DateFormatter = {
@@ -87,149 +86,58 @@ public struct TastingRow: Equatable, Identifiable, Sendable {
     }()
 }
 
-// MARK: - Drink-window classification
-
-/// Classify a bottle's drink window against the given current `year`.
-/// - `.hold` if it isn't ready yet (now < drinkFrom)
-/// - `.past` if it's over the hill (now > drinkBy)
-/// - `.drinkNow` if within an available window (handles only-from / only-by)
-/// - `.unknown` if no window is known
-func classify(_ bottle: Bottle, year: Int) -> CellarRow.DrinkStatus {
-    switch (bottle.drinkFrom, bottle.drinkBy) {
-    case (nil, nil):
-        return .unknown
-    case let (from?, by?):
-        if year < from { return .hold }
-        if year > by { return .past }
-        return .drinkNow
-    case let (from?, nil):
-        return year < from ? .hold : .drinkNow
-    case let (nil, by?):
-        return year > by ? .past : .drinkNow
-    }
-}
-
 // MARK: - Reducer
 
 @Reducer
 public struct CellarReducer {
-    /// Push destinations from the cellar.
+    /// Push / present destinations from the Wine root.
     @Reducer(state: .equatable, action: .equatable)
     public enum Destination {
         case wineDetail(BottleCardFeature)
         case tastingDetail(TastingDetailReducer)
+        /// "Pour a glass" from an on-hand tile → the shared tasting form (journaling).
+        case pourTasting(TastingFormReducer)
     }
-
-    /// Which preset a dashboard stat-tile tap applies to the Cellar inventory.
-    public enum StatTarget: Equatable, Sendable { case cellared, wines, tastings, wishlist }
 
     @ObservableState
     public struct State: Equatable {
         @Presents public var destination: Destination.State?
+        /// The on-hand tile action sheet (Pour a glass / View bottle).
+        @Presents public var pourDialog: ConfirmationDialogState<Action.PourAction>?
+
+        /// Every owned bottle joined to its wine. "On hand" is a VIEW over the cellared subset.
         public var rows: [CellarRow] = []
+        /// Every journal entry (tasting) joined to its wine.
+        public var tastingRows: [TastingRow] = []
         public var isLoading = false
         public var loadError: String?
+        /// Free-text filter over the journal feed.
         public var searchText = ""
-        public var statusFilter: BottleStatus? = nil   // nil = all
-        public var typeFilter: WineType? = nil          // nil = all
-        public var sort: SortOption = .recentlyAdded
-
-        // History segment
-        public var segment: Segment = .cellar
-        public var tastingRows: [TastingRow] = []
-        public var minRating: Double? = nil             // e.g. 4.0 = "4★+"; nil = any
-        public var grapeFilter: String? = nil           // nil = all grapes
-        public var historySort: HistorySort = .dateNewest
-
-        // Dashboard (folded in at the top of the Cellar segment)
-        public var dashboard: DashboardData = .empty
-
-        public enum Segment: String, CaseIterable, Equatable, Sendable {
-            case cellar
-            case history
-        }
-
-        public enum SortOption: String, CaseIterable, Equatable, Sendable {
-            case recentlyAdded
-            case producer
-            case vintage
-            case drinkWindow
-        }
-
-        public enum HistorySort: String, CaseIterable, Equatable, Sendable {
-            case dateNewest
-            case dateOldest
-            case ratingHigh
-        }
 
         public init() {}
 
-        /// True while the user has a non-empty (trimmed) search query. Drives hiding the dashboard
-        /// and swapping in the native "No Results" view. Computed, not stored — no reducer/test impact.
+        /// The holder: bottles still on hand (status `.cellared`), newest first. Capped for display in
+        /// the strip by the view; the model keeps them all.
+        public var onHandRows: [CellarRow] {
+            rows
+                .filter { $0.bottle.status == .cellared }
+                .sorted { $0.bottle.createdAt > $1.bottle.createdAt }
+        }
+
+        /// Count for the "N on hand" glance.
+        public var onHandCount: Int { onHandRows.reduce(0) { $0 + max($1.bottle.quantity, 1) } }
+
+        /// Count for the "N wines journaled" glance.
+        public var journaledCount: Int { tastingRows.count }
+
+        /// True while the user has a non-empty (trimmed) search query.
         public var isSearching: Bool {
             !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         }
 
-        /// Search + filters + sort applied in order, derived from `rows`. Keeps the view pure.
-        public var visibleRows: [CellarRow] {
-            var result = rows
-
-            let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !query.isEmpty {
-                result = result.filter { row in
-                    var haystack: [String] = [row.wine.producer]
-                    if let name = row.wine.name { haystack.append(name) }
-                    if let region = row.wine.region {
-                        haystack.append(contentsOf: [
-                            region.country, region.region, region.subregion, region.appellation,
-                        ].compactMap { $0 })
-                    }
-                    haystack.append(contentsOf: row.wine.grapes)
-                    return haystack.contains { $0.localizedCaseInsensitiveContains(query) }
-                }
-            }
-
-            if let statusFilter {
-                result = result.filter { $0.bottle.status == statusFilter }
-            }
-
-            if let typeFilter {
-                result = result.filter { $0.wine.type == typeFilter }
-            }
-
-            switch sort {
-            case .recentlyAdded:
-                result.sort { $0.bottle.createdAt > $1.bottle.createdAt }
-            case .producer:
-                result.sort { lhs, rhs in
-                    let p = lhs.wine.producer.localizedCaseInsensitiveCompare(rhs.wine.producer)
-                    if p != .orderedSame { return p == .orderedAscending }
-                    return (lhs.wine.name ?? "").localizedCaseInsensitiveCompare(rhs.wine.name ?? "") == .orderedAscending
-                }
-            case .vintage:
-                result.sort { $0.sortByVintage < $1.sortByVintage }
-            case .drinkWindow:
-                result.sort { lhs, rhs in
-                    let lby = lhs.bottle.drinkBy ?? Int.max
-                    let rby = rhs.bottle.drinkBy ?? Int.max
-                    if lby != rby { return lby < rby }
-                    return (lhs.bottle.drinkFrom ?? Int.max) < (rhs.bottle.drinkFrom ?? Int.max)
-                }
-            }
-
-            return result
-        }
-
-        /// Sorted unique grapes across all tasting rows (for the grape Picker).
-        public var availableGrapes: [String] {
-            Array(Set(tastingRows.flatMap { $0.wine.grapes }))
-                .sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
-        }
-
-        /// Search + history filters + sort applied in order, derived from `tastingRows`.
+        /// Search applied, then newest-first — the journal feed.
         public var visibleTastingRows: [TastingRow] {
             var result = tastingRows
-
             let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
             if !query.isEmpty {
                 result = result.filter { row in
@@ -247,33 +155,16 @@ public struct CellarReducer {
                     return haystack.contains { $0.localizedCaseInsensitiveContains(query) }
                 }
             }
-
-            if let minRating {
-                result = result.filter {
-                    guard let stars = $0.tasting.ratingStars else { return false }
-                    return stars >= minRating
-                }
-            }
-
-            if let grapeFilter {
-                result = result.filter { $0.wine.grapes.contains(grapeFilter) }
-            }
-
-            switch historySort {
-            case .dateNewest:
-                result.sort { $0.tasting.date > $1.tasting.date }
-            case .dateOldest:
-                result.sort { $0.tasting.date < $1.tasting.date }
-            case .ratingHigh:
-                result.sort { lhs, rhs in
-                    let l = lhs.tasting.ratingStars ?? -1
-                    let r = rhs.tasting.ratingStars ?? -1
-                    if l != r { return l > r }
-                    return lhs.tasting.date > rhs.tasting.date
-                }
-            }
-
+            result.sort { $0.tasting.date > $1.tasting.date }
             return result
+        }
+
+        /// The journal entries logged for a given wine (newest first) — surfaced on the bottle card.
+        public func journalEntries(forWineId wineId: String) -> [Tasting] {
+            tastingRows
+                .filter { $0.wine.id == wineId }
+                .map(\.tasting)
+                .sorted { $0.date > $1.date }
         }
     }
 
@@ -281,19 +172,21 @@ public struct CellarReducer {
         case task
         case loaded([CellarRow])
         case tastingsLoaded([TastingRow])
-        case dashboardLoaded(DashboardData)
         case loadFailed(String)
-        case wineRowTapped(CellarRow)
-        case tastingRowTapped(TastingRow)
-        case drinkSoonRowTapped(HomeBottleRow)
-        case recentTastingRowTapped(HomeTastingRow)
-        case statTileTapped(StatTarget)
-        case deleteBottleSwiped(String)
+        case onHandTapped(CellarRow)
+        case addBottleTapped
+        case journalRowTapped(TastingRow)
         case deleteTastingSwiped(String)
+        case pourDialog(PresentationAction<PourAction>)
         case destination(PresentationAction<Destination.Action>)
-        case applyPreset(segment: State.Segment, statusFilter: BottleStatus?)
         case delegate(Delegate)
         case binding(BindingAction<State>)
+
+        /// The on-hand tile menu choices; each carries the tapped row.
+        public enum PourAction: Equatable, Sendable {
+            case pour(CellarRow)
+            case view(CellarRow)
+        }
 
         public enum Delegate: Equatable { case requestScan }
     }
@@ -308,13 +201,11 @@ public struct CellarReducer {
                 state.isLoading = true
                 state.loadError = nil
                 @Dependency(\.persistence) var persistence
-                @Dependency(\.date) var date
                 return .run { send in
                     @Shared(.user) var user
                     guard let hid = user?.householdId else {
                         await send(.loaded([]))
                         await send(.tastingsLoaded([]))
-                        await send(.dashboardLoaded(.empty))
                         return
                     }
                     do {
@@ -324,10 +215,9 @@ public struct CellarReducer {
                         let wineIds = Array(Set(bottles.map(\.wineId) + tastings.map(\.wineId)))
                         let wines = try await persistence.wines(wineIds)
                         let byKey = Dictionary(uniqueKeysWithValues: wines.map { ($0.id, $0) })
-                        let year = Calendar.current.component(.year, from: date.now)
                         let cellarRows = bottles.compactMap { b -> CellarRow? in
                             guard let w = byKey[b.wineId] else { return nil }
-                            return CellarRow(bottle: b, wine: w, drinkStatus: classify(b, year: year))
+                            return CellarRow(bottle: b, wine: w)
                         }
                         let tastingRows = tastings.compactMap { t -> TastingRow? in
                             guard let w = byKey[t.wineId] else { return nil }
@@ -335,53 +225,6 @@ public struct CellarReducer {
                         }
                         await send(.loaded(cellarRows))
                         await send(.tastingsLoaded(tastingRows))
-
-                        // Dashboard stats are computed from RAW bottles/tastings so they count
-                        // orphan-wine bottles (which `cellarRows`/`tastingRows` drop on the join).
-                        let cellared = bottles.filter { $0.status == .cellared }
-                        let cellaredBottleCount = cellared.reduce(0) { $0 + $1.quantity }
-                        let distinctWineCount = Set(cellared.map(\.wineId)).count
-                        let wishlistCount = bottles.filter { $0.status == .wishlist }.count
-                        let tastingCount = tastings.count
-
-                        let drinkSoon = cellared
-                            .filter { isDrinkNow($0, year: year) && byKey[$0.wineId] != nil }
-                            .sorted { ($0.drinkBy ?? .max) < ($1.drinkBy ?? .max) }
-                            .prefix(5)
-                            .map { HomeBottleRow(bottle: $0, wine: byKey[$0.wineId]!) }
-
-                        let recentTastings = tastings
-                            .filter { byKey[$0.wineId] != nil }
-                            .sorted { $0.date > $1.date }
-                            .prefix(5)
-                            .map { HomeTastingRow(tasting: $0, wine: byKey[$0.wineId]!) }
-
-                        // Cellar composition by wine type. Qty-summed (matches `cellaredBottleCount`);
-                        // bottles whose wine is missing from the join are skipped. Sorted by count
-                        // descending, ties broken by type for determinism.
-                        var typeCounts: [WineType: Int] = [:]
-                        for b in cellared {
-                            guard let w = byKey[b.wineId] else { continue }
-                            typeCounts[w.type, default: 0] += b.quantity
-                        }
-                        let typeBreakdown = typeCounts
-                            .map { TypeSlice(type: $0.key, count: $0.value) }
-                            .sorted { lhs, rhs in
-                                lhs.count != rhs.count
-                                    ? lhs.count > rhs.count
-                                    : lhs.type.rawValue < rhs.type.rawValue
-                            }
-
-                        let dashboard = DashboardData(
-                            cellaredBottleCount: cellaredBottleCount,
-                            distinctWineCount: distinctWineCount,
-                            wishlistCount: wishlistCount,
-                            tastingCount: tastingCount,
-                            drinkSoon: Array(drinkSoon),
-                            recentTastings: Array(recentTastings),
-                            typeBreakdown: typeBreakdown
-                        )
-                        await send(.dashboardLoaded(dashboard))
                     } catch {
                         await send(.loadFailed(error.localizedDescription))
                     }
@@ -396,55 +239,63 @@ public struct CellarReducer {
                 state.tastingRows = rows
                 return .none
 
-            case let .dashboardLoaded(data):
-                state.dashboard = data
-                return .none
-
             case let .loadFailed(message):
                 state.isLoading = false
                 state.loadError = message
                 return .none
 
-            case let .wineRowTapped(row):
-                state.destination = .wineDetail(
-                    BottleCardFeature.State(wine: row.wine, ownedBottle: row.bottle)
-                )
-                return .none
-
-            case let .tastingRowTapped(row):
-                state.destination = .tastingDetail(
-                    TastingDetailReducer.State(tasting: row.tasting, wine: row.wine)
-                )
-                return .none
-
-            case let .drinkSoonRowTapped(row):
-                state.destination = .wineDetail(
-                    BottleCardFeature.State(wine: row.wine, ownedBottle: row.bottle)
-                )
-                return .none
-
-            case let .recentTastingRowTapped(row):
-                state.destination = .tastingDetail(
-                    TastingDetailReducer.State(tasting: row.tasting, wine: row.wine)
-                )
-                return .none
-
-            case let .statTileTapped(target):
-                switch target {
-                case .cellared:
-                    state.segment = .cellar
-                    state.statusFilter = .cellared
-                case .wines:
-                    state.segment = .cellar
-                    state.statusFilter = nil
-                case .tastings:
-                    state.segment = .history
-                    state.statusFilter = nil
-                case .wishlist:
-                    state.segment = .cellar
-                    state.statusFilter = .wishlist
+            case let .onHandTapped(row):
+                state.pourDialog = ConfirmationDialogState {
+                    TextState(row.producer)
+                } actions: {
+                    ButtonState(action: .pour(row)) { TextState("Pour a glass") }
+                    ButtonState(action: .view(row)) { TextState("View bottle") }
+                    ButtonState(role: .cancel) { TextState("Cancel") }
+                } message: {
+                    TextState("Pour a glass to add a journal entry, or peek at the bottle.")
                 }
-                state.searchText = ""
+                return .none
+
+            case let .pourDialog(.presented(.pour(row))):
+                @Shared(.user) var user
+                guard let uid = user?.id, let hid = user?.householdId else { return .none }
+                state.destination = .pourTasting(
+                    TastingFormReducer.State(wine: row.wine, hid: hid, uid: uid)
+                )
+                return .none
+
+            case let .pourDialog(.presented(.view(row))):
+                state.destination = .wineDetail(
+                    BottleCardFeature.State(
+                        wine: row.wine,
+                        ownedBottle: row.bottle,
+                        journalEntries: state.journalEntries(forWineId: row.wine.id)
+                    )
+                )
+                return .none
+
+            case .pourDialog:
+                return .none
+
+            case .addBottleTapped:
+                return .send(.delegate(.requestScan))
+
+            case let .journalRowTapped(row):
+                state.destination = .tastingDetail(
+                    TastingDetailReducer.State(tasting: row.tasting, wine: row.wine)
+                )
+                return .none
+
+            case let .deleteTastingSwiped(id):
+                return deleteTastingAndReload(id)
+
+            // Pour form saved → dismiss + reload so the new entry appears at the top of the feed.
+            case .destination(.presented(.pourTasting(.delegate(.saved)))):
+                state.destination = nil
+                return .send(.task)
+
+            case .destination(.presented(.pourTasting(.delegate(.cancelled)))):
+                state.destination = nil
                 return .none
 
             case let .destination(.presented(.wineDetail(.delegate(.bottleDeleted(id))))):
@@ -463,19 +314,7 @@ public struct CellarReducer {
                 state.destination = nil
                 return .send(.task)
 
-            case let .deleteBottleSwiped(id):
-                return deleteBottleAndReload(id)
-
-            case let .deleteTastingSwiped(id):
-                return deleteTastingAndReload(id)
-
             case .destination:
-                return .none
-
-            case let .applyPreset(segment, statusFilter):
-                state.segment = segment
-                state.statusFilter = statusFilter
-                state.searchText = ""
                 return .none
 
             case .delegate:
@@ -486,14 +325,14 @@ public struct CellarReducer {
             }
         }
         .ifLet(\.$destination, action: \.destination)
+        .ifLet(\.$pourDialog, action: \.pourDialog)
     }
 }
 
 // MARK: - Mutation + reload helpers
 
-/// Delete a bottle from the household then reload the cellar (re-send `.task`). Shared by the detail
-/// screen's delegate and (later, UX2b) the Cellar swipe action. On delete error, surfaces
-/// `.loadFailed`. Reading `@Shared(.user)` here mirrors the `.task` load effect.
+/// Delete a bottle from the household then reload (re-send `.task`). Shared by the detail screen's
+/// delegate. On delete error, surfaces `.loadFailed`.
 func deleteBottleAndReload(_ id: String) -> Effect<CellarReducer.Action> {
     @Dependency(\.persistence) var persistence
     return .run { send in
@@ -511,7 +350,7 @@ func deleteBottleAndReload(_ id: String) -> Effect<CellarReducer.Action> {
 }
 
 /// Delete a tasting from the household then reload (re-send `.task`). Shared by the detail screen's
-/// delegate and (later, UX2b) the History swipe action.
+/// delegate and the journal-feed swipe action.
 func deleteTastingAndReload(_ id: String) -> Effect<CellarReducer.Action> {
     @Dependency(\.persistence) var persistence
     return .run { send in
@@ -533,9 +372,7 @@ func deleteTastingAndReload(_ id: String) -> Effect<CellarReducer.Action> {
 public struct CellarView: View {
     @Bindable var store: StoreOf<CellarReducer>
 
-    /// Shared zoom-transition namespace for D5 "hero zoom continuity". Owned here because this view
-    /// holds all four source kinds (cellar rows, history rows, dashboard drink-soon + recent rows) and
-    /// both `navigationDestination`s, so one namespace matches every source to its pushed destination.
+    /// Shared zoom-transition namespace pairing feed rows to their pushed destinations.
     @Namespace private var zoomNamespace
 
     /// Bumped whenever a load-error `ContentUnavailableView` appears so its glyph bounces on entry.
@@ -546,535 +383,468 @@ public struct CellarView: View {
     }
 
     public var body: some View {
-        VStack(spacing: 0) {
-            // Family segmented control (soft track + bacanGreen pill). A stock
-            // `.pickerStyle(.segmented)` renders a white/gray system pill that glares on the cream
-            // canvas; `WineSegmentedControl` is a wine-only view, so this restyle can't leak into the
-            // family screens' stock segmented controls (e.g. Kitchen's Recipes/Meal-plan picker).
-            WineSegmentedControl(
-                selection: $store.segment,
-                options: CellarReducer.State.Segment.allCases.map { ($0, $0.label) }
-            )
-            .padding(.horizontal)
-            .padding(.top, 4)
-            .padding(.bottom, 8)
-            .accessibilityIdentifier("cellar-segment")
-            .selectionHaptic(store.segment)
-
-            switch store.segment {
-            case .cellar:
-                cellarContent
-            case .history:
-                historyContent
-            }
-        }
-        .wineNavTitle(store.segment == .history ? "History" : "Cellar")
-        .searchable(text: $store.searchText)
-        .searchToolbarBehavior(.minimize)
-        .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                switch store.segment {
-                case .cellar:
-                    cellarFilterMenu
-                case .history:
-                    historyFilterMenu
-                }
-            }
-        }
-        .task { store.send(.task) }
-        .navigationDestination(
-            item: $store.scope(state: \.destination?.wineDetail, action: \.destination.wineDetail)
-        ) { detailStore in
-            BottleCardView(store: detailStore)
-                // Zoom from whichever cellar / drink-soon row was tapped. The source id is the
-                // bottle id when owned (these destinations always carry an `ownedBottle`), else the
-                // wine id — matching the source row's `matchedTransitionSource` id.
-                .navigationTransition(
-                    .zoom(
-                        sourceID: detailStore.ownedBottle?.id ?? detailStore.wine.id,
-                        in: zoomNamespace
+        content
+            .wineNavTitle("Wine")
+            .searchable(text: $store.searchText, prompt: "Search your journal")
+            .searchToolbarBehavior(.minimize)
+            .task { store.send(.task) }
+            .confirmationDialog($store.scope(state: \.pourDialog, action: \.pourDialog))
+            .navigationDestination(
+                item: $store.scope(state: \.destination?.wineDetail, action: \.destination.wineDetail)
+            ) { detailStore in
+                BottleCardView(store: detailStore)
+                    .navigationTransition(
+                        .zoom(
+                            sourceID: detailStore.ownedBottle?.id ?? detailStore.wine.id,
+                            in: zoomNamespace
+                        )
                     )
-                )
-        }
-        .navigationDestination(
-            item: $store.scope(state: \.destination?.tastingDetail, action: \.destination.tastingDetail)
-        ) { detailStore in
-            TastingDetailView(store: detailStore)
-                // Zoom from whichever history / recent-tasting row was tapped; source id is the
-                // tasting id, matching the source row's `matchedTransitionSource` id.
-                .navigationTransition(.zoom(sourceID: detailStore.tasting.id, in: zoomNamespace))
-        }
-        // Wine-stack screen: wears the shared Bacán family chrome (familyCanvas + bacanGreen tint).
-        .wineChrome()
+            }
+            .navigationDestination(
+                item: $store.scope(state: \.destination?.tastingDetail, action: \.destination.tastingDetail)
+            ) { detailStore in
+                TastingDetailView(store: detailStore)
+                    .navigationTransition(.zoom(sourceID: detailStore.tasting.id, in: zoomNamespace))
+            }
+            .sheet(
+                item: $store.scope(state: \.destination?.pourTasting, action: \.destination.pourTasting)
+            ) { formStore in
+                NavigationStack { TastingFormView(store: formStore) }
+            }
+            // Wine-stack screen: wears the shared Bacán family chrome (familyCanvas + bacanGreen tint).
+            .wineChrome()
     }
 
-    // MARK: Cellar segment
-
     @ViewBuilder
-    private var cellarContent: some View {
-        if store.isLoading && store.rows.isEmpty {
+    private var content: some View {
+        if store.isLoading && store.rows.isEmpty && store.tastingRows.isEmpty {
             ProgressView()
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(Color.familyCanvas)
         } else if let error = store.loadError {
-            ContentUnavailableView {
-                Label("Couldn't load your cellar", systemImage: "exclamationmark.triangle")
-                    .symbolEffect(.bounce, options: .nonRepeating, value: errorBounce)
-            } description: {
-                Text(error)
-            } actions: {
-                Button("Try again") { store.send(.task) }
-                    .buttonStyle(.borderedProminent)
-                    .accessibilityIdentifier("cellar-error-retry")
-            }
-            .onAppear { errorBounce += 1 }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(Color.familyCanvas)
-            .accessibilityIdentifier("cellar-error")
-        } else if store.rows.isEmpty {
-            // Genuinely empty cellar (no bottles at all — search never touches `rows`).
-            ContentUnavailableView {
-                Label("No bottles yet", systemImage: "square.stack.3d.up")
-                    .symbolEffect(.pulse, options: .repeating)
-            } description: {
-                Text("Scan a wine and Add to cellar")
-            } actions: {
-                Button("Scan a wine") { store.send(.delegate(.requestScan)) }
-                    .buttonStyle(.borderedProminent)
-                    .accessibilityIdentifier("cellar-empty-scan")
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(Color.familyCanvas)
-            .accessibilityIdentifier("cellar-empty")
-        } else if store.isSearching && store.visibleRows.isEmpty {
-            // Searching with no matches: native "No Results" view instead of an empty list.
-            ContentUnavailableView.search(text: store.searchText)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(Color.familyCanvas)
+            errorState(error)
+        } else if store.rows.isEmpty && store.tastingRows.isEmpty {
+            emptyState
         } else {
-            List {
-                // Dashboard is a browse-only affordance: hide it entirely while searching so the
-                // filtered rows sit at the top of the screen and typing visibly narrows the list.
-                if !store.isSearching && !store.dashboard.isEmpty {
-                    Section {
-                        dashboardHeader
-                    }
-                    .listRowInsets(EdgeInsets())
-                    .listRowBackground(Color.clear)
-                }
+            journalList
+        }
+    }
+
+    // MARK: Empty / error
+
+    private var emptyState: some View {
+        ContentUnavailableView {
+            Label("No wine yet", systemImage: "wineglass")
+                .symbolEffect(.pulse, options: .repeating)
+        } description: {
+            Text("Scan a label to keep it on hand and start your journal.")
+        } actions: {
+            Button("Scan a wine") { store.send(.addBottleTapped) }
+                .buttonStyle(.borderedProminent)
+                .accessibilityIdentifier("wine-empty-scan")
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color.familyCanvas)
+        .accessibilityIdentifier("wine-empty")
+    }
+
+    private func errorState(_ error: String) -> some View {
+        ContentUnavailableView {
+            Label("Couldn't load your wine", systemImage: "exclamationmark.triangle")
+                .symbolEffect(.bounce, options: .nonRepeating, value: errorBounce)
+        } description: {
+            Text(error)
+        } actions: {
+            Button("Try again") { store.send(.task) }
+                .buttonStyle(.borderedProminent)
+                .accessibilityIdentifier("wine-error-retry")
+        }
+        .onAppear { errorBounce += 1 }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color.familyCanvas)
+        .accessibilityIdentifier("wine-error")
+    }
+
+    // MARK: Journal-first list
+
+    private var journalList: some View {
+        List {
+            // The holder strip — only when NOT searching (search focuses the journal feed).
+            if !store.isSearching {
                 Section {
-                    ForEach(store.visibleRows) { row in
-                        Button {
-                            store.send(.wineRowTapped(row))
-                        } label: {
-                            CellarRowView(row: row)
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityIdentifier("cellar-row-\(row.id)")
-                        .matchedTransitionSource(id: row.id, in: zoomNamespace)
-                        .shelfScrollTransition()
-                        .listRowBackground(Color.familyCanvas)
-                        .swipeActions(edge: .trailing) {
-                            Button(role: .destructive) {
-                                store.send(.deleteBottleSwiped(row.id))
-                            } label: {
-                                Label("Delete", systemImage: "trash")
-                            }
-                            .accessibilityIdentifier("cellar-delete-\(row.id)")
-                        }
-                    }
+                    OnHandStrip(
+                        rows: store.onHandRows,
+                        onTap: { store.send(.onHandTapped($0)) },
+                        onAdd: { store.send(.addBottleTapped) }
+                    )
+                    .listRowInsets(EdgeInsets(top: 4, leading: 0, bottom: 8, trailing: 0))
+                    .listRowBackground(Color.clear)
+                    .listRowSeparator(.hidden)
+                } header: {
+                    onHandHeader
                 }
             }
-            .scrollContentBackground(.hidden)
-            .background(Color.familyCanvas)
-            .selectionHaptic(store.statusFilter)
+
+            journalSection
         }
+        .scrollContentBackground(.hidden)
+        .background(Color.familyCanvas)
+        .listSectionSpacing(.compact)
     }
 
-    // MARK: Dashboard header (folded into the top of the Cellar segment)
-
-    private var dashboardHeader: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            statTiles
-            if !store.dashboard.typeBreakdown.isEmpty {
-                CellarCompositionChart(slices: store.dashboard.typeBreakdown)
+    private var onHandHeader: some View {
+        HStack {
+            Text("On hand")
+                .font(.title3.bold())
+                .foregroundStyle(Color.ink)
+            Spacer()
+            if store.onHandCount > 0 {
+                Text("\(store.onHandCount)")
+                    .font(.subheadline.weight(.semibold).monospacedDigit())
+                    .foregroundStyle(Color.inkSoft)
             }
         }
-        .padding()
+        .textCase(nil)
+        .padding(.bottom, 2)
     }
-
-    private var statTiles: some View {
-        let columns = [GridItem(.flexible()), GridItem(.flexible())]
-        return LazyVGrid(columns: columns, spacing: 12) {
-            Button {
-                store.send(.statTileTapped(.cellared))
-            } label: {
-                StatTile(
-                    value: store.dashboard.cellaredBottleCount,
-                    caption: "Cellared",
-                    systemImage: "square.stack.3d.up"
-                )
-            }
-            .buttonStyle(.plain)
-            .accessibilityIdentifier("home-stat-cellared")
-            Button {
-                store.send(.statTileTapped(.wines))
-            } label: {
-                StatTile(
-                    value: store.dashboard.distinctWineCount,
-                    caption: "Wines",
-                    systemImage: "drop"
-                )
-            }
-            .buttonStyle(.plain)
-            .accessibilityIdentifier("home-stat-wines")
-            Button {
-                store.send(.statTileTapped(.tastings))
-            } label: {
-                StatTile(
-                    value: store.dashboard.tastingCount,
-                    caption: "Tastings",
-                    systemImage: "wineglass"
-                )
-            }
-            .buttonStyle(.plain)
-            .accessibilityIdentifier("home-stat-tastings")
-            Button {
-                store.send(.statTileTapped(.wishlist))
-            } label: {
-                StatTile(
-                    value: store.dashboard.wishlistCount,
-                    caption: "Wishlist",
-                    systemImage: "heart"
-                )
-            }
-            .buttonStyle(.plain)
-            .accessibilityIdentifier("home-stat-wishlist")
-        }
-    }
-
-    private var cellarFilterMenu: some View {
-        Menu {
-            Picker("Sort", selection: $store.sort) {
-                ForEach(CellarReducer.State.SortOption.allCases, id: \.self) { option in
-                    Text(option.label).tag(option)
-                }
-            }
-            Picker("Status", selection: $store.statusFilter) {
-                Text("All").tag(BottleStatus?.none)
-                ForEach(BottleStatus.allCases, id: \.self) { status in
-                    Text(status.rawValue.capitalized).tag(BottleStatus?.some(status))
-                }
-            }
-            Picker("Type", selection: $store.typeFilter) {
-                Text("All").tag(WineType?.none)
-                ForEach(WineType.allCases, id: \.self) { type in
-                    Text(type.rawValue.capitalized).tag(WineType?.some(type))
-                }
-            }
-        } label: {
-            Image(systemName: "line.3.horizontal.decrease.circle")
-        }
-        .accessibilityIdentifier("cellar-filter-menu")
-    }
-
-    // MARK: History segment
 
     @ViewBuilder
-    private var historyContent: some View {
-        if store.isLoading && store.tastingRows.isEmpty {
-            ProgressView()
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(Color.familyCanvas)
-        } else if let error = store.loadError {
-            ContentUnavailableView {
-                Label("Couldn't load your history", systemImage: "exclamationmark.triangle")
-                    .symbolEffect(.bounce, options: .nonRepeating, value: errorBounce)
-            } description: {
-                Text(error)
-            } actions: {
-                Button("Try again") { store.send(.task) }
-                    .buttonStyle(.borderedProminent)
-                    .accessibilityIdentifier("cellar-history-error-retry")
-            }
-            .onAppear { errorBounce += 1 }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(Color.familyCanvas)
-            .accessibilityIdentifier("cellar-history-error")
-        } else if store.tastingRows.isEmpty {
-            ContentUnavailableView(
-                "No tastings yet",
-                systemImage: "wineglass",
-                description: Text("Log one from a bottle card")
-            )
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(Color.familyCanvas)
+    private var journalSection: some View {
+        if store.tastingRows.isEmpty {
+            Section {
+                EmptyJournalHint()
+                    .listRowInsets(EdgeInsets(top: 4, leading: 0, bottom: 4, trailing: 0))
+                    .listRowBackground(Color.clear)
+                    .listRowSeparator(.hidden)
+            } header: { journalHeader }
         } else if store.isSearching && store.visibleTastingRows.isEmpty {
-            // Searching with no matches: native "No Results" view.
-            ContentUnavailableView.search(text: store.searchText)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(Color.familyCanvas)
-        } else {
-            List(store.visibleTastingRows) { row in
-                Button {
-                    store.send(.tastingRowTapped(row))
-                } label: {
-                    TastingRowView(row: row)
-                }
-                .buttonStyle(.plain)
-                .accessibilityIdentifier("history-row-\(row.id)")
-                .matchedTransitionSource(id: row.id, in: zoomNamespace)
-                .shelfScrollTransition()
-                .listRowBackground(Color.familyCanvas)
-                .swipeActions(edge: .trailing) {
-                    Button(role: .destructive) {
-                        store.send(.deleteTastingSwiped(row.id))
-                    } label: {
-                        Label("Delete", systemImage: "trash")
-                    }
-                    .accessibilityIdentifier("history-delete-\(row.id)")
-                }
+            Section {
+                ContentUnavailableView.search(text: store.searchText)
+                    .listRowBackground(Color.clear)
+                    .listRowSeparator(.hidden)
             }
-            .scrollContentBackground(.hidden)
-            .background(Color.familyCanvas)
+        } else {
+            Section {
+                ForEach(store.visibleTastingRows) { row in
+                    Button {
+                        store.send(.journalRowTapped(row))
+                    } label: {
+                        JournalCardView(row: row)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("journal-row-\(row.id)")
+                    .matchedTransitionSource(id: row.id, in: zoomNamespace)
+                    .listRowInsets(EdgeInsets(top: 6, leading: 0, bottom: 6, trailing: 0))
+                    .listRowBackground(Color.clear)
+                    .listRowSeparator(.hidden)
+                    .swipeActions(edge: .trailing) {
+                        Button(role: .destructive) {
+                            store.send(.deleteTastingSwiped(row.id))
+                        } label: {
+                            Label("Delete", systemImage: "trash")
+                        }
+                        .accessibilityIdentifier("journal-delete-\(row.id)")
+                    }
+                }
+            } header: { journalHeader }
         }
     }
 
-    private var historyFilterMenu: some View {
-        Menu {
-            Picker("Min rating", selection: $store.minRating) {
-                Text("Any").tag(Double?.none)
-                Text("3★+").tag(Double?.some(3))
-                Text("4★+").tag(Double?.some(4))
-                Text("4.5★+").tag(Double?.some(4.5))
+    private var journalHeader: some View {
+        HStack {
+            Text("Journal")
+                .font(.title3.bold())
+                .foregroundStyle(Color.ink)
+            Spacer()
+            if store.journaledCount > 0 {
+                Text("\(store.journaledCount) \(store.journaledCount == 1 ? "wine" : "wines") journaled")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(Color.inkSoft)
             }
-            Picker("Grape", selection: $store.grapeFilter) {
-                Text("All").tag(String?.none)
-                ForEach(store.availableGrapes, id: \.self) { grape in
-                    Text(grape).tag(String?.some(grape))
-                }
-            }
-            Picker("Sort", selection: $store.historySort) {
-                ForEach(CellarReducer.State.HistorySort.allCases, id: \.self) { option in
-                    Text(option.label).tag(option)
-                }
-            }
-        } label: {
-            Image(systemName: "line.3.horizontal.decrease.circle")
         }
-        .accessibilityIdentifier("history-filter-menu")
+        .textCase(nil)
+        .padding(.top, 4)
+        .padding(.bottom, 2)
     }
 }
 
-private struct CellarRowView: View {
+// MARK: - On-hand strip
+
+/// The holder: a compact horizontal rail of the bottles still on hand, plus a trailing "+" tile that
+/// jumps to Scan. Deliberately light — this is a ~6-bottle holder, not an inventory.
+private struct OnHandStrip: View {
+    let rows: [CellarRow]
+    let onTap: (CellarRow) -> Void
+    let onAdd: () -> Void
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 12) {
+                ForEach(rows) { row in
+                    Button { onTap(row) } label: { OnHandTile(row: row) }
+                        .buttonStyle(.plain)
+                        .accessibilityIdentifier("on-hand-tile-\(row.id)")
+                }
+                Button { onAdd() } label: { AddTile() }
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("on-hand-add")
+            }
+            .padding(.horizontal, 4)
+            .padding(.vertical, 2)
+        }
+    }
+}
+
+private struct OnHandTile: View {
     let row: CellarRow
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack {
+        VStack(alignment: .leading, spacing: 0) {
+            WineTypeGradient(type: row.typeKind)
+                .frame(height: 64)
+                .overlay(alignment: .bottomLeading) {
+                    if row.bottle.quantity > 1 {
+                        Text("×\(row.bottle.quantity)")
+                            .font(.caption2.weight(.bold).monospacedDigit())
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Capsule().fill(.black.opacity(0.28)))
+                            .padding(6)
+                    }
+                }
+                .overlay {
+                    Image(systemName: "wineglass")
+                        .font(.system(size: 20))
+                        .foregroundStyle(Color.marigold)
+                        .shadow(color: .black.opacity(0.18), radius: 3, y: 1)
+                }
+            VStack(alignment: .leading, spacing: 2) {
                 Text(row.producer)
-                    .wineName(.headline)
-                Spacer()
-                Text("×\(row.bottle.quantity)")
-                    .font(.subheadline.monospacedDigit())
-                    .foregroundStyle(.secondary)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(Color.ink)
+                    .lineLimit(1)
+                if let sub = row.nameVintage {
+                    Text(sub)
+                        .font(.caption2)
+                        .foregroundStyle(Color.inkSoft)
+                        .lineLimit(1)
+                }
             }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+        }
+        .frame(width: 132, alignment: .leading)
+        .background(Color.familySurface, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .shadow(color: Color.ink.opacity(0.06), radius: 6, y: 3)
+    }
+}
 
-            if let subtitle {
-                Text(subtitle)
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-            }
+private struct AddTile: View {
+    var body: some View {
+        VStack(spacing: 8) {
+            Image(systemName: "plus")
+                .font(.title2.weight(.semibold))
+            Text("Add")
+                .font(.caption.weight(.semibold))
+        }
+        .foregroundStyle(Color.bacanGreen)
+        .frame(width: 88, height: 128)
+        .background(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(Color.bacanGreen.opacity(0.08))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .strokeBorder(Color.bacanGreen.opacity(0.35), style: StrokeStyle(lineWidth: 1.5, dash: [5, 4]))
+        )
+    }
+}
 
-            HStack(spacing: 8) {
-                Text(row.bottle.status.rawValue.capitalized)
-                    .font(.caption2.weight(.semibold))
-                    .foregroundStyle(Color.inkSoft)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 2)
-                    // Soft ink-tinted chip instead of the system `.quaternary` gray, which reads as a
-                    // cool blot on the warm family canvas.
-                    .background(Color.inkSoft.opacity(0.14), in: Capsule())
+// MARK: - Journal card
 
-                if let window = row.drinkWindowText {
-                    HStack(spacing: 6) {
-                        HStack(spacing: 4) {
-                            Capsule()
-                                .fill(windowColor)
-                                .frame(width: 16, height: 5)
-                            if let label = windowLabel {
-                                Text(label)
-                                    .font(.caption2.weight(.semibold))
-                                    .foregroundStyle(windowColor)
-                            }
-                        }
-                        Text(window)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+/// A rich, scannable journal entry: a leading type-color spine (or the tasting's own photo), the
+/// wine's identity, a star rating, the note, and when/with-whom it was poured. Newest first.
+private struct JournalCardView: View {
+    let row: TastingRow
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            leading
+            VStack(alignment: .leading, spacing: 5) {
+                HStack(alignment: .firstTextBaseline) {
+                    Text(row.producer)
+                        .wineName(.headline)
+                    Spacer(minLength: 8)
+                    StarRow(value: row.tasting.ratingStars, points: row.tasting.rating100)
+                }
+                if let sub = row.nameVintage {
+                    Text(sub)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+                if let note = row.tasting.note, !note.isEmpty {
+                    Text(note)
+                        .font(.callout)
+                        .foregroundStyle(.primary)
+                        .lineLimit(3)
+                }
+                HStack(spacing: 8) {
+                    Label(row.dateText, systemImage: "calendar")
+                        .labelStyle(.titleAndIcon)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                    if let context = row.context {
+                        Text(context)
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                            .lineLimit(1)
                     }
                 }
             }
         }
-        .padding(.vertical, 2)
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.familySurface, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .shadow(color: Color.ink.opacity(0.06), radius: 7, y: 3)
     }
 
-    private var subtitle: String? {
-        var parts: [String] = []
-        if let name = row.wine.name, !name.isEmpty { parts.append(name) }
-        if let vintage = row.wine.vintage { parts.append(String(vintage)) }
-        return parts.isEmpty ? nil : parts.joined(separator: " · ")
-    }
-
-    /// Brand drink-window tint, replacing the old green/orange/red dot.
-    private var windowColor: Color {
-        switch row.drinkStatus {
-        case .drinkNow: .drinkNow
-        case .hold: .hold
-        case .past: .past
-        case .unknown: .inkSoft
-        }
-    }
-
-    /// Short status label paired with the capsule; nil when the window is unknown.
-    private var windowLabel: String? {
-        switch row.drinkStatus {
-        case .drinkNow: "Drink now"
-        case .hold: "Hold"
-        case .past: "Past"
-        case .unknown: nil
+    /// A photo thumbnail when the entry has one, else a slim type-tinted spine (semantic color coding).
+    @ViewBuilder
+    private var leading: some View {
+        if let url = row.tasting.photoURLs.first {
+            BacanImage(url: url, targetSize: CGSize(width: 56, height: 72), contentMode: .fill) {
+                WineTypeGradient(type: row.typeKind)
+            }
+            .frame(width: 56, height: 72)
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        } else {
+            WineTypeGradient(type: row.typeKind)
+                .frame(width: 10, height: 72)
+                .clipShape(Capsule())
         }
     }
 }
 
-private struct TastingRowView: View {
-    let row: TastingRow
+/// Compact read-only star rating (half-star aware); falls back to the 100-pt score, else nothing.
+struct StarRow: View {
+    let value: Double?
+    let points: Int?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack {
-                Text(row.producer)
-                    .wineName(.headline)
-                Spacer()
-                ratingView
-            }
-
-            if let subtitle {
-                Text(subtitle)
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-            }
-
-            if let note = row.tasting.note, !note.isEmpty {
-                Text(note)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(2)
-            }
-
-            HStack(spacing: 8) {
-                Text(row.dateText)
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                if let context {
-                    Text(context)
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
-                }
-            }
-        }
-        .padding(.vertical, 2)
-    }
-
-    /// Compact rating: a real 5-star `.marigold` row (half-star aware) when stars exist, else the
-    /// 100-pt score, else an em dash. Mirrors the form/detail glyph logic.
-    @ViewBuilder
-    private var ratingView: some View {
-        if let stars = row.tasting.ratingStars {
+        if let stars = value {
             HStack(spacing: 2) {
                 ForEach(1...5, id: \.self) { position in
-                    Image(systemName: Self.starSymbol(for: stars, position: position))
+                    Image(systemName: Self.symbol(for: stars, position: position))
                         .font(.caption)
                         .foregroundStyle(Color.marigold)
                 }
             }
             .accessibilityLabel("\(stars) stars")
-        } else if let pts = row.tasting.rating100 {
-            Text("\(pts) pts")
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(.secondary)
-        } else {
-            Text("—")
+        } else if let points {
+            Text("\(points) pts")
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(.secondary)
         }
     }
 
-    private static func starSymbol(for value: Double, position: Int) -> String {
+    static func symbol(for value: Double, position: Int) -> String {
         let full = Double(position)
         let half = full - 0.5
-        if value >= full {
-            return "star.fill"
-        } else if value >= half {
-            return "star.leadinghalf.filled"
-        } else {
-            return "star"
-        }
-    }
-
-    private var subtitle: String? {
-        var parts: [String] = []
-        if let name = row.wine.name, !name.isEmpty { parts.append(name) }
-        if let vintage = row.wine.vintage { parts.append(String(vintage)) }
-        return parts.isEmpty ? nil : parts.joined(separator: " · ")
-    }
-
-    private var context: String? {
-        var parts: [String] = []
-        if let withWhom = row.tasting.withWhom, !withWhom.isEmpty { parts.append(withWhom) }
-        if let occasion = row.tasting.occasion, !occasion.isEmpty { parts.append(occasion) }
-        return parts.isEmpty ? nil : parts.joined(separator: " · ")
+        if value >= full { return "star.fill" }
+        if value >= half { return "star.leadinghalf.filled" }
+        return "star"
     }
 }
 
-private extension View {
-    /// Subtle "shelf depth" as rows scroll into view: they ease up from a slight shrink, settling at
-    /// full size when centered. Scale-only on purpose — a `List` leaves non-scrolling rows (e.g. a
-    /// single History row) stuck in a non-identity phase, so fading opacity here would render them
-    /// fully transparent (blank cards). A gentle scale floor keeps every row visible.
-    func shelfScrollTransition() -> some View {
-        scrollTransition { content, phase in
-            content
-                .scaleEffect(phase.isIdentity ? 1 : 0.97)
+private struct EmptyJournalHint: View {
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Your journal is empty")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(Color.ink)
+            Text("Pour a bottle from your holder to write your first note.")
+                .font(.caption)
+                .foregroundStyle(Color.inkSoft)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding()
+        .background(Color.familySurface, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+    }
+}
+
+// MARK: - Previews
+
+#if DEBUG
+private enum WinePreview {
+    static let margaux = Wine(
+        producer: "Château Margaux", name: "Grand Vin", vintage: 2015,
+        region: Region(country: "France", region: "Bordeaux", appellation: "Margaux"),
+        grapes: ["Cabernet Sauvignon", "Merlot"], type: .red
+    )
+    static let sancerre = Wine(
+        producer: "Domaine Vacheron", name: "Sancerre", vintage: 2022,
+        region: Region(country: "France", region: "Loire"),
+        grapes: ["Sauvignon Blanc"], type: .white
+    )
+    static let rose = Wine(
+        producer: "Domaine Tempier", name: "Bandol Rosé", vintage: 2023, type: .rose
+    )
+
+    static let bottles: [Bottle] = [
+        Bottle(id: "b1", wineId: margaux.id, quantity: 2, status: .cellared,
+               createdAt: Date(timeIntervalSince1970: 300)),
+        Bottle(id: "b2", wineId: sancerre.id, quantity: 1, status: .cellared,
+               createdAt: Date(timeIntervalSince1970: 200)),
+        Bottle(id: "b3", wineId: rose.id, quantity: 1, status: .cellared,
+               createdAt: Date(timeIntervalSince1970: 100)),
+    ]
+
+    static let tastings: [Tasting] = [
+        Tasting(id: "t1", wineId: margaux.id, date: Date(timeIntervalSince1970: 900),
+                ratingStars: 4.5,
+                note: "Perfumed and silky — cassis, violet, a long graphite finish. Special night.",
+                withWhom: "Valentina", occasion: "Anniversary"),
+        Tasting(id: "t2", wineId: sancerre.id, date: Date(timeIntervalSince1970: 800),
+                ratingStars: 4.0, note: "Crisp, flinty, so easy on the porch.",
+                occasion: "Friday"),
+        Tasting(id: "t3", wineId: rose.id, date: Date(timeIntervalSince1970: 700),
+                rating100: 91, note: "Bone-dry, herbal. Summer in a glass."),
+    ]
+
+    static func store(bottles: [Bottle], tastings: [Tasting]) -> StoreOf<CellarReducer> {
+        withDependencies {
+            $0.defaultFileStorage = .inMemory
+            $0.persistence.bottles = { _ in bottles }
+            $0.persistence.tastings = { _ in tastings }
+            $0.persistence.wines = { _ in [margaux, sancerre, rose] }
+            $0.date = .constant(.now)
+        } operation: {
+            @Shared(.user) var user
+            $user.withLock { $0 = User(id: "u", displayName: "Michael", householdId: "h") }
+            return Store(initialState: CellarReducer.State()) { CellarReducer() }
         }
     }
 }
 
-private extension CellarReducer.State.Segment {
-    var label: String {
-        switch self {
-        case .cellar: "Cellar"
-        case .history: "History"
-        }
+#Preview("Wine — on hand + journal") {
+    NavigationStack {
+        CellarView(store: WinePreview.store(
+            bottles: WinePreview.bottles, tastings: WinePreview.tastings
+        ))
     }
 }
 
-private extension CellarReducer.State.HistorySort {
-    var label: String {
-        switch self {
-        case .dateNewest: "Newest"
-        case .dateOldest: "Oldest"
-        case .ratingHigh: "Highest Rated"
-        }
+#Preview("Wine — holder, empty journal") {
+    NavigationStack {
+        CellarView(store: WinePreview.store(bottles: WinePreview.bottles, tastings: []))
     }
 }
 
-private extension CellarReducer.State.SortOption {
-    var label: String {
-        switch self {
-        case .recentlyAdded: "Recently Added"
-        case .producer: "Producer"
-        case .vintage: "Vintage"
-        case .drinkWindow: "Drink Window"
-        }
+#Preview("Wine — empty") {
+    NavigationStack {
+        CellarView(store: WinePreview.store(bottles: [], tastings: []))
     }
 }
+#endif

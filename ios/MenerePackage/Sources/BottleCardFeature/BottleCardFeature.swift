@@ -33,9 +33,14 @@ public struct BottleCardFeature {
         /// UX2a: owned-bottle delete confirmation dialog.
         @Presents public var confirmDelete: ConfirmationDialogState<Action.ConfirmDelete>?
 
-        /// When set, the card renders an owned cellar bottle: shows cellar facts and suppresses
-        /// Add-to-cellar. Nil = scan path, unchanged.
+        /// When set, the card renders an owned bottle: shows the on-hand facts and suppresses
+        /// Add-to-on-hand. Nil = scan path, unchanged.
         public var ownedBottle: Bottle? = nil
+
+        /// This wine's journal entries (tastings), newest first — surfaced read-only on the card so a
+        /// bottle reads as "the wine + its journal". Passed in by the presenter (the Wine root); the
+        /// scan path leaves it empty.
+        public var journalEntries: [Tasting] = []
 
         /// D2: a monotonic bump counter fired when a bottle is successfully added to the cellar. The
         /// view observes changes to play the wax-seal celebration + a success haptic. Transient UI
@@ -48,7 +53,8 @@ public struct BottleCardFeature {
             imageData: Data? = nil,
             isResolving: Bool = false,
             destination: Destination.State? = nil,
-            ownedBottle: Bottle? = nil
+            ownedBottle: Bottle? = nil,
+            journalEntries: [Tasting] = []
         ) {
             self.wine = wine
             self.candidate = candidate
@@ -56,6 +62,7 @@ public struct BottleCardFeature {
             self.isResolving = isResolving
             self.destination = destination
             self.ownedBottle = ownedBottle
+            self.journalEntries = journalEntries
         }
     }
 
