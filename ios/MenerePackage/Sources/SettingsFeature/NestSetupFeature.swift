@@ -177,13 +177,13 @@ public struct NestSetupView: View {
     private var form: some View {
         Form {
             Section {
-                Text("Needs a one-time Google Device Access registration — the runbook lives with Claude.")
+                Text("Nest talks to us through Google, so it needs a one-time link to your Google account. Drop in the three values below, then tap Connect — that's it.")
                     .font(.subheadline)
                     .foregroundStyle(Color.inkSoft)
             } header: {
                 Text("One-time Google setup")
             } footer: {
-                Text("Michael registers a Device Access project ($5) and an OAuth client once, then pastes the three values below. After that, connecting is a single tap.")
+                Text("You'll only do this once. Once Nest is linked, keeping it connected is a single tap from here.")
             }
 
             Section {

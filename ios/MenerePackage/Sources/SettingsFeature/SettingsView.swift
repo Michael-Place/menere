@@ -1302,7 +1302,7 @@ public struct SettingsView: View {
         }
     }
 
-    /// The Lutron shades row: paired → status + reachability dot with a Re-pair swipe action;
+    /// The Lutron shades row: paired → status + reachability dot with a Reconnect swipe action;
     /// unpaired → "Set up Lutron shades".
     @ViewBuilder
     private var lutronRow: some View {
@@ -1328,13 +1328,13 @@ public struct SettingsView: View {
                 Button {
                     store.send(.rePairLutronTapped)
                 } label: {
-                    Label("Re-pair", systemImage: "arrow.triangle.2.circlepath")
+                    Label("Reconnect", systemImage: "arrow.triangle.2.circlepath")
                 }
                 .tint(Color.bacanGreen)
             }
             .contextMenu {
                 Button { store.send(.rePairLutronTapped) } label: {
-                    Label("Re-pair", systemImage: "arrow.triangle.2.circlepath")
+                    Label("Reconnect", systemImage: "arrow.triangle.2.circlepath")
                 }
                 Button(role: .destructive) { store.send(.removeLutronTapped) } label: {
                     Label(config.isMock ? "Clear demo data" : "Remove", systemImage: "trash")
@@ -1394,7 +1394,7 @@ public struct SettingsView: View {
                 Spacer()
                 HStack(spacing: 6) {
                     Circle().fill(Color.bacanGreen).frame(width: 8, height: 8)
-                    Text("Connected").font(.caption).foregroundStyle(Color.inkSoft)
+                    Text("Set up").font(.caption).foregroundStyle(Color.inkSoft)
                 }
             }
             .accessibilityIdentifier("nest-status-row")
@@ -1456,7 +1456,7 @@ public struct SettingsView: View {
                 Spacer()
                 HStack(spacing: 6) {
                     Circle().fill(Color.bacanGreen).frame(width: 8, height: 8)
-                    Text("Connected").font(.caption).foregroundStyle(Color.inkSoft)
+                    Text("Set up").font(.caption).foregroundStyle(Color.inkSoft)
                 }
             }
             .accessibilityIdentifier("hubspace-status-row")
@@ -1518,7 +1518,7 @@ public struct SettingsView: View {
                 Spacer()
                 HStack(spacing: 6) {
                     Circle().fill(Color.bacanGreen).frame(width: 8, height: 8)
-                    Text("Connected").font(.caption).foregroundStyle(Color.inkSoft)
+                    Text("Set up").font(.caption).foregroundStyle(Color.inkSoft)
                 }
             }
             .accessibilityIdentifier("meross-status-row")
@@ -1573,7 +1573,7 @@ public struct SettingsView: View {
                 Spacer()
                 HStack(spacing: 6) {
                     Circle().fill(Color.bacanGreen).frame(width: 8, height: 8)
-                    Text("Connected").font(.caption).foregroundStyle(Color.inkSoft)
+                    Text("Set up").font(.caption).foregroundStyle(Color.inkSoft)
                 }
             }
             .accessibilityIdentifier("homekit-status-row")
@@ -1610,10 +1610,26 @@ public struct SettingsView: View {
                 Spacer()
                 HStack(spacing: 6) {
                     Circle().fill(Color.bacanGreen).frame(width: 8, height: 8)
-                    Text("Connected").font(.caption).foregroundStyle(Color.inkSoft)
+                    Text("Set up").font(.caption).foregroundStyle(Color.inkSoft)
                 }
             }
             .accessibilityIdentifier("homekit-status-row")
+            // Disconnect for live HomeKit means turning access off in iOS Settings — the app can't
+            // revoke its own HomeKit permission, so both affordances deep-link there honestly.
+            .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                Button(role: .destructive) {
+                    if let url = URL(string: UIApplication.openSettingsURLString) { openURL(url) }
+                } label: {
+                    Label("Disconnect", systemImage: "minus.circle")
+                }
+            }
+            .contextMenu {
+                Button(role: .destructive) {
+                    if let url = URL(string: UIApplication.openSettingsURLString) { openURL(url) }
+                } label: {
+                    Label("Disconnect in Settings", systemImage: "minus.circle")
+                }
+            }
         case .denied, .restricted:
             Button {
                 if let url = URL(string: UIApplication.openSettingsURLString) { openURL(url) }
@@ -1664,7 +1680,7 @@ public struct SettingsView: View {
         return base
     }
 
-    /// One bridge row: name (+ id) + reachability dot, with swipe/context Re-pair + Remove actions.
+    /// One bridge row: name (+ id) + reachability dot, with swipe/context Reconnect + Remove actions.
     private func hueBridgeRow(_ bridge: HueBridgeConfig) -> some View {
         HStack(spacing: 12) {
             Image(systemName: "wifi.router")
@@ -1687,13 +1703,13 @@ public struct SettingsView: View {
             Button {
                 store.send(.rePairBridgeTapped(bridge.bridgeId))
             } label: {
-                Label("Re-pair", systemImage: "arrow.triangle.2.circlepath")
+                Label("Reconnect", systemImage: "arrow.triangle.2.circlepath")
             }
             .tint(Color.bacanGreen)
         }
         .contextMenu {
             Button { store.send(.rePairBridgeTapped(bridge.bridgeId)) } label: {
-                Label("Re-pair", systemImage: "arrow.triangle.2.circlepath")
+                Label("Reconnect", systemImage: "arrow.triangle.2.circlepath")
             }
             Button(role: .destructive) { store.send(.removeBridgeTapped(bridge)) } label: {
                 Label(bridge.isMock ? "Clear demo data" : "Remove", systemImage: "trash")

@@ -195,7 +195,7 @@ public struct MerossSetupView: View {
             } header: {
                 Text("Device")
             } footer: {
-                Text("The device key is your Meross/Refoss account key — ask Claude to fetch it, or use a key-grabber tool. Some devices accept an empty key.")
+                Text("The device key is the one from your Meross/Refoss account. Lots of openers work fine with it left blank, so if you don't have it handy, try connecting without it first.")
             }
 
             Section {
